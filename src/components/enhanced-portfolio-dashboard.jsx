@@ -257,6 +257,15 @@ const EnhancedPortfolioDashboard = () => {
       </div>
 
       <div className="max-w-7xl mx-auto px-8 py-8">
+        {/* Tabs */}
+        <div className="flex gap-4 mb-8 border-b border-slate-700">
+          {['overview', 'analysis'].map(tab => (
+            <button key={tab} onClick={() => setActiveTab(tab)} className={`px-4 py-3 font-medium transition-colors capitalize ${activeTab === tab ? 'text-cyan-400 border-b-2 border-cyan-400' : 'text-slate-400 hover:text-slate-300'}`}>
+              {tab}
+            </button>
+          ))}
+        </div>
+
         {/* Homepage Overview */}
         {activeTab === 'overview' && (
           <>
