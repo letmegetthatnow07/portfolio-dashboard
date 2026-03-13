@@ -127,7 +127,6 @@ const EnhancedPortfolioDashboard = () => {
   // Get recommendation with exit/reduce guidelines
   const getRecommendation = (stock) => {
     const score = parseFloat(stock.compositeScore || 7);
-    const priceToAvg = stock.price / stock.averagePrice;
     
     if (score >= 8.5) {
       return { text: 'STRONG BUY', color: 'bg-green-700', action: 'BUY', trim: '0%' };
