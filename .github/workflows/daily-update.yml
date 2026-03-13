@@ -1,0 +1,43 @@
+name: Daily Market Data Update
+
+on:
+  # Run daily at 4:30 PM ET (market close + 30 min)
+  schedule:
+    - cron: '30 16 * * 1-5'  # 16:30 UTC = 4:30 PM ET (handles daylight saving automatically)
+  
+  # Allow manual trigger
+  workflow_dispatch:
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+      
+      - name: Install dependencies
+        run: cd backend && npm install
+      
+      - name: Fetch and update market data
+        env:
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+        run: cd backend && node scripts/daily-update.js
+      
+      - name: Commit changes to GitHub
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add data/stocks.db
+          git add data/apiLogs.json
+          git commit -m "Daily market update - $(date)" || echo "No changes to commit"
+          git push
+      
+      - name: Notify Vercel to redeploy
+        run: |
+          curl -X POST "${{ secrets.VERCEL_REDEPLOY_HOOK }}" || true
