@@ -1,30 +1,35 @@
 {
-  "name": "portfolio-dashboard-backend",
+  "name": "alpha-portfolio-dashboard",
   "version": "1.0.0",
-  "description": "Professional portfolio tracking backend",
-  "main": "scripts/daily-update.js",
-  "type": "commonjs",
-  "engines": {
-    "node": "18"
+  "description": "Professional portfolio management dashboard for long-term investing",
+  "private": true,
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-scripts": "5.0.1",
+    "lucide-react": "^0.383.0"
   },
   "scripts": {
-    "init-db": "node scripts/init-db.js",
-    "update": "node scripts/daily-update.js",
-    "dev": "node scripts/daily-update.js"
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
   },
-  "keywords": [
-    "portfolio",
-    "stocks",
-    "tracking"
-  ],
-  "author": "",
-  "license": "MIT",
-  "dependencies": {
-    "better-sqlite3": "^9.0.0",
-    "axios": "^1.6.0",
-    "yfinance2": "^1.5.0",
-    "cheerio": "^1.0.0",
-    "sentiment": "^5.0.1",
-    "dotenv": "^16.3.1"
+  "eslintConfig": {
+    "extends": [
+      "react-app"
+    ]
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
   }
 }
