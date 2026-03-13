@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { AlertCircle, Plus, X, Calendar, LineChart, DollarSign, Target } from 'lucide-react';
+import { AlertCircle, Plus, X, Calendar, LineChart, Target } from 'lucide-react';
 
 const EnhancedPortfolioDashboard = () => {
   const [portfolio, setPortfolio] = useState([]);
