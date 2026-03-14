@@ -1,7 +1,8 @@
 /**
- * Enhanced Portfolio Dashboard
- * Displays portfolio with composite scores from professional analysis
- * Shows all 6 data sources: Ratings, Grades, Sentiment, Technical, Insider, Filings
+ * Enhanced Portfolio Dashboard - WITH ADD/EDIT STOCKS
+ * Professional investment dashboard with composite scores
+ * Displays portfolio with real data from 6 APIs
+ * Allows add/edit/delete stocks
  */
 
 import React, { useState, useEffect } from 'react';
@@ -17,8 +18,22 @@ const EnhancedPortfolioDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [lastUpdate, setLastUpdate] = useState(null);
-  const [sortBy, setSortBy] = useState('score'); // score, signal, upside
-  const [filterSignal, setFilterSignal] = useState('ALL'); // ALL, STRONG_BUY, BUY, HOLD, REDUCE, SELL
+  const [sortBy, setSortBy] = useState('score');
+  const [filterSignal, setFilterSignal] = useState('ALL');
+  
+  // Form state for adding/editing stocks
+  const [showForm, setShowForm] = useState(false);
+  const [formMode, setFormMode] = useState('add'); // 'add' or 'edit'
+  const [formData, setFormData] = useState({
+    symbol: '',
+    name: '',
+    quantity: '',
+    average_price: '',
+    type: 'Stock',
+    region: 'Global',
+    sector: ''
+  });
+  const [editingId, setEditingId] = useState(null);
 
   // ============================================
   // FETCH PORTFOLIO DATA
@@ -38,7 +53,6 @@ const EnhancedPortfolioDashboard = () => {
       const data = await response.json();
 
       if (data.status === 'success') {
-        // Sort portfolio by score descending
         const sorted = [...data.portfolio].sort((a, b) => 
           (b.latest_score || 0) - (a.latest_score || 0)
         );
@@ -62,14 +76,131 @@ const EnhancedPortfolioDashboard = () => {
   // ============================================
 
   useEffect(() => {
-    // Fetch on component mount
     fetchPortfolio();
-
-    // Refresh every 5 minutes
     const interval = setInterval(fetchPortfolio, 5 * 60 * 1000);
-    
     return () => clearInterval(interval);
   }, []);
+
+  // ============================================
+  // ADD/EDIT STOCK HANDLERS
+  // ============================================
+
+  const handleAddStock = async (e) => {
+    e.preventDefault();
+
+    if (!formData.symbol || !formData.quantity || !formData.average_price) {
+      alert('Please fill all required fields');
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/portfolio/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData)
+      });
+
+      if (response.ok) {
+        alert('Stock added successfully! Dashboard will update in next refresh.');
+        setFormData({
+          symbol: '',
+          name: '',
+          quantity: '',
+          average_price: '',
+          type: 'Stock',
+          region: 'Global',
+          sector: ''
+        });
+        setShowForm(false);
+        fetchPortfolio();
+      } else {
+        alert('Error adding stock. Check console for details.');
+      }
+    } catch (err) {
+      alert('Error adding stock: ' + err.message);
+    }
+  };
+
+  const handleEditStock = async (e) => {
+    e.preventDefault();
+
+    try {
+      const response = await fetch(`/api/portfolio/edit/${editingId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData)
+      });
+
+      if (response.ok) {
+        alert('Stock updated successfully!');
+        setFormData({
+          symbol: '',
+          name: '',
+          quantity: '',
+          average_price: '',
+          type: 'Stock',
+          region: 'Global',
+          sector: ''
+        });
+        setShowForm(false);
+        setEditingId(null);
+        fetchPortfolio();
+      } else {
+        alert('Error editing stock.');
+      }
+    } catch (err) {
+      alert('Error editing stock: ' + err.message);
+    }
+  };
+
+  const handleDeleteStock = async (id) => {
+    if (!window.confirm('Are you sure you want to delete this stock?')) return;
+
+    try {
+      const response = await fetch(`/api/portfolio/delete/${id}`, {
+        method: 'DELETE'
+      });
+
+      if (response.ok) {
+        alert('Stock deleted successfully!');
+        fetchPortfolio();
+      } else {
+        alert('Error deleting stock.');
+      }
+    } catch (err) {
+      alert('Error deleting stock: ' + err.message);
+    }
+  };
+
+  const openEditForm = (stock) => {
+    setFormMode('edit');
+    setEditingId(stock.id);
+    setFormData({
+      symbol: stock.symbol,
+      name: stock.name || '',
+      quantity: stock.quantity.toString(),
+      average_price: stock.average_price.toString(),
+      type: stock.type || 'Stock',
+      region: stock.region || 'Global',
+      sector: stock.sector || ''
+    });
+    setShowForm(true);
+  };
+
+  const openAddForm = () => {
+    setFormMode('add');
+    setEditingId(null);
+    setFormData({
+      symbol: '',
+      name: '',
+      quantity: '',
+      average_price: '',
+      type: 'Stock',
+      region: 'Global',
+      sector: ''
+    });
+    setShowForm(true);
+  };
 
   // ============================================
   // FILTER & SORT
@@ -78,12 +209,10 @@ const EnhancedPortfolioDashboard = () => {
   const getFilteredPortfolio = () => {
     let filtered = portfolio;
 
-    // Filter by signal
     if (filterSignal !== 'ALL') {
       filtered = filtered.filter(stock => stock.signal === filterSignal);
     }
 
-    // Sort
     return filtered.sort((a, b) => {
       switch (sortBy) {
         case 'score':
@@ -105,37 +234,25 @@ const EnhancedPortfolioDashboard = () => {
   // ============================================
 
   const getSignalColor = (signal) => {
-    switch (signal) {
-      case 'STRONG_BUY':
-        return '#10b981'; // Green
-      case 'BUY':
-        return '#3b82f6'; // Blue
-      case 'HOLD':
-        return '#f59e0b'; // Amber
-      case 'REDUCE':
-        return '#ef4444'; // Red
-      case 'SELL':
-        return '#7f1d1d'; // Dark Red
-      default:
-        return '#6b7280'; // Gray
-    }
+    const colors = {
+      'STRONG_BUY': '#10b981',
+      'BUY': '#3b82f6',
+      'HOLD': '#f59e0b',
+      'REDUCE': '#ef4444',
+      'SELL': '#7f1d1d'
+    };
+    return colors[signal] || '#6b7280';
   };
 
   const getSignalEmoji = (signal) => {
-    switch (signal) {
-      case 'STRONG_BUY':
-        return '🚀';
-      case 'BUY':
-        return '✅';
-      case 'HOLD':
-        return '⏸️';
-      case 'REDUCE':
-        return '⚠️';
-      case 'SELL':
-        return '❌';
-      default:
-        return '•';
-    }
+    const emojis = {
+      'STRONG_BUY': '🚀',
+      'BUY': '✅',
+      'HOLD': '⏸️',
+      'REDUCE': '⚠️',
+      'SELL': '❌'
+    };
+    return emojis[signal] || '•';
   };
 
   const formatPercent = (num) => {
@@ -149,7 +266,7 @@ const EnhancedPortfolioDashboard = () => {
   };
 
   // ============================================
-  // RENDER LOADING STATE
+  // RENDER
   // ============================================
 
   if (loading && portfolio.length === 0) {
@@ -162,10 +279,6 @@ const EnhancedPortfolioDashboard = () => {
       </div>
     );
   }
-
-  // ============================================
-  // RENDER ERROR STATE
-  // ============================================
 
   if (error && portfolio.length === 0) {
     return (
@@ -180,10 +293,6 @@ const EnhancedPortfolioDashboard = () => {
       </div>
     );
   }
-
-  // ============================================
-  // RENDER DASHBOARD
-  // ============================================
 
   return (
     <div className="dashboard-container">
@@ -201,11 +310,108 @@ const EnhancedPortfolioDashboard = () => {
               🕐 Last updated: {lastUpdate.toLocaleTimeString()}
             </div>
           )}
+          <button onClick={() => openAddForm()} className="btn-add">
+            ➕ Add Stock
+          </button>
           <button onClick={fetchPortfolio} className="btn-refresh">
-            🔄 Refresh Now
+            🔄 Refresh
           </button>
         </div>
       </div>
+
+      {/* ADD/EDIT FORM MODAL */}
+      {showForm && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h2>{formMode === 'add' ? '➕ Add New Stock' : '✏️ Edit Stock'}</h2>
+              <button onClick={() => setShowForm(false)} className="btn-close">✕</button>
+            </div>
+            
+            <form onSubmit={formMode === 'add' ? handleAddStock : handleEditStock}>
+              <div className="form-grid">
+                <div className="form-group">
+                  <label>Symbol *</label>
+                  <input
+                    type="text"
+                    placeholder="e.g., CRWD, TCS"
+                    value={formData.symbol}
+                    onChange={(e) => setFormData({...formData, symbol: e.target.value.toUpperCase()})}
+                    disabled={formMode === 'edit'}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>Company Name</label>
+                  <input
+                    type="text"
+                    placeholder="e.g., CrowdStrike Holdings"
+                    value={formData.name}
+                    onChange={(e) => setFormData({...formData, name: e.target.value})}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>Quantity *</label>
+                  <input
+                    type="number"
+                    placeholder="Number of shares"
+                    step="0.01"
+                    value={formData.quantity}
+                    onChange={(e) => setFormData({...formData, quantity: e.target.value})}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>Average Price ($) *</label>
+                  <input
+                    type="number"
+                    placeholder="Entry price per share"
+                    step="0.01"
+                    value={formData.average_price}
+                    onChange={(e) => setFormData({...formData, average_price: e.target.value})}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>Type</label>
+                  <select value={formData.type} onChange={(e) => setFormData({...formData, type: e.target.value})}>
+                    <option>Stock</option>
+                    <option>ETF</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label>Region</label>
+                  <select value={formData.region} onChange={(e) => setFormData({...formData, region: e.target.value})}>
+                    <option>Global</option>
+                    <option>India</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label>Sector</label>
+                  <input
+                    type="text"
+                    placeholder="e.g., Technology, Healthcare"
+                    value={formData.sector}
+                    onChange={(e) => setFormData({...formData, sector: e.target.value})}
+                  />
+                </div>
+              </div>
+
+              <div className="form-actions">
+                <button type="submit" className="btn-submit">
+                  {formMode === 'add' ? 'Add Stock' : 'Update Stock'}
+                </button>
+                <button type="button" onClick={() => setShowForm(false)} className="btn-cancel">
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* SUMMARY STATS */}
       {stats && (
@@ -263,7 +469,7 @@ const EnhancedPortfolioDashboard = () => {
         </div>
       )}
 
-      {/* FILTERS & SORTING */}
+      {/* CONTROLS */}
       <div className="controls-section">
         <div className="filter-group">
           <label>Filter by Signal:</label>
@@ -297,7 +503,7 @@ const EnhancedPortfolioDashboard = () => {
         
         {filteredPortfolio.length === 0 ? (
           <div className="no-results">
-            <p>No stocks match your filter</p>
+            <p>No stocks in portfolio. Click "Add Stock" to get started!</p>
           </div>
         ) : (
           <div className="table-wrapper">
@@ -311,19 +517,17 @@ const EnhancedPortfolioDashboard = () => {
                   <th className="col-target">Price Target</th>
                   <th className="col-upside">Upside</th>
                   <th className="col-confidence">Confidence</th>
-                  <th className="col-breakdown">Component Scores</th>
+                  <th className="col-actions">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredPortfolio.map((stock) => (
-                  <tr key={stock.symbol} className={`row-${stock.signal?.toLowerCase()}`}>
-                    {/* Symbol */}
+                  <tr key={stock.id} className={`row-${stock.signal?.toLowerCase()}`}>
                     <td className="col-symbol">
                       <strong className="stock-symbol">{stock.symbol}</strong>
                       <span className="stock-name">{stock.name}</span>
                     </td>
 
-                    {/* Current Price */}
                     <td className="col-price">
                       <span className="price-value">
                         {formatPrice(stock.current_price)}
@@ -335,7 +539,6 @@ const EnhancedPortfolioDashboard = () => {
                       )}
                     </td>
 
-                    {/* Composite Score */}
                     <td className="col-score">
                       <div className="score-badge">
                         <span className="score-number">
@@ -354,7 +557,6 @@ const EnhancedPortfolioDashboard = () => {
                       </div>
                     </td>
 
-                    {/* Signal */}
                     <td className="col-signal">
                       <span 
                         className="signal-badge"
@@ -364,12 +566,10 @@ const EnhancedPortfolioDashboard = () => {
                       </span>
                     </td>
 
-                    {/* Price Target */}
                     <td className="col-target">
                       {formatPrice(stock.analyst_price_target)}
                     </td>
 
-                    {/* Upside/Downside */}
                     <td className="col-upside">
                       <span className={stock.upside_downside_percent > 0 ? 'positive' : 'negative'}>
                         {stock.upside_downside_percent ? 
@@ -379,29 +579,27 @@ const EnhancedPortfolioDashboard = () => {
                       </span>
                     </td>
 
-                    {/* Confidence */}
                     <td className="col-confidence">
                       <span className="confidence-badge">
                         {stock.confidence}%
                       </span>
                     </td>
 
-                    {/* Component Breakdown */}
-                    <td className="col-breakdown">
-                      <div className="components">
-                        <span className="component" title="Analyst Rating">
-                          R: {stock.analyst_rating_score?.toFixed(1) || '—'}
-                        </span>
-                        <span className="component" title="News Sentiment">
-                          S: {stock.news_sentiment_score?.toFixed(1) || '—'}
-                        </span>
-                        <span className="component" title="Technical">
-                          T: {stock.technical_score?.toFixed(1) || '—'}
-                        </span>
-                        <span className="component" title="Insider">
-                          I: {stock.insider_score?.toFixed(1) || '—'}
-                        </span>
-                      </div>
+                    <td className="col-actions">
+                      <button 
+                        onClick={() => openEditForm(stock)}
+                        className="btn-action btn-edit"
+                        title="Edit stock"
+                      >
+                        ✏️
+                      </button>
+                      <button 
+                        onClick={() => handleDeleteStock(stock.id)}
+                        className="btn-action btn-delete"
+                        title="Delete stock"
+                      >
+                        🗑️
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -411,45 +609,13 @@ const EnhancedPortfolioDashboard = () => {
         )}
       </div>
 
-      {/* LEGEND */}
-      <div className="legend-section">
-        <h3>Legend</h3>
-        <div className="legend-grid">
-          <div className="legend-item">
-            <span className="legend-symbol">R:</span>
-            <span>Analyst Ratings (Finnhub)</span>
-          </div>
-          <div className="legend-item">
-            <span className="legend-symbol">G:</span>
-            <span>Stock Grades (FMP)</span>
-          </div>
-          <div className="legend-item">
-            <span className="legend-symbol">S:</span>
-            <span>News Sentiment (newsdata.io)</span>
-          </div>
-          <div className="legend-item">
-            <span className="legend-symbol">T:</span>
-            <span>Technical (Alpha Vantage)</span>
-          </div>
-          <div className="legend-item">
-            <span className="legend-symbol">I:</span>
-            <span>Insider (SEC Form 4)</span>
-          </div>
-          <div className="legend-item">
-            <span className="legend-symbol">F:</span>
-            <span>Filings (SEC-API.io)</span>
-          </div>
-        </div>
-      </div>
-
       {/* FOOTER */}
       <div className="dashboard-footer">
         <p>
           💡 <strong>Data Updated Daily at 5 PM ET</strong> via GitHub Actions automation
         </p>
         <p className="footer-note">
-          Composite scores are calculated from 6 professional data sources using institutional-grade weighting.
-          This is analytical data for informational purposes only, not financial advice.
+          News analyzed every 6 hours (weekdays) and 24 hours (weekends). All data from real market sources.
         </p>
       </div>
     </div>
