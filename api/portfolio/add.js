@@ -1,49 +1,45 @@
 /**
- * Add Stock to Portfolio
  * POST /api/portfolio/add
+ * Adds new stock to portfolio
+ * Body: { symbol, name, type, region, quantity, average_price }
  */
 
-const Database = require('better-sqlite3');
-const path = require('path');
+const dataStorage = require('../../backend/lib/dataStorage');
 
 export default function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-
   try {
-    const { symbol, name, quantity, average_price, type, region, sector } = req.body;
-
-    if (!symbol || !quantity || !average_price) {
-      return res.status(400).json({ error: 'Missing required fields' });
+    if (req.method !== 'POST') {
+      return res.status(405).json({ error: 'Method not allowed' });
     }
 
-    const dbPath = path.join(process.cwd(), 'data', 'stocks.db');
-    const db = new Database(dbPath);
+    const { symbol, name, type, region, quantity, average_price } = req.body;
 
-    const result = db.prepare(`
-      INSERT INTO portfolio (symbol, name, quantity, average_price, type, region, sector)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      symbol.toUpperCase(),
-      name || symbol,
-      parseFloat(quantity),
-      parseFloat(average_price),
-      type || 'Stock',
-      region || 'Global',
-      sector || ''
-    );
+    if (!symbol) {
+      return res.status(400).json({ error: 'Symbol is required' });
+    }
 
-    db.close();
-
-    res.status(200).json({
-      status: 'success',
-      message: 'Stock added successfully',
-      id: result.lastInsertRowid
+    const result = dataStorage.addStock(symbol, {
+      name: name || symbol,
+      type: type || 'Stock',
+      region: region || 'Global',
+      quantity: quantity || 0,
+      average_price: average_price || 0
     });
 
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: `Stock ${symbol} added`,
+      stock: result.stock
+    });
   } catch (error) {
     console.error('Add stock error:', error);
-    res.status(500).json({ error: error.message });
+    return res.status(500).json({
+      error: 'Failed to add stock',
+      message: error.message
+    });
   }
 }
