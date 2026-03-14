@@ -1,55 +1,18 @@
 #!/usr/bin/env node
 
 /**
- * Daily Market Data Update Script - PROFESSIONAL VERSION
- * Fetches from 6 APIs and stores in JSON file
- * No compilation required - works in all environments
+ * Daily Market Data Update - CLEAN VERSION
+ * - Updates ONLY user-added stocks
+ * - Uses historical data as reference, NOT as filler
+ * - Real API analysis
+ * - NO dummy data injected
  */
 
 require('dotenv').config();
-const axios = require('axios');
 const logger = require('../lib/logger');
 const dataStorage = require('../lib/dataStorage');
-
-// Portfolio stocks
-const STOCKS = [
-  'SPMO', 'SMH', 'TPL', 'VRT', 'MU', 'MELI', 'AVNV', 'BWXT',
-  'GEV', 'FTAI', 'SHLD', 'SCCO', 'KTOS', 'RKLB', 'AGX', 'ASTS',
-  'CRWD', 'LLY'
-];
-
-async function calculateCompositeScore(prices, ratings, news) {
-  // Simple professional scoring
-  let score = 5; // Default middle score
-
-  if (prices && prices.changePercent) {
-    score += Math.min(2, prices.changePercent / 10); // Price momentum
-  }
-
-  if (ratings && ratings.length > 0) {
-    const r = ratings[0];
-    const total = (r.strongBuy || 0) + (r.buy || 0) + (r.hold || 0) + 
-                  (r.sell || 0) + (r.strongSell || 0);
-    if (total > 0) {
-      const bullish = (r.strongBuy || 0) + (r.buy || 0);
-      score += (bullish / total) * 3; // Rating influence
-    }
-  }
-
-  if (news && news.length > 0) {
-    score += 0.5; // News coverage boost
-  }
-
-  return Math.max(0, Math.min(10, score));
-}
-
-function getSignal(score) {
-  if (score >= 8.5) return 'STRONG_BUY';
-  if (score >= 7.5) return 'BUY';
-  if (score >= 6.5) return 'HOLD';
-  if (score >= 5) return 'REDUCE';
-  return 'SELL';
-}
+const apiClient = require('../lib/apiClient');
+const compositeScorer = require('../lib/compositeScorer');
 
 async function updateMarketData() {
   const startTime = Date.now();
@@ -57,150 +20,118 @@ async function updateMarketData() {
   try {
     logger.info('');
     logger.info('╔════════════════════════════════════════════════════════════╗');
-    logger.info('║       DAILY MARKET DATA UPDATE - PROFESSIONAL VERSION      ║');
+    logger.info('║       DAILY MARKET DATA UPDATE - PRODUCTION VERSION        ║');
     logger.info('╚════════════════════════════════════════════════════════════╝');
     logger.info(`📅 Date: ${new Date().toISOString()}`);
-    logger.info(`📊 Stocks to update: ${STOCKS.length}`);
     logger.info('');
 
-    // ============================================
-    // STEP 1: Fetch Prices from Alpha Vantage
-    // ============================================
-    logger.info('STEP 1: Fetching prices from Alpha Vantage...');
+    // Get user's portfolio (only user-added stocks)
+    const portfolioData = dataStorage.readData();
+    const stocks = portfolioData.stocks || [];
+
+    if (stocks.length === 0) {
+      logger.info('ℹ️  Portfolio is empty');
+      logger.info('ℹ️  Add stocks via dashboard to start analysis');
+      logger.info('ℹ️  Historical data is available for reference');
+      logger.info('');
+      logger.info('✅ UPDATE COMPLETED (NO STOCKS TO ANALYZE)');
+      process.exit(0);
+    }
+
+    logger.info(`📊 Updating ${stocks.length} stocks from your portfolio...`);
+    logger.info('');
+
+    // ========== STEP 1: Fetch Prices ==========
+    logger.info('STEP 1: Fetching current prices...');
     let priceCount = 0;
-    const pricesData = {};
 
-    for (const symbol of STOCKS) {
+    for (const stock of stocks) {
       try {
-        const res = await axios.get(
-          `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${symbol}&apikey=${process.env.ALPHA_VANTAGE_API_KEY}`,
-          { timeout: 10000 }
-        );
-
-        if (res.data && res.data['Global Quote'] && res.data['Global Quote'].c) {
-          pricesData[symbol] = {
-            price: parseFloat(res.data['Global Quote'].c),
-            change: parseFloat(res.data['Global Quote'].d) || 0,
-            changePercent: parseFloat(res.data['Global Quote'].dp) || 0,
-            high52w: parseFloat(res.data['Global Quote']['52WeekHigh']) || null,
-            low52w: parseFloat(res.data['Global Quote']['52WeekLow']) || null
-          };
+        const priceData = await apiClient.fetchPrice(stock.symbol);
+        if (priceData) {
+          stock.priceData = priceData;
+          stock.current_price = priceData.price;
+          stock.change_percent = priceData.changePercent;
           priceCount++;
-          logger.debug(`  ✓ ${symbol}: $${pricesData[symbol].price}`);
-        }
-
-        // Rate limit: 5 calls/min for Alpha Vantage
-        await new Promise(r => setTimeout(r, 12000));
-      } catch (e) {
-        logger.warn(`  ⚠ ${symbol}: ${e.message}`);
-      }
-    }
-    logger.info(`✓ Fetched prices for ${priceCount} stocks\n`);
-
-    // ============================================
-    // STEP 2: Fetch News
-    // ============================================
-    logger.info('STEP 2: Fetching news from newsdata.io...');
-    let newsCount = 0;
-    const newsData = {};
-
-    for (const symbol of STOCKS.slice(0, 5)) {
-      try {
-        const res = await axios.get(
-          `https://newsdata.io/api/1/news?q=${symbol}&apikey=${process.env.NEWSDATA_API_KEY}&language=en&limit=3`,
-          { timeout: 10000 }
-        );
-
-        if (res.data && res.data.results) {
-          newsData[symbol] = res.data.results;
-          newsCount += res.data.results.length;
-          logger.debug(`  ✓ ${symbol}: ${res.data.results.length} articles`);
+          logger.debug(`  ✓ ${stock.symbol}: $${priceData.price}`);
         }
       } catch (e) {
-        logger.warn(`  ⚠ ${symbol}: ${e.message}`);
-        newsData[symbol] = [];
+        logger.warn(`  ⚠ ${stock.symbol}: ${e.message}`);
       }
     }
-    logger.info(`✓ Fetched ${newsCount} news articles\n`);
+    logger.info(`✓ Fetched prices for ${priceCount}/${stocks.length} stocks\n`);
 
-    // ============================================
-    // STEP 3: Fetch Analyst Ratings
-    // ============================================
-    logger.info('STEP 3: Fetching analyst ratings from Finnhub...');
+    // ========== STEP 2: Fetch Ratings ==========
+    logger.info('STEP 2: Fetching analyst ratings...');
     let ratingCount = 0;
-    const ratingsData = {};
 
-    for (const symbol of STOCKS.slice(0, 5)) {
+    for (const stock of stocks) {
       try {
-        const res = await axios.get(
-          `https://finnhub.io/api/v1/stock/recommendation?symbol=${symbol}&token=${process.env.FINNHUB_API_KEY}`,
-          { timeout: 10000 }
-        );
-
-        if (res.data && res.data.length > 0) {
-          ratingsData[symbol] = res.data;
+        const ratings = await apiClient.fetchRatings(stock.symbol);
+        if (ratings) {
+          stock.ratings = ratings;
           ratingCount++;
-          logger.debug(`  ✓ ${symbol}: Ratings fetched`);
         }
       } catch (e) {
-        logger.warn(`  ⚠ ${symbol}: ${e.message}`);
-        ratingsData[symbol] = [];
+        logger.warn(`  ⚠ ${stock.symbol}: ${e.message}`);
       }
     }
     logger.info(`✓ Fetched ratings for ${ratingCount} stocks\n`);
 
-    // ============================================
-    // STEP 4: Calculate Composite Scores
-    // ============================================
-    logger.info('STEP 4: Calculating composite scores...');
+    // ========== STEP 3: Fetch News ==========
+    logger.info('STEP 3: Fetching news...');
+    let newsCount = 0;
 
-    const updatedStocks = [];
-    for (const symbol in pricesData) {
-      const score = await calculateCompositeScore(
-        pricesData[symbol],
-        ratingsData[symbol],
-        newsData[symbol]
-      );
-
-      const stockData = {
-        symbol,
-        name: symbol,
-        type: 'Stock',
-        region: 'Global',
-        quantity: 0,
-        average_price: pricesData[symbol].price,
-        current_price: pricesData[symbol].price,
-        change_percent: pricesData[symbol].changePercent,
-        latest_score: score,
-        confidence: 85,
-        signal: getSignal(score),
-        analyst_rating_score: 5,
-        news_sentiment_score: 5,
-        technical_score: 5,
-        insider_score: 5,
-        filing_health_score: 5,
-        analyst_price_target: pricesData[symbol].price * 1.1,
-        upside_downside_percent: 10,
-        timestamp: new Date().toISOString()
-      };
-
-      dataStorage.upsertStock(symbol, stockData);
-      updatedStocks.push(symbol);
-      logger.debug(`  ✓ ${symbol}: Score ${score.toFixed(1)}/10 → ${getSignal(score)}`);
+    for (const stock of stocks) {
+      try {
+        const news = await apiClient.fetchNews(stock.symbol);
+        if (news && news.length > 0) {
+          stock.news = news;
+          newsCount += news.length;
+        }
+      } catch (e) {
+        logger.warn(`  ⚠ ${stock.symbol}: ${e.message}`);
+      }
     }
-    logger.info(`✓ Calculated scores for ${updatedStocks.length} stocks\n`);
+    logger.info(`✓ Fetched ${newsCount} news articles\n`);
 
-    // ============================================
-    // Summary
-    // ============================================
+    // ========== STEP 4: Calculate Scores ==========
+    logger.info('STEP 4: Calculating composite scores...');
+    let scoredCount = 0;
+
+    for (const stock of stocks) {
+      try {
+        const scoreResult = compositeScorer.calculateScore(stock);
+        
+        if (scoreResult) {
+          const result = dataStorage.updateStock(stock.id, {
+            latest_score: scoreResult.score,
+            signal: scoreResult.signal,
+            confidence: scoreResult.confidence,
+            current_price: stock.current_price || stock.average_price,
+            change_percent: stock.change_percent || 0
+          });
+
+          if (result.success) {
+            scoredCount++;
+            logger.debug(`  ✓ ${stock.symbol}: ${scoreResult.score.toFixed(1)}/10 → ${scoreResult.signal}`);
+          }
+        }
+      } catch (e) {
+        logger.error(`Score calculation error for ${stock.symbol}`, e);
+      }
+    }
+    logger.info(`✓ Calculated scores for ${scoredCount} stocks\n`);
+
+    // ========== Summary ==========
     logger.info('╔════════════════════════════════════════════════════════════╗');
-    logger.info('║           DAILY UPDATE SUMMARY                              ║');
+    logger.info('║           UPDATE SUMMARY                                    ║');
     logger.info('╚════════════════════════════════════════════════════════════╝');
-    logger.info(`✓ Prices fetched: ${priceCount}`);
-    logger.info(`✓ News articles: ${newsCount}`);
+    logger.info(`✓ Portfolio stocks analyzed: ${stocks.length}`);
+    logger.info(`✓ Prices updated: ${priceCount}`);
     logger.info(`✓ Ratings fetched: ${ratingCount}`);
-    logger.info(`✓ Stocks scored: ${updatedStocks.length}`);
-    logger.info(`✓ Data stored to: data/portfolio-data.json`);
+    logger.info(`✓ News articles: ${newsCount}`);
+    logger.info(`✓ Scores calculated: ${scoredCount}`);
     logger.info('');
 
     const duration = (Date.now() - startTime) / 1000;
@@ -213,7 +144,6 @@ async function updateMarketData() {
 
   } catch (error) {
     logger.error('FATAL ERROR', error);
-    logger.info('❌ UPDATE FAILED');
     process.exit(1);
   }
 }
