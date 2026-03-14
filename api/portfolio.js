@@ -1,50 +1,44 @@
-import Database from 'better-sqlite3';
-import path from 'path';
+/**
+ * Portfolio API Route
+ * GET /api/portfolio - Returns portfolio with latest scores
+ * Vercel serverless function
+ */
+
+const getPortfolioWithScores = require('../backend/lib/getPortfolioWithScores');
 
 export default function handler(req, res) {
-  // Open SQLite database from GitHub storage
-  const dbPath = path.join(process.cwd(), 'data', 'stocks.db');
-  const db = new Database(dbPath, { readonly: true });
-  
   try {
-    // Get portfolio with current data
-    const portfolio = db.prepare(`
-      SELECT 
-        p.*,
-        s.price,
-        s.change,
-        s.change_percent,
-        s.composite_score,
-        s.recommendation,
-        s.updated_at
-      FROM portfolio p
-      LEFT JOIN stock_data s ON p.symbol = s.symbol
-      WHERE p.active = 1
-      ORDER BY p.region DESC
-    `).all();
-    
-    // Get portfolio stats
-    const stats = db.prepare(`
-      SELECT 
-        COUNT(*) as count,
-        SUM(quantity) as total_shares,
-        MAX(updated_at) as last_update
-      FROM portfolio
-      WHERE active = 1
-    `).get();
-    
+    if (req.method !== 'GET') {
+      return res.status(405).json({ error: 'Method not allowed' });
+    }
+
+    const portfolio = getPortfolioWithScores();
+
+    // Calculate summary stats
+    const stats = {
+      totalStocks: portfolio.length,
+      strongBuys: portfolio.filter(p => p.signal === 'STRONG_BUY').length,
+      buys: portfolio.filter(p => p.signal === 'BUY').length,
+      holds: portfolio.filter(p => p.signal === 'HOLD').length,
+      reduces: portfolio.filter(p => p.signal === 'REDUCE').length,
+      sells: portfolio.filter(p => p.signal === 'SELL').length,
+      averageScore: portfolio.length > 0 
+        ? (portfolio.reduce((sum, p) => sum + (p.latest_score || 0), 0) / portfolio.length).toFixed(2)
+        : 0
+    };
+
     res.status(200).json({
-      success: true,
-      portfolio,
-      stats,
-      lastUpdated: stats.last_update
+      status: 'success',
+      timestamp: new Date().toISOString(),
+      stats: stats,
+      portfolio: portfolio
     });
+
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
+    console.error('Portfolio API error:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch portfolio',
+      message: error.message 
     });
-  } finally {
-    db.close();
   }
 }
