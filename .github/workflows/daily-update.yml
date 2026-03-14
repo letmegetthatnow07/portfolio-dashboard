@@ -1,48 +1,43 @@
 name: Daily Market Data Update
 
 on:
-  # Schedule: 10 PM UTC = 5-6 PM ET (depending on daylight savings)
-  # Runs Monday-Friday (trading days only)
   schedule:
+    # Run Monday-Friday at 10 PM UTC = 5 PM ET
     - cron: '0 22 * * 1-5'
-  # Allow manual trigger from GitHub UI
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   update-market-data:
     runs-on: ubuntu-latest
     
     steps:
-      # Step 1: Download your code from GitHub
       - name: Checkout repository
         uses: actions/checkout@v3
       
-      # Step 2: Install Node.js environment
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
           node-version: '18'
       
-      # Step 3: Install npm packages (THIS WAS FAILING BEFORE)
       - name: Install dependencies
         run: |
           cd backend
           npm install
         continue-on-error: false
       
-      # Step 4: Initialize database if needed
       - name: Initialize database
         run: |
           cd backend
           npm run init-db || true
       
-      # Step 5: Fetch and analyze market data
       - name: Fetch and update market data
         run: |
           cd backend
           npm run update
         env:
-          # Pass API keys from GitHub Secrets (defined later)
           ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           NEWSDATA_API_KEY: ${{ secrets.NEWSDATA_API_KEY }}
@@ -52,7 +47,6 @@ jobs:
           LOG_LEVEL: info
           NODE_ENV: production
       
-      # Step 6: Save changes to database
       - name: Commit database changes
         run: |
           git config --local user.email "action@github.com"
@@ -61,16 +55,8 @@ jobs:
           git add backend/logs/* || true
           git commit -m "📊 Auto: Market data update $(date +'%Y-%m-%d %H:%M:%S UTC')" || true
       
-      # Step 7: Upload changes back to GitHub
       - name: Push changes to GitHub
         uses: ad-m/github-push-action@master
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           branch: main
-      
-      # Step 8: Notify Vercel to redeploy frontend
-      - name: Trigger Vercel redeploy
-        run: |
-          if [ ! -z "${{ secrets.VERCEL_DEPLOY_HOOK }}" ]; then
-            curl -X POST "${{ secrets.VERCEL_DEPLOY_HOOK }}" || true
-          fi
