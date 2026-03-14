@@ -1,20 +1,19 @@
 /**
- * Portfolio API Route
- * GET /api/portfolio - Returns portfolio with latest scores
- * Vercel serverless function
+ * Portfolio API Endpoint
+ * GET /api/portfolio - Returns portfolio with scores
  */
 
 const getPortfolioWithScores = require('../backend/lib/getPortfolioWithScores');
 
 export default function handler(req, res) {
-  try {
-    if (req.method !== 'GET') {
-      return res.status(405).json({ error: 'Method not allowed' });
-    }
+  if (req.method !== 'GET') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
 
+  try {
     const portfolio = getPortfolioWithScores();
 
-    // Calculate summary stats
+    // Calculate stats
     const stats = {
       totalStocks: portfolio.length,
       strongBuys: portfolio.filter(p => p.signal === 'STRONG_BUY').length,
