@@ -1,40 +1,27 @@
 #!/usr/bin/env node
 
 /**
- * Daily Market Data Update Script (COMPLETE VERSION)
- * Runs every weekday at 5 PM ET (10 PM UTC)
- * Fetches from 6 APIs, analyzes, calculates scores, stores in database
+ * Daily Market Data Update Script - COMPLETE VERSION
+ * Runs every weekday at 10 PM UTC (5 PM ET)
+ * Fetches, analyzes, calculates scores, stores data
  */
 
+require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-require('dotenv').config();
 
-// ============================================
-// LOAD ALL MODULES
-// ============================================
-
+// Import all modules
 const logger = require('../lib/logger');
 const dedupeCache = require('../lib/deduplicationCache');
 const validator = require('../lib/validateAndNormalize');
 const fetcher = require('../lib/fetchFinance');
 const newsAnalyzer = require('../lib/advancedNewsAnalyzer');
 const filingParser = require('../lib/parseQuarterlyFiling');
+const form4Fetcher = require('../lib/fetchForm4');
 const calculateCompositeScore = require('../lib/calculateCompositeScore');
+const initDatabase = require('../lib/initDatabase');
 
-// ============================================
-// CONFIGURATION
-// ============================================
-
-const CONFIG = {
-  nodeEnv: process.env.NODE_ENV || 'development',
-  logLevel: process.env.LOG_LEVEL || 'info'
-};
-
-// ============================================
-// PORTFOLIO STOCKS
-// ============================================
-
+// Portfolio stocks
 const STOCKS = [
   'SPMO', 'SMH', 'TPL', 'VRT', 'MU', 'MELI', 'AVNV', 'BWXT',
   'GEV', 'FTAI', 'SHLD', 'SCCO', 'KTOS', 'RKLB', 'AGX', 'ASTS',
@@ -46,82 +33,118 @@ const STOCKS = [
 // ============================================
 
 async function updateMarketData() {
+  const startTime = Date.now();
+  
   try {
-    logger.info('=====================================');
-    logger.info('DAILY MARKET DATA UPDATE STARTED');
-    logger.info('=====================================');
-    logger.info(`Environment: ${CONFIG.nodeEnv}`);
-    logger.info(`Time: ${new Date().toISOString()}`);
-    logger.info(`Stocks to update: ${STOCKS.length}`);
     logger.info('');
+    logger.info('╔════════════════════════════════════════════════════════════╗');
+    logger.info('║       DAILY MARKET DATA UPDATE - STARTED                   ║');
+    logger.info('╚════════════════════════════════════════════════════════════╝');
+    logger.info(`📅 Date: ${new Date().toISOString()}`);
+    logger.info(`📊 Stocks to update: ${STOCKS.length}`);
+    logger.info('');
+
+    // Initialize database
+    logger.info('INITIALIZING DATABASE...');
+    const db = initDatabase();
+    logger.info('✓ Database ready\n');
 
     // ============================================
     // STEP 1: Fetch Prices & Technicals
     // ============================================
-    logger.info('STEP 1: Fetching prices and technical indicators...');
+    logger.info('STEP 1/8: Fetching prices and technical indicators...');
     const priceData = await fetcher.fetchPricesAndTechnicals(STOCKS);
-    logger.info(priceData ? '✓ Prices fetched successfully' : '⚠ No new prices to fetch');
+    if (priceData) {
+      logger.info(`✓ Prices fetched for ${Object.keys(priceData).length} stocks\n`);
+    } else {
+      logger.info('⚠ No new prices (cached or failed)\n');
+    }
 
     // ============================================
     // STEP 2: Fetch Analyst Ratings
     // ============================================
-    logger.info('STEP 2: Fetching analyst ratings...');
+    logger.info('STEP 2/8: Fetching analyst ratings from Finnhub...');
     const ratingData = await fetcher.fetchAnalystRatings(STOCKS);
-    logger.info(ratingData ? '✓ Ratings fetched successfully' : '⚠ No new ratings to fetch');
+    if (ratingData) {
+      logger.info(`✓ Ratings fetched for ${Object.keys(ratingData).length} stocks\n`);
+    } else {
+      logger.info('⚠ No new ratings (cached or failed)\n');
+    }
 
     // ============================================
     // STEP 3: Fetch News
     // ============================================
-    logger.info('STEP 3: Fetching news articles...');
+    logger.info('STEP 3/8: Fetching news from newsdata.io...');
     const newsData = await fetcher.fetchNews(STOCKS);
-    logger.info(newsData ? '✓ News fetched successfully' : '⚠ No new news to fetch');
+    if (newsData) {
+      let newsCount = 0;
+      for (const symbol in newsData) {
+        newsCount += newsData[symbol].length;
+      }
+      logger.info(`✓ Fetched ${newsCount} news articles\n`);
+    } else {
+      logger.info('⚠ No new news (cached or failed)\n');
+    }
 
     // ============================================
-    // STEP 4: Analyze News (8-layer)
+    // STEP 4: Analyze News (8-Layer)
     // ============================================
-    logger.info('STEP 4: Analyzing news sentiment (8-layer analysis)...');
+    logger.info('STEP 4/8: Analyzing news with 8-layer understanding...');
     const analyzedNews = {};
     if (newsData) {
       for (const symbol in newsData) {
         analyzedNews[symbol] = newsAnalyzer.analyzeNews(newsData[symbol], symbol);
-        logger.debug(`✓ Analyzed ${analyzedNews[symbol].length} articles for ${symbol}`);
+        logger.debug(`  - ${symbol}: Analyzed ${analyzedNews[symbol].length} articles`);
       }
+      logger.info(`✓ News analysis complete\n`);
+    } else {
+      logger.info('⚠ No news to analyze\n');
     }
-    logger.info('✓ News analysis complete');
 
     // ============================================
-    // STEP 5: Fetch Stock Grades
+    // STEP 5: Fetch Stock Grades & Price Targets
     // ============================================
-    logger.info('STEP 5: Fetching stock grades and price targets...');
+    logger.info('STEP 5/8: Fetching stock grades from FMP...');
     const gradeData = await fetcher.fetchStockGrades(STOCKS);
-    logger.info(gradeData ? '✓ Grades fetched successfully' : '⚠ No new grades to fetch');
+    if (gradeData) {
+      logger.info(`✓ Grades fetched for ${Object.keys(gradeData).length} stocks\n`);
+    } else {
+      logger.info('⚠ No new grades (cached or failed)\n');
+    }
 
     // ============================================
     // STEP 6: Fetch Quarterly Filings
     // ============================================
-    logger.info('STEP 6: Fetching quarterly filings...');
+    logger.info('STEP 6/8: Fetching quarterly filings from SEC-API.io...');
     const filingData = await fetcher.fetchQuarterlyFilings(STOCKS);
-    logger.info(filingData ? '✓ Filings fetched successfully' : '⚠ No new filings to fetch');
+    if (filingData) {
+      logger.info(`✓ Filings fetched for ${Object.keys(filingData).length} stocks\n`);
+    } else {
+      logger.info('⚠ No new filings (cached or failed)\n');
+    }
 
     // ============================================
-    // STEP 7: Parse Filings
+    // STEP 7: Parse Filings & Get Insider Data
     // ============================================
-    logger.info('STEP 7: Parsing quarterly filings...');
+    logger.info('STEP 7/8: Parsing filings and fetching insider transactions...');
     const parsedFilings = {};
-    if (filingData) {
-      for (const symbol in filingData) {
+    const insiderData = {};
+    
+    for (const symbol of STOCKS) {
+      if (filingData && filingData[symbol]) {
         parsedFilings[symbol] = await filingParser.parseFilings(symbol, filingData[symbol]);
-        logger.debug(`✓ Parsed filing for ${symbol}`);
       }
+      insiderData[symbol] = await form4Fetcher.getLatestForm4Filings(symbol);
     }
-    logger.info('✓ Filing analysis complete');
+    logger.info('✓ Filing and insider data processed\n');
 
     // ============================================
     // STEP 8: Calculate Composite Scores
     // ============================================
-    logger.info('STEP 8: Calculating composite scores (0-10)...');
+    logger.info('STEP 8/8: Calculating composite scores (0-10 scale)...');
     const scores = {};
-    
+    const today = new Date().toISOString().split('T')[0];
+
     for (const symbol of STOCKS) {
       const stockData = {
         symbol: symbol,
@@ -130,81 +153,139 @@ async function updateMarketData() {
         news: analyzedNews[symbol] ? analyzedNews[symbol] : [],
         technicals: priceData && priceData[symbol] ? priceData[symbol] : null,
         filing: parsedFilings[symbol] ? parsedFilings[symbol] : null,
-        currentPrice: priceData && priceData[symbol]?.prices?.price || null
+        insider: insiderData[symbol] ? insiderData[symbol] : null,
+        currentPrice: priceData && priceData[symbol]?.prices?.price || null,
+        priceTarget: gradeData && gradeData[symbol]?.priceTarget || null
       };
 
       const score = calculateCompositeScore(stockData);
       if (score) {
         scores[symbol] = score;
-        logger.debug(`✓ ${symbol}: Score ${score.composite_score}/10 (${score.signal})`);
+        
+        // Store in database
+        try {
+          db.prepare(`
+            INSERT OR REPLACE INTO metric_scores (
+              symbol, date, 
+              analyst_rating_score, stock_grade_score, news_sentiment_score,
+              technical_score, insider_score, filing_health_score,
+              composite_score, composite_confidence, primary_signal,
+              analyst_price_target, current_price, upside_downside_percent
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            symbol, today,
+            score.components.analyst_rating || 0,
+            score.components.stock_grade || 0,
+            score.components.news_sentiment || 0,
+            score.components.technical || 0,
+            score.components.insider || 0,
+            score.components.filing_health || 0,
+            score.composite_score,
+            score.confidence,
+            score.signal,
+            score.analyst_price_target,
+            score.current_price,
+            score.upside_downside
+          );
+        } catch (dbError) {
+          logger.warn(`Failed to store score for ${symbol}: ${dbError.message}`);
+        }
+
+        logger.debug(`  ${symbol}: ${score.composite_score}/10 → ${score.signal}`);
       }
     }
-    logger.info(`✓ Calculated scores for ${Object.keys(scores).length} stocks`);
+    logger.info(`✓ Calculated scores for ${Object.keys(scores).length} stocks\n`);
 
     // ============================================
-    // STEP 9: Display Summary
+    // SUMMARY & STATISTICS
     // ============================================
     logger.info('');
-    logger.info('PORTFOLIO ANALYSIS SUMMARY:');
-    logger.info('=====================================');
-    
+    logger.info('╔════════════════════════════════════════════════════════════╗');
+    logger.info('║                    PORTFOLIO SUMMARY                        ║');
+    logger.info('╚════════════════════════════════════════════════════════════╝');
+
     const signals = {
-      STRONG_BUY: 0,
-      BUY: 0,
-      HOLD: 0,
-      REDUCE: 0,
-      SELL: 0
+      STRONG_BUY: [],
+      BUY: [],
+      HOLD: [],
+      REDUCE: [],
+      SELL: [],
+      STRONG_SELL: []
     };
 
     for (const symbol in scores) {
       const score = scores[symbol];
-      signals[score.signal]++;
-      const confidence = `${score.confidence}%`;
-      logger.info(`${symbol}: ${score.composite_score}/10 → ${score.signal} (confidence: ${confidence})`);
+      if (signals[score.signal]) {
+        signals[score.signal].push(symbol);
+      }
     }
 
     logger.info('');
     logger.info('SIGNAL DISTRIBUTION:');
-    logger.info(`  STRONG_BUY: ${signals.STRONG_BUY}`);
-    logger.info(`  BUY:        ${signals.BUY}`);
-    logger.info(`  HOLD:       ${signals.HOLD}`);
-    logger.info(`  REDUCE:     ${signals.REDUCE}`);
-    logger.info(`  SELL:       ${signals.SELL}`);
+    logger.info(`  🚀 STRONG_BUY:  ${signals.STRONG_BUY.length} ${signals.STRONG_BUY.length > 0 ? '(' + signals.STRONG_BUY.join(', ') + ')' : ''}`);
+    logger.info(`  ✅ BUY:         ${signals.BUY.length} ${signals.BUY.length > 0 ? '(' + signals.BUY.join(', ') + ')' : ''}`);
+    logger.info(`  ⏸️  HOLD:        ${signals.HOLD.length} ${signals.HOLD.length > 0 ? '(' + signals.HOLD.join(', ') + ')' : ''}`);
+    logger.info(`  ⚠️  REDUCE:      ${signals.REDUCE.length} ${signals.REDUCE.length > 0 ? '(' + signals.REDUCE.join(', ') + ')' : ''}`);
+    logger.info(`  ❌ SELL:        ${signals.SELL.length} ${signals.SELL.length > 0 ? '(' + signals.SELL.join(', ') + ')' : ''}`);
+
+    logger.info('');
+    logger.info('TOP 5 STRONGEST BUYS:');
+    const topBuys = Object.values(scores)
+      .sort((a, b) => b.composite_score - a.composite_score)
+      .slice(0, 5);
+    
+    topBuys.forEach((score, i) => {
+      logger.info(`  ${i + 1}. ${score.symbol}: ${score.composite_score}/10 (${score.signal})`);
+    });
+
+    logger.info('');
+    logger.info('TOP 5 WEAKEST PERFORMERS:');
+    const topSells = Object.values(scores)
+      .sort((a, b) => a.composite_score - b.composite_score)
+      .slice(0, 5);
+    
+    topSells.forEach((score, i) => {
+      logger.info(`  ${i + 1}. ${score.symbol}: ${score.composite_score}/10 (${score.signal})`);
+    });
 
     // ============================================
-    // STEP 10: Cleanup Cache
-    // ============================================
-    logger.info('STEP 10: Cleaning up cache...');
-    dedupeCache.cleanup();
-    const cacheStats = dedupeCache.getStats();
-    logger.info(`✓ Cache cleaned (${cacheStats.totalCached} items remaining)`);
-
-    // ============================================
-    // COMPLETED
+    // CLEANUP
     // ============================================
     logger.info('');
-    logger.info('=====================================');
-    logger.info('✅ DAILY UPDATE COMPLETED SUCCESSFULLY!');
-    logger.info('=====================================');
-    logger.info(`Finished at: ${new Date().toISOString()}`);
+    logger.info('CLEANUP:');
+    dedupeCache.cleanup();
+    const cacheStats = dedupeCache.getStats();
+    logger.info(`  Cache cleaned (${cacheStats.totalCached} items remaining)`);
+
+    // Close database
+    db.close();
+    logger.info('  Database closed');
+
+    // ============================================
+    // COMPLETION
+    // ============================================
+    const duration = (Date.now() - startTime) / 1000;
+    logger.info('');
+    logger.info('╔════════════════════════════════════════════════════════════╗');
+    logger.info('║           ✅ DAILY UPDATE COMPLETED SUCCESSFULLY            ║');
+    logger.info('╚════════════════════════════════════════════════════════════╝');
+    logger.info(`⏱️  Duration: ${duration.toFixed(2)} seconds`);
+    logger.info(`🕐 Finished: ${new Date().toISOString()}`);
     logger.info('');
 
     process.exit(0);
 
   } catch (error) {
-    logger.error('FATAL ERROR during update', error);
+    logger.error('FATAL ERROR DURING UPDATE', error);
     logger.info('');
-    logger.info('=====================================');
-    logger.info('❌ UPDATE FAILED');
-    logger.info('=====================================');
+    logger.info('╔════════════════════════════════════════════════════════════╗');
+    logger.info('║                  ❌ UPDATE FAILED                           ║');
+    logger.info('╚════════════════════════════════════════════════════════════╝');
+    logger.error(error.message);
+    logger.info('');
     process.exit(1);
   }
 }
 
-// ============================================
-// RUN THE UPDATE
-// ============================================
-
-logger.info('');
-logger.info('Market Data Update Script v1.0');
+// Run update
 updateMarketData();
