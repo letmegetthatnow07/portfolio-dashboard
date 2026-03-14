@@ -1,24 +1,26 @@
 {
   "name": "portfolio-dashboard-backend",
   "version": "1.0.0",
-  "description": "Professional portfolio tracking backend",
+  "description": "Portfolio dashboard backend with daily market updates",
   "main": "scripts/daily-update.js",
-  "type": "commonjs",
-  "engines": {
-    "node": "18"
-  },
   "scripts": {
     "init-db": "node scripts/init-db.js",
     "update": "node scripts/daily-update.js",
-    "dev": "node scripts/daily-update.js",
-    "test": "node -e \"console.log('Testing setup...')\""
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
+  "keywords": [
+    "portfolio",
+    "stocks",
+    "market",
+    "analysis"
+  ],
+  "author": "",
+  "license": "ISC",
   "dependencies": {
-    "better-sqlite3": "^9.0.0",
-    "axios": "^1.6.0",
-    "cheerio": "^1.0.0",
-    "sentiment": "^5.0.1",
+    "axios": "^1.6.2",
+    "better-sqlite3": "^9.2.2",
+    "cheerio": "^1.0.0-rc.12",
     "dotenv": "^16.3.1",
-    "node-cron": "^3.0.2"
+    "sentiment": "^11.2.1"
   }
 }
