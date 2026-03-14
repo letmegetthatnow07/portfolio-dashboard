@@ -1,141 +1,273 @@
+/**
+ * Financial Data Fetcher
+ * Fetches data from all 6 APIs
+ * Implements deduplication to prevent redundant calls
+ */
+
 const axios = require('axios');
-const FINNHUB_KEY = process.env.FINNHUB_API_KEY;
+const dedupeCache = require('./deduplicationCache');
+const logger = require('./logger');
 
-const fetchFinance = {
-  // FINNHUB: Analyst ratings + News + Fundamentals
-  async getFinnhubData(symbol) {
-    try {
-      // Quote data (price, change)
-      const quoteRes = await axios.get(
-        `https://finnhub.io/api/v1/quote?symbol=${symbol}&token=${FINNHUB_KEY}`
-      );
-      
-      // Analyst ratings (FRESH DATA - key for institutional tracking)
-      const ratingsRes = await axios.get(
-        `https://finnhub.io/api/v1/stock/recommendation?symbol=${symbol}&token=${FINNHUB_KEY}`
-      );
-      
-      // Company profile (fundamentals)
-      const profileRes = await axios.get(
-        `https://finnhub.io/api/v1/stock/profile2?symbol=${symbol}&token=${FINNHUB_KEY}`
-      );
-      
-      // Earnings (for growth tracking)
-      const earningsRes = await axios.get(
-        `https://finnhub.io/api/v1/stock/earnings?symbol=${symbol}&token=${FINNHUB_KEY}`
-      );
-      
-      // News (for sentiment)
-      const newsRes = await axios.get(
-        `https://finnhub.io/api/v1/company-news?symbol=${symbol}&from=2026-03-01&to=2026-03-13&limit=5&token=${FINNHUB_KEY}`
-      );
-      
-      return {
-        price: quoteRes.data.c,
-        change: quoteRes.data.d,
-        changePercent: quoteRes.data.dp,
-        high: quoteRes.data.h,
-        low: quoteRes.data.l,
-        
-        // Analyst ratings (FRESH - max 30 days old)
-        analystRating: ratingsRes.data?.[0] ? calculateRating(ratingsRes.data[0]) : 3,
-        institutionalOwnership: profileRes.data.finnhubIndustry || 'N/A',
-        
-        // Fundamentals
-        pe: profileRes.data.pe || null,
-        marketCap: profileRes.data.marketCapitalization || null,
-        
-        // Growth
-        earningsGrowth: earningsRes.data?.[0]?.epsEstimate || null,
-        dividendYield: profileRes.data.dividendYield || 0,
-        
-        // News for sentiment
-        news: newsRes.data || []
-      };
-    } catch (error) {
-      console.error(`Finnhub error for ${symbol}:`, error.message);
-      return null;
-    }
-  },
+class FinanceFetcher {
+  constructor() {
+    this.alphaVantageKey = process.env.ALPHA_VANTAGE_API_KEY;
+    this.finnhubKey = process.env.FINNHUB_API_KEY;
+    this.newsdataKey = process.env.NEWSDATA_API_KEY;
+    this.fmpKey = process.env.FMP_API_KEY;
+    this.secKey = process.env.SEC_API_KEY;
+  }
 
-  // YFINANCE: Real prices + Technical Indicators
-  async getYfinanceData(symbol) {
+  /**
+   * Fetch prices and technical indicators from Alpha Vantage
+   */
+  async fetchPricesAndTechnicals(symbols) {
     try {
-      // Using yfinance package (install: npm install yfinance)
-      const yahooFinance = require('yahoo-finance2').default;
-      
-      // Get last 200 days (for all moving averages)
-      const data = await yahooFinance.historical(symbol, {
-        period1: new Date(Date.now() - 200 * 24 * 60 * 60 * 1000),
-        period2: new Date(),
-        interval: '1d'
-      });
-      
-      // Calculate technical indicators
-      const closes = data.map(d => d.close);
-      const rsi = calculateRSI(closes);
-      const ma20 = calculateMA(closes, 20);
-      const ma50 = calculateMA(closes, 50);
-      const ma200 = calculateMA(closes, 200);
-      const volatility = calculateVolatility(closes);
-      
-      return {
-        rsi,
-        movingAvg20: ma20,
-        movingAvg50: ma50,
-        movingAvg200: ma200,
-        volatility,
-        priceHistory: closes.slice(-20) // Last 20 days for chart
-      };
+      const toFetch = symbols.filter(s => dedupeCache.shouldFetch(s, 'prices'));
+
+      if (toFetch.length === 0) {
+        logger.info('✓ All prices cached (fetched today already)');
+        return null;
+      }
+
+      logger.info(`Fetching prices for ${toFetch.length} stocks from Alpha Vantage...`);
+
+      const data = {};
+
+      for (const symbol of toFetch) {
+        try {
+          // Fetch daily prices
+          const priceResponse = await axios.get('https://www.alphavantage.co/query', {
+            params: {
+              function: 'TIME_SERIES_DAILY',
+              symbol: symbol,
+              apikey: this.alphaVantageKey
+            },
+            timeout: 10000
+          });
+
+          // Fetch RSI
+          const rsiResponse = await axios.get('https://www.alphavantage.co/query', {
+            params: {
+              function: 'RSI',
+              symbol: symbol,
+              interval: 'daily',
+              time_period: 14,
+              apikey: this.alphaVantageKey
+            },
+            timeout: 10000
+          });
+
+          data[symbol] = {
+            prices: priceResponse.data,
+            rsi: rsiResponse.data,
+            fetchedAt: new Date()
+          };
+
+          dedupeCache.markFetched(symbol, 'prices', data[symbol]);
+          logger.debug(`✓ Fetched prices for ${symbol}`);
+
+        } catch (error) {
+          logger.warn(`Failed to fetch prices for ${symbol}: ${error.message}`);
+        }
+
+        // Rate limiting: Alpha Vantage allows 5 calls/min
+        await new Promise(resolve => setTimeout(resolve, 12000));
+      }
+
+      return data;
+
     } catch (error) {
-      console.error(`Yfinance error for ${symbol}:`, error.message);
+      logger.error('Failed to fetch prices', error);
       return null;
     }
   }
-};
 
-// Helper: Calculate analyst rating from Finnhub data
-function calculateRating(ratings) {
-  const total = (ratings.strongBuy || 0) + (ratings.buy || 0) + 
-                (ratings.hold || 0) + (ratings.sell || 0) + (ratings.strongSell || 0);
-  
-  if (total === 0) return 3;
-  
-  const bullish = (ratings.strongBuy || 0) + (ratings.buy || 0);
-  return (bullish / total) * 5; // 0-5 scale
-}
+  /**
+   * Fetch analyst ratings from Finnhub
+   */
+  async fetchAnalystRatings(symbols) {
+    try {
+      const toFetch = symbols.filter(s => dedupeCache.shouldFetch(s, 'ratings'));
 
-// Helper: Calculate RSI
-function calculateRSI(closes, period = 14) {
-  let gains = 0, losses = 0;
-  
-  for (let i = 1; i < period; i++) {
-    const diff = closes[closes.length - period + i] - closes[closes.length - period + i - 1];
-    if (diff > 0) gains += diff;
-    else losses += Math.abs(diff);
+      if (toFetch.length === 0) {
+        logger.info('✓ All ratings cached (updated bi-weekly)');
+        return null;
+      }
+
+      logger.info(`Fetching analyst ratings for ${toFetch.length} stocks from Finnhub...`);
+
+      const data = {};
+
+      for (const symbol of toFetch) {
+        try {
+          const response = await axios.get('https://finnhub.io/api/v1/stock/recommendation', {
+            params: {
+              symbol: symbol,
+              token: this.finnhubKey
+            },
+            timeout: 10000
+          });
+
+          data[symbol] = response.data;
+          dedupeCache.markFetched(symbol, 'ratings', data[symbol]);
+          logger.debug(`✓ Fetched ratings for ${symbol}`);
+
+        } catch (error) {
+          logger.warn(`Failed to fetch ratings for ${symbol}: ${error.message}`);
+        }
+
+        // Rate limiting: Wait to avoid hitting limits
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+
+      return data;
+
+    } catch (error) {
+      logger.error('Failed to fetch ratings', error);
+      return null;
+    }
   }
-  
-  const avgGain = gains / period;
-  const avgLoss = losses / period;
-  const rs = avgGain / avgLoss;
-  const rsi = 100 - (100 / (1 + rs));
-  
-  return Math.round(rsi);
+
+  /**
+   * Fetch news from newsdata.io
+   */
+  async fetchNews(symbols) {
+    try {
+      const toFetch = symbols.filter(s => dedupeCache.shouldFetch(s, 'news'));
+
+      if (toFetch.length === 0) {
+        logger.info('✓ All news cached (updated every 6 hours)');
+        return null;
+      }
+
+      logger.info(`Fetching news for ${toFetch.length} stocks from newsdata.io...`);
+
+      const data = {};
+
+      for (const symbol of toFetch) {
+        try {
+          const response = await axios.get('https://newsdata.io/api/1/news', {
+            params: {
+              q: symbol,
+              apikey: this.newsdataKey,
+              language: 'en',
+              sort: 'published_desc',
+              limit: 10
+            },
+            timeout: 10000
+          });
+
+          data[symbol] = response.data.results || [];
+          dedupeCache.markFetched(symbol, 'news', data[symbol]);
+          logger.debug(`✓ Fetched news for ${symbol}`);
+
+        } catch (error) {
+          logger.warn(`Failed to fetch news for ${symbol}: ${error.message}`);
+        }
+
+        // Rate limiting
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+
+      return data;
+
+    } catch (error) {
+      logger.error('Failed to fetch news', error);
+      return null;
+    }
+  }
+
+  /**
+   * Fetch stock grades from FMP
+   */
+  async fetchStockGrades(symbols) {
+    try {
+      const toFetch = symbols.filter(s => dedupeCache.shouldFetch(s, 'grades'));
+
+      if (toFetch.length === 0) {
+        logger.info('✓ All grades cached (updated monthly)');
+        return null;
+      }
+
+      logger.info(`Fetching stock grades for ${toFetch.length} stocks from FMP...`);
+
+      const data = {};
+
+      for (const symbol of toFetch) {
+        try {
+          const response = await axios.get(`https://financialmodelingprep.com/api/v4/grade/${symbol}`, {
+            params: {
+              apikey: this.fmpKey,
+              limit: 5
+            },
+            timeout: 10000
+          });
+
+          data[symbol] = response.data;
+          dedupeCache.markFetched(symbol, 'grades', data[symbol]);
+          logger.debug(`✓ Fetched grades for ${symbol}`);
+
+        } catch (error) {
+          logger.warn(`Failed to fetch grades for ${symbol}: ${error.message}`);
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+
+      return data;
+
+    } catch (error) {
+      logger.error('Failed to fetch grades', error);
+      return null;
+    }
+  }
+
+  /**
+   * Fetch quarterly filings from SEC-API.io
+   */
+  async fetchQuarterlyFilings(symbols) {
+    try {
+      const toFetch = symbols.filter(s => dedupeCache.shouldFetch(s, 'filings'));
+
+      if (toFetch.length === 0) {
+        logger.info('✓ All filings cached (updated monthly)');
+        return null;
+      }
+
+      logger.info(`Fetching quarterly filings for ${toFetch.length} stocks from SEC-API.io...`);
+
+      const data = {};
+
+      for (const symbol of toFetch) {
+        try {
+          const response = await axios.get('https://www.sec-api.io/', {
+            params: {
+              action: 'getCompanyFacts',
+              CIK: symbol,
+              type: '10-Q',
+              apiKey: this.secKey
+            },
+            timeout: 15000
+          });
+
+          data[symbol] = response.data;
+          dedupeCache.markFetched(symbol, 'filings', data[symbol]);
+          logger.debug(`✓ Fetched filings for ${symbol}`);
+
+        } catch (error) {
+          logger.warn(`Failed to fetch filings for ${symbol}: ${error.message}`);
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+
+      return data;
+
+    } catch (error) {
+      logger.error('Failed to fetch filings', error);
+      return null;
+    }
+  }
 }
 
-// Helper: Calculate Moving Average
-function calculateMA(closes, period) {
-  const sum = closes.slice(-period).reduce((a, b) => a + b, 0);
-  return sum / period;
-}
-
-// Helper: Calculate Volatility (Standard Deviation)
-function calculateVolatility(closes, period = 20) {
-  const recent = closes.slice(-period);
-  const mean = recent.reduce((a, b) => a + b) / period;
-  const squareDiffs = recent.map(x => Math.pow(x - mean, 2));
-  const variance = squareDiffs.reduce((a, b) => a + b) / period;
-  return Math.sqrt(variance).toFixed(2);
-}
-
-module.exports = fetchFinance;
+module.exports = new FinanceFetcher();
