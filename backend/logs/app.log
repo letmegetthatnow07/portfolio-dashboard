@@ -1,0 +1,29 @@
+[2026-03-14T13:44:04.896Z] INFO: 
+[2026-03-14T13:44:04.897Z] INFO: ╔════════════════════════════════════════════════════════════╗
+[2026-03-14T13:44:04.898Z] INFO: ║       DAILY MARKET DATA UPDATE - SIMPLIFIED VERSION         ║
+[2026-03-14T13:44:04.898Z] INFO: ╚════════════════════════════════════════════════════════════╝
+[2026-03-14T13:44:04.898Z] INFO: 📅 Date: 2026-03-14T13:44:04.898Z
+[2026-03-14T13:44:04.898Z] INFO: 📊 Stocks to update: 18
+[2026-03-14T13:44:04.898Z] INFO: 
+[2026-03-14T13:44:04.898Z] INFO: STEP 1: Testing API Connections...
+[2026-03-14T13:44:05.134Z] INFO: ✓ Finnhub API: Connected
+[2026-03-14T13:44:05.134Z] INFO: STEP 2: Fetching prices from Alpha Vantage...
+[2026-03-14T13:44:41.571Z] INFO: ✓ Fetched prices for 3 stocks
+[2026-03-14T13:44:41.572Z] INFO: STEP 3: Fetching news from newsdata.io...
+[2026-03-14T13:44:41.812Z] WARN: ⚠ News fetch failed: Request failed with status code 422
+[2026-03-14T13:44:41.812Z] INFO: STEP 4: Fetching analyst ratings from Finnhub...
+[2026-03-14T13:44:42.046Z] INFO: ✓ Fetched ratings for 0 stocks
+[2026-03-14T13:44:42.046Z] INFO: STEP 5: Fetching stock grades from FMP...
+[2026-03-14T13:44:42.303Z] WARN: ⚠ Grades fetch failed: Request failed with status code 403
+[2026-03-14T13:44:42.303Z] INFO: 
+[2026-03-14T13:44:42.303Z] INFO: ╔════════════════════════════════════════════════════════════╗
+[2026-03-14T13:44:42.303Z] INFO: ║           DAILY UPDATE SUMMARY                              ║
+[2026-03-14T13:44:42.303Z] INFO: ╚════════════════════════════════════════════════════════════╝
+[2026-03-14T13:44:42.303Z] INFO: ✓ Prices fetched: 3
+[2026-03-14T13:44:42.303Z] INFO: ✓ News articles: 0
+[2026-03-14T13:44:42.303Z] INFO: ✓ Ratings fetched: 0
+[2026-03-14T13:44:42.303Z] INFO: ✓ Grades fetched: 0
+[2026-03-14T13:44:42.304Z] INFO: 
+[2026-03-14T13:44:42.304Z] INFO: ✅ UPDATE COMPLETED SUCCESSFULLY!
+[2026-03-14T13:44:42.304Z] INFO: 🕐 Finished: 2026-03-14T13:44:42.304Z
+[2026-03-14T13:44:42.304Z] INFO: 
