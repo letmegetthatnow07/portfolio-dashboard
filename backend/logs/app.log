@@ -27,3 +27,42 @@
 [2026-03-14T13:44:42.304Z] INFO: ✅ UPDATE COMPLETED SUCCESSFULLY!
 [2026-03-14T13:44:42.304Z] INFO: 🕐 Finished: 2026-03-14T13:44:42.304Z
 [2026-03-14T13:44:42.304Z] INFO: 
+[2026-03-14T13:59:40.614Z] INFO: ✓ Data directory created
+[2026-03-14T13:59:40.616Z] INFO: ✓ Portfolio data file created
+[2026-03-14T13:59:40.616Z] INFO: 
+[2026-03-14T13:59:40.617Z] INFO: ╔════════════════════════════════════════════════════════════╗
+[2026-03-14T13:59:40.617Z] INFO: ║       DAILY MARKET DATA UPDATE - PROFESSIONAL VERSION      ║
+[2026-03-14T13:59:40.617Z] INFO: ╚════════════════════════════════════════════════════════════╝
+[2026-03-14T13:59:40.617Z] INFO: 📅 Date: 2026-03-14T13:59:40.617Z
+[2026-03-14T13:59:40.617Z] INFO: 📊 Stocks to update: 18
+[2026-03-14T13:59:40.617Z] INFO: 
+[2026-03-14T13:59:40.617Z] INFO: STEP 1: Fetching prices from Alpha Vantage...
+[2026-03-14T14:03:17.875Z] INFO: ✓ Fetched prices for 0 stocks
+
+[2026-03-14T14:03:17.876Z] INFO: STEP 2: Fetching news from newsdata.io...
+[2026-03-14T14:03:18.086Z] WARN:   ⚠ SPMO: Request failed with status code 422
+[2026-03-14T14:03:18.179Z] WARN:   ⚠ SMH: Request failed with status code 422
+[2026-03-14T14:03:18.274Z] WARN:   ⚠ TPL: Request failed with status code 422
+[2026-03-14T14:03:18.472Z] WARN:   ⚠ VRT: Request failed with status code 422
+[2026-03-14T14:03:18.573Z] WARN:   ⚠ MU: Request failed with status code 422
+[2026-03-14T14:03:18.573Z] INFO: ✓ Fetched 0 news articles
+
+[2026-03-14T14:03:18.573Z] INFO: STEP 3: Fetching analyst ratings from Finnhub...
+[2026-03-14T14:03:18.831Z] INFO: ✓ Fetched ratings for 3 stocks
+
+[2026-03-14T14:03:18.831Z] INFO: STEP 4: Calculating composite scores...
+[2026-03-14T14:03:18.831Z] INFO: ✓ Calculated scores for 0 stocks
+
+[2026-03-14T14:03:18.831Z] INFO: ╔════════════════════════════════════════════════════════════╗
+[2026-03-14T14:03:18.831Z] INFO: ║           DAILY UPDATE SUMMARY                              ║
+[2026-03-14T14:03:18.831Z] INFO: ╚════════════════════════════════════════════════════════════╝
+[2026-03-14T14:03:18.831Z] INFO: ✓ Prices fetched: 0
+[2026-03-14T14:03:18.831Z] INFO: ✓ News articles: 0
+[2026-03-14T14:03:18.831Z] INFO: ✓ Ratings fetched: 3
+[2026-03-14T14:03:18.831Z] INFO: ✓ Stocks scored: 0
+[2026-03-14T14:03:18.831Z] INFO: ✓ Data stored to: data/portfolio-data.json
+[2026-03-14T14:03:18.831Z] INFO: 
+[2026-03-14T14:03:18.831Z] INFO: ✅ UPDATE COMPLETED SUCCESSFULLY!
+[2026-03-14T14:03:18.832Z] INFO: ⏱️  Duration: 218.22s
+[2026-03-14T14:03:18.832Z] INFO: 🕐 Finished: 2026-03-14T14:03:18.832Z
+[2026-03-14T14:03:18.832Z] INFO: 
