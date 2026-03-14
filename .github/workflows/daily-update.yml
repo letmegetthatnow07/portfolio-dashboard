@@ -1,15 +1,12 @@
 name: Daily Market Data Update
 
 on:
-  # Run daily at 4:30 PM ET (market close + 30 min)
   schedule:
-    - cron: '30 16 * * 1-5'  # 16:30 UTC = 4:30 PM ET (handles daylight saving automatically)
-  
-  # Allow manual trigger
+    - cron: '30 21 * * 1-5'
   workflow_dispatch:
 
 jobs:
-  update-data:
+  update-market-data:
     runs-on: ubuntu-latest
     
     steps:
@@ -22,22 +19,35 @@ jobs:
           node-version: '18'
       
       - name: Install dependencies
-        run: cd backend && npm install
+        run: |
+          cd backend
+          npm install
+      
+      - name: Initialize database
+        run: |
+          cd backend
+          npm run init-db || true
       
       - name: Fetch and update market data
+        run: |
+          cd backend
+          npm run update
         env:
+          ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-        run: cd backend && node scripts/daily-update.js
+          NEWSDATA_API_KEY: ${{ secrets.NEWSDATA_API_KEY }}
+          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+          SEC_API_KEY: ${{ secrets.SEC_API_KEY }}
       
-      - name: Commit changes to GitHub
+      - name: Commit changes
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add data/stocks.db
-          git add data/apiLogs.json
-          git commit -m "Daily market update - $(date)" || echo "No changes to commit"
-          git push
+          git add data/stocks.db || true
+          git add backend/logs/* || true
+          git commit -m "📊 Daily market data update - $(date +'%Y-%m-%d %H:%M:%S')" || true
       
-      - name: Notify Vercel to redeploy
-        run: |
-          curl -X POST "${{ secrets.VERCEL_REDEPLOY_HOOK }}" || true
+      - name: Push changes
+        uses: ad-m/github-push-action@master
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
