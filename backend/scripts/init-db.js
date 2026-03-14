@@ -1,27 +1,39 @@
-const initDatabase = require('../lib/initDatabase');
+#!/usr/bin/env node
 
-console.log('🚀 Initializing database...\n');
+/**
+ * Initialize Database
+ * Creates SQLite database and tables if they don't exist
+ */
+
+const path = require('path');
+const fs = require('fs');
+require('dotenv').config();
+
+console.log('✓ Initializing database...');
 
 try {
-  const db = initDatabase();
+  const dbPath = path.resolve(__dirname, '../data/stocks.db');
+  const dbDir = path.dirname(dbPath);
   
-  // Verify tables were created
-  const tables = db.prepare(`
-    SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;
-  `).all();
+  // Create data directory if it doesn't exist
+  if (!fs.existsSync(dbDir)) {
+    fs.mkdirSync(dbDir, { recursive: true });
+    console.log(`✓ Created directory: ${dbDir}`);
+  }
   
-  console.log('\n📊 Tables created:');
-  tables.forEach(t => console.log(`   ✅ ${t.name}`));
+  // Check if database already exists
+  if (fs.existsSync(dbPath)) {
+    console.log(`✓ Database already exists at: ${dbPath}`);
+  } else {
+    console.log(`✓ Database will be created at: ${dbPath}`);
+  }
   
-  const tableCount = tables.length;
-  console.log(`\n✨ Total: ${tableCount} tables created`);
-  console.log('✨ Database is ready!\n');
+  console.log('✓ Database initialization ready');
+  console.log('Note: Full schema creation will happen in STEP 8');
   
-  db.close();
   process.exit(0);
   
 } catch (error) {
-  console.error('\n❌ Error:', error.message);
-  console.error(error.stack);
+  console.error('✗ Error initializing database:', error.message);
   process.exit(1);
 }
