@@ -192,6 +192,57 @@ function initDatabase() {
     `);
     console.log('✅ Created settings table');
     
+    // ============== METRIC SCORES TABLE ==============
+    // Daily composite scores (0-10) for each stock
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS metric_scores (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL,
+        date DATE NOT NULL,
+        
+        -- Component Scores (0-10)
+        analyst_rating_score REAL,
+        stock_grade_score REAL,
+        news_sentiment_score REAL,
+        technical_score REAL,
+        insider_score REAL,
+        filing_health_score REAL,
+        
+        -- Weighted Contributions
+        analyst_weight REAL,
+        grades_weight REAL,
+        sentiment_weight REAL,
+        technical_weight REAL,
+        insider_weight REAL,
+        filing_weight REAL,
+        
+        -- Final Score
+        composite_score REAL,
+        composite_confidence REAL,
+        primary_signal TEXT,
+        signals_detected TEXT,
+        
+        -- Valuation
+        analyst_price_target REAL,
+        current_price REAL,
+        upside_downside_percent REAL,
+        
+        -- Detailed Breakdowns (JSON)
+        rating_breakdown TEXT,
+        sentiment_breakdown TEXT,
+        technical_breakdown TEXT,
+        filing_breakdown TEXT,
+        
+        -- Timestamps
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        
+        UNIQUE(symbol, date),
+        FOREIGN KEY (symbol) REFERENCES portfolio(symbol) ON DELETE CASCADE
+      );
+    `);
+    console.log('✅ Created metric_scores table');
+    
     // ============== LOGS TABLE ==============
     // Error and event logging
     db.exec(`
