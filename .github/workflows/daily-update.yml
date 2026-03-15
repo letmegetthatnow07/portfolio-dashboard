@@ -36,6 +36,7 @@ jobs:
           FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
           EODHD_API_KEY: ${{ secrets.EODHD_API_KEY }}
           POLYGON_API_KEY: ${{ secrets.POLYGON_API_KEY }}
+          SEC_API_KEY: ${{ secrets.SEC_API_KEY }}
         run: npm run update
 
       - name: Configure git
