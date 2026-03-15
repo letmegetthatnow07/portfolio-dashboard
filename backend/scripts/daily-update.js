@@ -83,24 +83,26 @@ class PortfolioStorage {
 
 class PriceAnalyzer {
   async fetchPrice(symbol) {
+    // Try Alpha Vantage first
     try {
       const res = await axios.get(
         `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${symbol}&apikey=${process.env.ALPHA_VANTAGE_API_KEY}`,
         { timeout: 8000 }
       );
 
-      if (res.data && res.data['Global Quote'] && res.data['Global Quote'].c) {
+      if (res.data && res.data['Global Quote'] && res.data['Global Quote']['05. price']) {
         return {
-          price: parseFloat(res.data['Global Quote'].c),
-          change: parseFloat(res.data['Global Quote'].d) || 0,
-          changePercent: parseFloat(res.data['Global Quote'].dp) || 0,
+          price: parseFloat(res.data['Global Quote']['05. price']),
+          change: parseFloat(res.data['Global Quote']['09. change']) || 0,
+          changePercent: parseFloat(res.data['Global Quote']['10. change percent']) || 0,
           source: 'ALPHA_VANTAGE'
         };
       }
     } catch (e) {
-      logger.warn(`Price fetch failed for ${symbol}: ${e.message}`);
+      logger.warn(`Alpha Vantage price fetch failed for ${symbol}: ${e.message}`);
     }
 
+    // Try EODHD with .US suffix
     try {
       const res = await axios.get(
         `https://eodhd.com/api/eod/${symbol}.US?api_token=${process.env.EODHD_API_KEY}&fmt=json`,
@@ -116,7 +118,26 @@ class PriceAnalyzer {
         };
       }
     } catch (e) {
-      logger.warn(`EODHD fetch failed for ${symbol}: ${e.message}`);
+      logger.warn(`EODHD .US format failed for ${symbol}: ${e.message}`);
+    }
+
+    // Try EODHD without suffix (fallback)
+    try {
+      const res = await axios.get(
+        `https://eodhd.com/api/eod/${symbol}?api_token=${process.env.EODHD_API_KEY}&fmt=json`,
+        { timeout: 8000 }
+      );
+
+      if (res.data && res.data.close) {
+        return {
+          price: res.data.close,
+          change: 0,
+          changePercent: 0,
+          source: 'EODHD_NO_SUFFIX'
+        };
+      }
+    } catch (e) {
+      logger.warn(`EODHD no-suffix format failed for ${symbol}: ${e.message}`);
     }
 
     return null;
@@ -140,17 +161,18 @@ class PriceAnalyzer {
   }
 
   async fetchNews(symbol) {
+    // Use Finnhub News API instead of newsdata.io
     try {
       const res = await axios.get(
-        `https://newsdata.io/api/1/news?q=${symbol}&apikey=${process.env.NEWSDATA_API_KEY}&language=en&limit=3`,
+        `https://finnhub.io/api/v1/company-news?symbol=${symbol}&token=${process.env.FINNHUB_API_KEY}`,
         { timeout: 8000 }
       );
 
-      if (res.data && res.data.results) {
-        return res.data.results;
+      if (res.data && Array.isArray(res.data)) {
+        return res.data.slice(0, 3); // Get first 3 articles
       }
     } catch (e) {
-      logger.warn(`News fetch failed for ${symbol}: ${e.message}`);
+      logger.warn(`Finnhub news fetch failed for ${symbol}: ${e.message}`);
     }
 
     return [];
@@ -180,7 +202,7 @@ class PriceAnalyzer {
 
       let newsScore = 5;
       news.forEach(article => {
-        const text = (article.title + ' ' + (article.description || '')).toLowerCase();
+        const text = ((article.title || '') + ' ' + (article.description || '')).toLowerCase();
         positiveWords.forEach(w => { if (text.includes(w)) newsScore += 0.3; });
         negativeWords.forEach(w => { if (text.includes(w)) newsScore -= 0.3; });
       });
@@ -243,7 +265,7 @@ async function updateMarketData() {
             priceSource: priceData.source
           });
           priceCount++;
-          logger.info(`  ✓ ${stock.symbol}: $${priceData.price.toFixed(2)}`);
+          logger.info(`  ✓ ${stock.symbol}: $${priceData.price.toFixed(2)} (${priceData.source})`);
         }
         await new Promise(r => setTimeout(r, 12000));
       } catch (e) {
@@ -268,7 +290,7 @@ async function updateMarketData() {
     }
     logger.info(`✓ Fetched ratings for ${ratingCount} stocks\n`);
 
-    logger.info('STEP 3: Fetching news...');
+    logger.info('STEP 3: Fetching news (via Finnhub)...');
     let newsCount = 0;
 
     for (const stock of stocks) {
