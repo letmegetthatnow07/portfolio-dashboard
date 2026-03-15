@@ -8,6 +8,9 @@ const logger = require('../lib/logger');
 const newsAnalyzer = require('../lib/advancedNewsAnalyzer'); 
 const { createClient } = require('redis');
 
+// Utility for rate-limit pacing
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 let redisClient = null;
 
 async function getRedisClient() {
@@ -25,10 +28,7 @@ class PortfolioStorage {
       const client = await getRedisClient();
       const data = await client.get('portfolio');
       return data ? JSON.parse(data) : { stocks: [] };
-    } catch (e) {
-      logger.error(`Error reading from Redis: ${e.message}`);
-      return { stocks: [] };
-    }
+    } catch (e) { return { stocks: [] }; }
   }
 
   async writeData(data) {
@@ -37,9 +37,7 @@ class PortfolioStorage {
       data.lastUpdated = new Date().toISOString();
       await client.set('portfolio', JSON.stringify(data));
       return true;
-    } catch (e) {
-      return false;
-    }
+    } catch (e) { return false; }
   }
 
   async updateStock(symbol, updates) {
@@ -48,14 +46,7 @@ class PortfolioStorage {
       let stock = data.stocks.find(s => s.symbol === symbol);
 
       if (!stock) {
-        stock = {
-          id: Date.now().toString(),
-          symbol: symbol,
-          name: symbol,
-          quantity: 0,
-          average_price: 0,
-          createdAt: new Date().toISOString()
-        };
+        stock = { id: Date.now().toString(), symbol, name: symbol, quantity: 0, average_price: 0, createdAt: new Date().toISOString() };
         data.stocks.push(stock);
       }
 
@@ -65,9 +56,7 @@ class PortfolioStorage {
 
       await this.writeData(data);
       return true;
-    } catch (e) {
-      return false;
-    }
+    } catch (e) { return false; }
   }
 
   async getPortfolio() {
@@ -77,58 +66,75 @@ class PortfolioStorage {
 
 class PriceAnalyzer {
   
-  // 1. PRICE: Alpha Vantage (Primary)
+  // 1. PRICE: Finnhub (Primary) -> FMP (Backup)
   async fetchPrice(symbol) {
     try {
-      const res = await axios.get(
-        `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${symbol}&apikey=${process.env.ALPHA_VANTAGE_API_KEY}`,
-        { timeout: 8000 }
-      );
-      if (res.data && res.data['Global Quote'] && res.data['Global Quote']['05. price']) {
-        return {
-          price: parseFloat(res.data['Global Quote']['05. price']),
-          changePercent: parseFloat(res.data['Global Quote']['10. change percent'].replace('%','')) || 0,
-        };
+      const res = await axios.get(`https://finnhub.io/api/v1/quote?symbol=${symbol}&token=${process.env.FINNHUB_API_KEY}`, { timeout: 8000 });
+      if (res.data && res.data.c && res.data.c > 0) {
+        return { price: res.data.c, changePercent: res.data.dp || 0 };
       }
     } catch (e) {
-      logger.warn(`Price fetch failed for ${symbol}: ${e.message}`);
+      logger.warn(`Finnhub price failed for ${symbol}. Trying FMP backup...`);
+    }
+
+    // Backup: FMP Quote
+    try {
+      const res = await axios.get(`https://financialmodelingprep.com/api/v3/quote/${symbol}?apikey=${process.env.FMP_API_KEY}`, { timeout: 8000 });
+      if (res.data && res.data.length > 0) {
+        return { price: res.data[0].price, changePercent: res.data[0].changesPercentage || 0 };
+      }
+    } catch (e) {
+      logger.error(`All price fetches failed for ${symbol}`);
     }
     return null;
   }
 
-  // 2. FUNDAMENTALS: FMP (The Crown Jewel)
+  // 2. FUNDAMENTALS: Finnhub Basic Financials
   async fetchFundamentals(symbol) {
     try {
-      const metricsRes = await axios.get(`https://financialmodelingprep.com/api/v3/key-metrics-ttm/${symbol}?apikey=${process.env.FMP_API_KEY}`, { timeout: 8000 });
-      const ratiosRes = await axios.get(`https://financialmodelingprep.com/api/v3/financial-ratios-ttm/${symbol}?apikey=${process.env.FMP_API_KEY}`, { timeout: 8000 });
-
-      const metrics = metricsRes.data && metricsRes.data.length > 0 ? metricsRes.data[0] : null;
-      const ratios = ratiosRes.data && ratiosRes.data.length > 0 ? ratiosRes.data[0] : null;
-
-      if (metrics || ratios) {
+      const res = await axios.get(`https://finnhub.io/api/v1/stock/metric?symbol=${symbol}&metric=all&token=${process.env.FINNHUB_API_KEY}`, { timeout: 8000 });
+      if (res.data && res.data.metric) {
+        const m = res.data.metric;
         return {
-          roic: metrics ? (metrics.roicTTM || 0) : 0,
-          fcfYield: metrics ? (metrics.freeCashFlowYieldTTM || 0) : 0,
-          debtToEquity: ratios ? (ratios.debtEquityRatioTTM || 0) : 0
+          roic: (m.roicTTM || m.roiAnnual || 0) / 100, 
+          fcfMargin: (m.freeCashFlowMarginTTM || m.operatingMarginTTM || 0) / 100,
+          debtToEquity: m['longTermDebt/equityAnnual'] || m['totalDebt/totalEquityAnnual'] || 0
         };
       }
     } catch (e) {
       logger.warn(`Fundamentals fetch failed for ${symbol}: ${e.message}`);
     }
-    return null; // Will return null for ETFs naturally
+    return null;
   }
 
-  // 3. TECHNICALS: EODHD (Load Balancing AV)
+  // 3. TECHNICALS: FMP Historical + Local Math
   async fetchTechnicals(symbol) {
     try {
-      const rsiRes = await axios.get(`https://eodhd.com/api/technical/${symbol}.US?function=rsi&period=14&order=d&fmt=json&api_token=${process.env.EODHD_API_KEY}`, { timeout: 8000 });
-      const smaRes = await axios.get(`https://eodhd.com/api/technical/${symbol}.US?function=sma&period=200&order=d&fmt=json&api_token=${process.env.EODHD_API_KEY}`, { timeout: 8000 });
+      const res = await axios.get(`https://financialmodelingprep.com/api/v3/historical-price-full/${symbol}?timeseries=200&apikey=${process.env.FMP_API_KEY}`, { timeout: 8000 });
+      if (res.data && res.data.historical && res.data.historical.length > 0) {
+        const history = res.data.historical; 
+        
+        const sum200 = history.reduce((acc, val) => acc + val.close, 0);
+        const sma200 = sum200 / history.length;
 
-      let currentRsi = (rsiRes.data && rsiRes.data.length > 0) ? rsiRes.data[0].rsi : null;
-      let currentSma = (smaRes.data && smaRes.data.length > 0) ? smaRes.data[0].sma : null;
-
-      if (currentRsi !== null && currentSma !== null) {
-        return { rsi: currentRsi, sma200: currentSma };
+        let rsi = 50;
+        if (history.length >= 15) {
+          let gains = 0, losses = 0;
+          for (let i = 14; i > 0; i--) {
+            let diff = history[i-1].close - history[i].close; 
+            if (diff > 0) gains += diff;
+            else losses -= diff;
+          }
+          let avgGain = gains / 14;
+          let avgLoss = losses / 14;
+          
+          if (avgLoss === 0) rsi = 100;
+          else {
+            let rs = avgGain / avgLoss;
+            rsi = 100 - (100 / (1 + rs));
+          }
+        }
+        return { rsi, sma200 };
       }
     } catch (e) {
       logger.warn(`Technicals fetch failed for ${symbol}: ${e.message}`);
@@ -141,9 +147,7 @@ class PriceAnalyzer {
     try {
       const res = await axios.get(`https://finnhub.io/api/v1/stock/recommendation?symbol=${symbol}&token=${process.env.FINNHUB_API_KEY}`, { timeout: 8000 });
       if (res.data && res.data.length > 0) return res.data[0];
-    } catch (e) {
-      logger.warn(`Ratings fetch failed for ${symbol}: ${e.message}`);
-    }
+    } catch (e) { logger.warn(`Ratings fetch failed for ${symbol}: ${e.message}`); }
     return null;
   }
 
@@ -160,50 +164,38 @@ class PriceAnalyzer {
           published_at: article.pubDate || new Date().toISOString()
         }));
       }
-    } catch (e) {
-      logger.warn(`News fetch failed for ${symbol}: ${e.message}`);
-    }
+    } catch (e) { logger.warn(`News fetch failed for ${symbol}: ${e.message}`); }
     return [];
   }
   
   calculateScore(priceData, fundamentals, technicals, ratings, analyzedNews) {
-    let fundScore = 5;
-    let techScore = 5;
-    let ratingScore = 5;
-    let newsScore = 5;
+    let fundScore = 5; let techScore = 5; let ratingScore = 5; let newsScore = 5;
 
     // --- 1. FUNDAMENTALS (29% Weight) ---
     if (fundamentals) {
-      // ROIC (>20% = 10, <5% = 0)
       let roicS = Math.max(0, Math.min(10, ((fundamentals.roic - 0.05) / 0.15) * 10));
-      // FCF Yield (>5% = 10, <0% = 0)
-      let fcfS = Math.max(0, Math.min(10, (fundamentals.fcfYield / 0.05) * 10));
-      // Debt to Equity (0 = 10, >2.0 = 0)
+      let fcfS = Math.max(0, Math.min(10, (fundamentals.fcfMargin / 0.05) * 10));
       let deS = Math.max(0, Math.min(10, 10 - ((fundamentals.debtToEquity / 2.0) * 10)));
-      
-      if (fundamentals.debtToEquity < 0) deS = 10; // Cash rich
-      
+      if (fundamentals.debtToEquity < 0) deS = 10; 
       fundScore = (roicS * 0.40) + (fcfS * 0.30) + (deS * 0.30);
     }
 
     // --- 2. TECHNICALS (16% Weight) ---
     if (technicals && priceData && priceData.price) {
-      // Trend: Price vs 200 SMA
       let trendS = 5;
       if (technicals.sma200 > 0) {
         const diff = (priceData.price - technicals.sma200) / technicals.sma200;
-        trendS = 5 + ((diff / 0.05) * 5); // +5% above SMA = 10, at SMA = 5
+        trendS = 5 + ((diff / 0.05) * 5); 
       }
       trendS = Math.max(0, Math.min(10, trendS));
 
-      // Momentum: 14-Day RSI
       let rsiS = 5;
       const rsi = technicals.rsi;
-      if (rsi >= 45 && rsi <= 65) rsiS = 10; // Goldilocks
-      else if (rsi < 35) rsiS = 8; // Oversold Value
+      if (rsi >= 45 && rsi <= 65) rsiS = 10; 
+      else if (rsi < 35) rsiS = 8; 
       else if (rsi >= 35 && rsi < 45) rsiS = 9; 
-      else if (rsi > 65 && rsi <= 80) rsiS = 10 - (((rsi - 65) / 15) * 8); // Scales down as it gets overbought
-      else if (rsi > 80) rsiS = 2; // Dangerously overextended
+      else if (rsi > 65 && rsi <= 80) rsiS = 10 - (((rsi - 65) / 15) * 8); 
+      else if (rsi > 80) rsiS = 2; 
 
       techScore = (trendS * 0.50) + (rsiS * 0.50);
     }
@@ -227,19 +219,12 @@ class PriceAnalyzer {
       newsScore = 5 + (avgSentiment * 4);
       if (avgSentiment > 0) newsScore += (avgImportance / 10);
       else if (avgSentiment < 0) newsScore -= (avgImportance / 10);
-      
       newsScore = Math.max(0, Math.min(10, newsScore));
     }
 
-    // --- FINAL TRUE WEIGHTED AVERAGE ---
-    // Total utilized weight is 80% (0.80) because 20% is reserved for Phase 2 SEC Insider tracking. 
-    // We multiply by 1.25 to normalize the score accurately out of 10.
-    
+    // Multiply by 1.25 to normalize to a 10-point scale (leaving room for 20% Insider block later)
     const finalScore = (
-      (fundScore * 0.29) +
-      (techScore * 0.16) +
-      (ratingScore * 0.20) +
-      (newsScore * 0.15)
+      (fundScore * 0.29) + (techScore * 0.16) + (ratingScore * 0.20) + (newsScore * 0.15)
     ) * 1.25;
 
     return Math.max(0, Math.min(10, finalScore));
@@ -273,7 +258,6 @@ async function updateMarketData() {
       try {
         logger.info(`Analyzing ${stock.symbol}...`);
         
-        // Parallel fetching to prevent timeouts and speed up GitHub Actions
         const [priceData, fundamentals, technicals, ratings, rawNews] = await Promise.all([
           analyzer.fetchPrice(stock.symbol),
           analyzer.fetchFundamentals(stock.symbol),
@@ -282,6 +266,10 @@ async function updateMarketData() {
           analyzer.fetchNews(stock.symbol)
         ]);
         
+        if (rawNews && rawNews.length > 0) {
+          rawNews.forEach(n => logger.info(`  📰 ${n.headline.substring(0, 60)}...`));
+        }
+
         const analyzedNews = newsAnalyzer.analyzeNews(rawNews, stock.symbol);
         const score = analyzer.calculateScore(priceData, fundamentals, technicals, ratings, analyzedNews);
         const signal = analyzer.getSignal(score);
@@ -304,16 +292,18 @@ async function updateMarketData() {
         }
 
         await storage.updateStock(stock.symbol, updates);
-        logger.info(`✓ ${stock.symbol}: Score ${score.toFixed(1)}/10 → ${signal}`);
+        logger.info(`✓ ${stock.symbol}: Score ${score.toFixed(1)}/10 → ${signal}\n`);
         
-        // Polite 1-second delay so we don't trip concurrent rate limits
-        await new Promise(r => setTimeout(r, 1000)); 
+        // CRITICAL: 3.5 second delay. 18 stocks * 3.5s = 63 seconds. 
+        // This guarantees we never breach Finnhub's 60 requests per minute limit.
+        await sleep(3500); 
+
       } catch (e) {
         logger.error(`Error updating ${stock.symbol}`, e);
       }
     }
 
-    logger.info(`✅ UPDATE COMPLETED: ${stocks.length} Assets Analyzed.`);
+    logger.info(`✅ UPDATE COMPLETED.`);
     const client = await getRedisClient();
     await client.quit();
     process.exit(0);
