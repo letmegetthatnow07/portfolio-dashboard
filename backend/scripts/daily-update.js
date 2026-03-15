@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 
 const path = require('path');
-// This forces dotenv to look one folder up from the /scripts directory to find your .env file
 require('dotenv').config({ path: path.resolve(__dirname, '../.env') }); 
 
 const axios = require('axios');
 const logger = require('../lib/logger');
+// Require your new 8-layer analyzer
+const newsAnalyzer = require('../lib/advancedNewsAnalyzer'); 
 const { createClient } = require('redis');
 
 let redisClient = null;
@@ -86,7 +87,6 @@ class PortfolioStorage {
 
 class PriceAnalyzer {
   async fetchPrice(symbol) {
-    // Try Alpha Vantage first
     try {
       const res = await axios.get(
         `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${symbol}&apikey=${process.env.ALPHA_VANTAGE_API_KEY}`,
@@ -104,45 +104,6 @@ class PriceAnalyzer {
     } catch (e) {
       logger.warn(`Alpha Vantage price fetch failed for ${symbol}: ${e.message}`);
     }
-
-    // Try EODHD with .US suffix
-    try {
-      const res = await axios.get(
-        `https://eodhd.com/api/eod/${symbol}.US?api_token=${process.env.EODHD_API_KEY}&fmt=json`,
-        { timeout: 8000 }
-      );
-
-      if (res.data && res.data.close) {
-        return {
-          price: res.data.close,
-          change: 0,
-          changePercent: 0,
-          source: 'EODHD'
-        };
-      }
-    } catch (e) {
-      logger.warn(`EODHD .US format failed for ${symbol}: ${e.message}`);
-    }
-
-    // Try EODHD without suffix (fallback)
-    try {
-      const res = await axios.get(
-        `https://eodhd.com/api/eod/${symbol}?api_token=${process.env.EODHD_API_KEY}&fmt=json`,
-        { timeout: 8000 }
-      );
-
-      if (res.data && res.data.close) {
-        return {
-          price: res.data.close,
-          change: 0,
-          changePercent: 0,
-          source: 'EODHD_NO_SUFFIX'
-        };
-      }
-    } catch (e) {
-      logger.warn(`EODHD no-suffix format failed for ${symbol}: ${e.message}`);
-    }
-
     return null;
   }
 
@@ -152,49 +113,46 @@ class PriceAnalyzer {
         `https://finnhub.io/api/v1/stock/recommendation?symbol=${symbol}&token=${process.env.FINNHUB_API_KEY}`,
         { timeout: 8000 }
       );
-
-      if (res.data && res.data.length > 0) {
-        return res.data[0];
-      }
+      if (res.data && res.data.length > 0) return res.data[0];
     } catch (e) {
       logger.warn(`Ratings fetch failed for ${symbol}: ${e.message}`);
     }
-
     return null;
   }
 
   async fetchNews(symbol) {
     try {
-      // Using NewsData.io 'latest' endpoint. Added 'stock' to query for relevance.
       const res = await axios.get(
         `https://newsdata.io/api/1/latest?apikey=${process.env.NEWSDATA_API_KEY}&q=${symbol} stock&language=en`,
         { timeout: 8000 }
       );
 
-      // NewsData.io returns an array of articles inside a 'results' object
       if (res.data && res.data.results && res.data.results.length > 0) {
-        // We slice(0, 3) to limit it to 3 articles so it doesn't overload your scoring logic
+        // Map NewsData.io output to match exactly what your AdvancedNewsAnalyzer expects
         return res.data.results.slice(0, 3).map(article => ({
-          title: article.title || '',
-          description: article.description || article.content || '' // Fallback to content if description is empty
+          headline: article.title || '',
+          description: article.description || article.content || '',
+          url: article.link || '',
+          source: article.source_id || 'NewsData',
+          published_at: article.pubDate || new Date().toISOString()
         }));
       }
     } catch (e) {
-      // This will catch 401/403 errors or timeouts and log them gracefully
-      logger.warn(`NewsData.io fetch failed for ${symbol}: ${e.response ? e.response.status : e.message}`);
+      logger.warn(`NewsData.io fetch failed for ${symbol}: ${e.message}`);
     }
-
     return [];
   }
   
-  calculateScore(priceData, ratings, news) {
+  calculateScore(priceData, ratings, analyzedNews) {
     let score = 5;
 
+    // 1. Price Trend
     if (priceData && priceData.changePercent) {
       const changeScore = 5 + (priceData.changePercent / 10);
       score += changeScore * 0.2;
     }
 
+    // 2. Analyst Ratings
     if (ratings) {
       const total = (ratings.strongBuy || 0) + (ratings.buy || 0) + (ratings.hold || 0) + 
                     (ratings.sell || 0) + (ratings.strongSell || 0);
@@ -205,18 +163,20 @@ class PriceAnalyzer {
       }
     }
 
-    if (news && news.length > 0) {
-      const positiveWords = ['surge', 'gain', 'profit', 'growth', 'strong', 'beat', 'excellent', 'soar'];
-      const negativeWords = ['fall', 'loss', 'decline', 'weak', 'poor', 'miss', 'crisis', 'crash'];
+    // 3. Advanced News Sentiment (Integrating your 8-layer NLP)
+    if (analyzedNews && analyzedNews.length > 0) {
+      // Get the average NLP sentiment score (which is -1 to 1 in your analyzer)
+      const totalSentiment = analyzedNews.reduce((sum, item) => sum + item.sentiment.score, 0);
+      const avgSentiment = totalSentiment / analyzedNews.length;
+      
+      // Map the -1 to 1 sentiment scale to a 0 to 10 scale for the composite score
+      const newsScore = (avgSentiment + 1) * 5; 
+      
+      // Boost score if Importance is high and age is recent
+      const avgImportance = analyzedNews.reduce((sum, item) => sum + item.importance, 0) / analyzedNews.length;
+      const importanceBoost = (avgImportance / 10) * 1.5; 
 
-      let newsScore = 5;
-      news.forEach(article => {
-        const text = ((article.title || '') + ' ' + (article.description || '')).toLowerCase();
-        positiveWords.forEach(w => { if (text.includes(w)) newsScore += 0.3; });
-        negativeWords.forEach(w => { if (text.includes(w)) newsScore -= 0.3; });
-      });
-
-      score += newsScore * 0.2;
+      score += (newsScore * 0.2) + importanceBoost;
     }
 
     return Math.max(0, Math.min(10, score));
@@ -237,141 +197,77 @@ async function updateMarketData() {
   const analyzer = new PriceAnalyzer();
 
   try {
-    logger.info('');
     logger.info('╔════════════════════════════════════════════════════════════╗');
     logger.info('║        DAILY MARKET DATA UPDATE - PRODUCTION VERSION       ║');
     logger.info('╚════════════════════════════════════════════════════════════╝');
-    logger.info(`📅 Date: ${new Date().toISOString()}`);
-    logger.info('');
-
+    
     const portfolio = await storage.getPortfolio();
     const stocks = portfolio.stocks || [];
 
-    if (stocks.length === 0) {
-      logger.info('ℹ️  Portfolio is empty');
-      logger.info('ℹ️  Add stocks via website dashboard to start analysis');
-      logger.info('');
-      logger.info('✅ UPDATE COMPLETED (NO STOCKS TO ANALYZE)');
-      
-      const client = await getRedisClient();
-      await client.quit();
-      process.exit(0);
-    }
+    if (stocks.length === 0) process.exit(0);
 
-    logger.info(`📊 Updating ${stocks.length} stocks from portfolio...`);
-    logger.info('');
-
-    logger.info('STEP 1: Fetching current prices...');
-    let priceCount = 0;
+    let priceCount = 0, ratingCount = 0, newsCount = 0;
 
     for (const stock of stocks) {
       try {
-        const priceData = await analyzer.fetchPrice(stock.symbol);
-        if (priceData) {
-          await storage.updateStock(stock.symbol, {
-            current_price: priceData.price,
-            change_percent: priceData.changePercent,
-            priceSource: priceData.source
-          });
-          priceCount++;
-          logger.info(`  ✓ ${stock.symbol}: $${priceData.price.toFixed(2)} (${priceData.source})`);
-        }
-        await new Promise(r => setTimeout(r, 12000));
-      } catch (e) {
-        logger.warn(`  ⚠ ${stock.symbol}: ${e.message}`);
-      }
-    }
-    logger.info(`✓ Fetched prices for ${priceCount}/${stocks.length} stocks\n`);
-
-    logger.info('STEP 2: Fetching analyst ratings...');
-    let ratingCount = 0;
-
-    for (const stock of stocks) {
-      try {
-        const ratings = await analyzer.fetchRatings(stock.symbol);
-        if (ratings) {
-          ratingCount++;
-          logger.info(`  ✓ ${stock.symbol}: Ratings fetched`);
-        }
-      } catch (e) {
-        logger.warn(`  ⚠ ${stock.symbol}: ${e.message}`);
-      }
-    }
-    logger.info(`✓ Fetched ratings for ${ratingCount} stocks\n`);
-
-    logger.info('STEP 3: Fetching news (via NewsData.io)...');
-    let newsCount = 0;
-
-    for (const stock of stocks) {
-      try {
-        const news = await analyzer.fetchNews(stock.symbol);
-        if (news && news.length > 0) {
-          newsCount += news.length;
-          logger.info(`  ✓ ${stock.symbol}: ${news.length} articles`);
-        } else {
-          logger.info(`  ℹ ${stock.symbol}: No recent news found`);
-        }
-        
-        // Politeness delay: 1.5 seconds between requests to protect your 15-minute rate limit window
-        await new Promise(r => setTimeout(r, 1500)); 
-        
-      } catch (e) {
-        logger.warn(`  ⚠ ${stock.symbol}: ${e.message}`);
-      }
-    }
-    logger.info(`✓ Fetched ${newsCount} news articles\n`);
-
-    logger.info('STEP 4: Calculating composite scores...');
-    let scoredCount = 0;
-
-    for (const stock of stocks) {
-      try {
+        // Fetch raw data
         const priceData = await analyzer.fetchPrice(stock.symbol);
         const ratings = await analyzer.fetchRatings(stock.symbol);
-        const news = await analyzer.fetchNews(stock.symbol);
-
-        const score = analyzer.calculateScore(priceData, ratings, news);
+        const rawNews = await analyzer.fetchNews(stock.symbol);
+        
+        // Pass raw news into your 8-layer analyzer
+        const analyzedNews = newsAnalyzer.analyzeNews(rawNews, stock.symbol);
+        
+        // Calculate the score
+        const score = analyzer.calculateScore(priceData, ratings, analyzedNews);
         const signal = analyzer.getSignal(score);
 
-        await storage.updateStock(stock.symbol, {
+        // Prepare updates for Redis
+        const updates = {
           latest_score: Math.round(score * 10) / 10,
           signal: signal,
           confidence: ratings ? 85 : 60,
-          current_price: priceData ? priceData.price : stock.current_price || stock.average_price
-        });
+          current_price: priceData ? priceData.price : stock.current_price,
+          change_percent: priceData ? priceData.changePercent : stock.change_percent,
+        };
 
-        scoredCount++;
-        logger.info(`  ✓ ${stock.symbol}: ${score.toFixed(1)}/10 → ${signal}`);
+        // Calculate Total Value based on frontend quantity
+        if (updates.current_price && stock.quantity) {
+          updates.total_value = updates.current_price * stock.quantity;
+        } else {
+          updates.total_value = 0; 
+        }
+
+        // Store the top 3 headlines and links so the frontend can display them
+        if (rawNews.length > 0) {
+          updates.recent_news = rawNews.map(n => ({
+            headline: n.headline,
+            url: n.url,
+            published_at: n.published_at
+          }));
+          newsCount += rawNews.length;
+        }
+
+        await storage.updateStock(stock.symbol, updates);
+        
+        if (priceData) priceCount++;
+        if (ratings) ratingCount++;
+        
+        logger.info(`✓ ${stock.symbol}: Score ${score.toFixed(1)}/10 → ${signal} | Value: $${(updates.total_value || 0).toFixed(2)}`);
+        
+        await new Promise(r => setTimeout(r, 1500)); // Rate limit protection
       } catch (e) {
-        logger.error(`Score calculation error for ${stock.symbol}`, e);
+        logger.error(`Error updating ${stock.symbol}`, e);
       }
     }
-    logger.info(`✓ Calculated scores for ${scoredCount} stocks\n`);
 
-    logger.info('╔════════════════════════════════════════════════════════════╗');
-    logger.info('║                   UPDATE SUMMARY                           ║');
-    logger.info('╚════════════════════════════════════════════════════════════╝');
-    logger.info(`✓ Portfolio stocks: ${stocks.length}`);
-    logger.info(`✓ Prices updated: ${priceCount}`);
-    logger.info(`✓ Ratings fetched: ${ratingCount}`);
-    logger.info(`✓ News articles: ${newsCount}`);
-    logger.info(`✓ Scores calculated: ${scoredCount}`);
-    logger.info('');
-
-    const duration = (Date.now() - startTime) / 1000;
-    logger.info(`✅ UPDATE COMPLETED SUCCESSFULLY!`);
-    logger.info(`⏱️  Duration: ${duration.toFixed(2)}s`);
-    logger.info(`🕐 Finished: ${new Date().toISOString()}`);
-    logger.info('');
-
+    logger.info(`✅ UPDATE COMPLETED: ${stocks.length} Stocks Analyzed.`);
     const client = await getRedisClient();
     await client.quit();
     process.exit(0);
 
   } catch (error) {
     logger.error('FATAL ERROR', error);
-    const client = await getRedisClient();
-    await client.quit();
     process.exit(1);
   }
 }
