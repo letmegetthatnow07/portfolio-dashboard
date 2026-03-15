@@ -1,7 +1,6 @@
-import fs from 'fs';
-import path from 'path';
+import { kv } from '@vercel/kv';
 
-export default function handler(req, res) {
+export default async function handler(req, res) {
   try {
     if (req.method !== 'POST') {
       return res.status(405).json({ error: 'Method not allowed' });
@@ -9,7 +8,6 @@ export default function handler(req, res) {
 
     const { symbol, name, type, region, sector, quantity, average_price } = req.body;
 
-    // Validate input
     if (!symbol || typeof symbol !== 'string') {
       return res.status(400).json({ error: 'Symbol is required' });
     }
@@ -20,24 +18,15 @@ export default function handler(req, res) {
       return res.status(400).json({ error: 'Symbol must be 1-10 characters' });
     }
 
-    // Initialize data directory
-    const dataDir = path.join(process.cwd(), 'data');
-    const dataFile = path.join(dataDir, 'portfolio-data.json');
-
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true });
-    }
-
-    // Read existing portfolio
+    // Get existing portfolio from KV
     let portfolio = { stocks: [], lastUpdated: null };
-    
-    if (fs.existsSync(dataFile)) {
-      try {
-        const data = fs.readFileSync(dataFile, 'utf8');
-        portfolio = JSON.parse(data);
-      } catch (e) {
-        console.error('Error reading portfolio:', e);
+    try {
+      const stored = await kv.get('portfolio');
+      if (stored) {
+        portfolio = stored;
       }
+    } catch (e) {
+      console.error('Error reading from KV:', e);
     }
 
     // Check if stock already exists
@@ -68,8 +57,8 @@ export default function handler(req, res) {
     portfolio.stocks.push(newStock);
     portfolio.lastUpdated = new Date().toISOString();
 
-    // Write to file
-    fs.writeFileSync(dataFile, JSON.stringify(portfolio, null, 2));
+    // Save to KV
+    await kv.set('portfolio', portfolio);
 
     return res.status(201).json({
       status: 'success',
