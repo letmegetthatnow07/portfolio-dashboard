@@ -1,18 +1,7 @@
-/**
- * Enhanced Portfolio Dashboard - WITH ADD/EDIT STOCKS
- * Professional investment dashboard with composite scores
- * Displays portfolio with real data from 6 APIs
- * Allows add/edit/delete stocks
- */
-
 import React, { useState, useEffect } from 'react';
 import './enhanced-portfolio-dashboard.css';
 
 const EnhancedPortfolioDashboard = () => {
-  // ============================================
-  // STATE
-  // ============================================
-  
   const [portfolio, setPortfolio] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -21,42 +10,26 @@ const EnhancedPortfolioDashboard = () => {
   const [sortBy, setSortBy] = useState('score');
   const [filterSignal, setFilterSignal] = useState('ALL');
   
-  // Form state for adding/editing stocks
   const [showForm, setShowForm] = useState(false);
-  const [formMode, setFormMode] = useState('add'); // 'add' or 'edit'
+  const [formMode, setFormMode] = useState('add'); 
   const [formData, setFormData] = useState({
-    symbol: '',
-    name: '',
-    quantity: '',
-    average_price: '',
-    type: 'Stock',
-    region: 'Global',
-    sector: ''
+    symbol: '', name: '', quantity: '', average_price: '', type: 'Stock', region: 'Global', sector: ''
   });
   const [editingId, setEditingId] = useState(null);
-
-  // ============================================
-  // FETCH PORTFOLIO DATA
-  // ============================================
+  
+  // New state for the News Modal
+  const [newsModalStock, setNewsModalStock] = useState(null);
 
   const fetchPortfolio = async () => {
     try {
       setLoading(true);
       setError(null);
-
       const response = await fetch('/api/portfolio');
-      
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
-      }
-
+      if (!response.ok) throw new Error(`API error: ${response.status}`);
       const data = await response.json();
 
       if (data.status === 'success') {
-        const sorted = [...data.portfolio].sort((a, b) => 
-          (b.latest_score || 0) - (a.latest_score || 0)
-        );
-        
+        const sorted = [...data.portfolio].sort((a, b) => (b.latest_score || 0) - (a.latest_score || 0));
         setPortfolio(sorted);
         setStats(data.stats);
         setLastUpdate(new Date(data.timestamp));
@@ -71,46 +44,25 @@ const EnhancedPortfolioDashboard = () => {
     }
   };
 
-  // ============================================
-  // EFFECTS
-  // ============================================
-
   useEffect(() => {
     fetchPortfolio();
     const interval = setInterval(fetchPortfolio, 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, []);
 
-  // ============================================
-  // ADD/EDIT STOCK HANDLERS
-  // ============================================
-
   const handleAddStock = async (e) => {
     e.preventDefault();
-
     if (!formData.symbol || !formData.quantity || !formData.average_price) {
       alert('Please fill all required fields');
       return;
     }
-
     try {
       const response = await fetch('/api/portfolio/add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData)
       });
-
       if (response.ok) {
-        alert('Stock added successfully! Dashboard will update in next refresh.');
-        setFormData({
-          symbol: '',
-          name: '',
-          quantity: '',
-          average_price: '',
-          type: 'Stock',
-          region: 'Global',
-          sector: ''
-        });
         setShowForm(false);
         fetchPortfolio();
       } else {
@@ -123,25 +75,13 @@ const EnhancedPortfolioDashboard = () => {
 
   const handleEditStock = async (e) => {
     e.preventDefault();
-
     try {
       const response = await fetch(`/api/portfolio/edit/${editingId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData)
       });
-
       if (response.ok) {
-        alert('Stock updated successfully!');
-        setFormData({
-          symbol: '',
-          name: '',
-          quantity: '',
-          average_price: '',
-          type: 'Stock',
-          region: 'Global',
-          sector: ''
-        });
         setShowForm(false);
         setEditingId(null);
         fetchPortfolio();
@@ -155,14 +95,9 @@ const EnhancedPortfolioDashboard = () => {
 
   const handleDeleteStock = async (id) => {
     if (!window.confirm('Are you sure you want to delete this stock?')) return;
-
     try {
-      const response = await fetch(`/api/portfolio/delete/${id}`, {
-        method: 'DELETE'
-      });
-
+      const response = await fetch(`/api/portfolio/delete/${id}`, { method: 'DELETE' });
       if (response.ok) {
-        alert('Stock deleted successfully!');
         fetchPortfolio();
       } else {
         alert('Error deleting stock.');
@@ -176,13 +111,9 @@ const EnhancedPortfolioDashboard = () => {
     setFormMode('edit');
     setEditingId(stock.id);
     setFormData({
-      symbol: stock.symbol,
-      name: stock.name || '',
-      quantity: stock.quantity.toString(),
-      average_price: stock.average_price.toString(),
-      type: stock.type || 'Stock',
-      region: stock.region || 'Global',
-      sector: stock.sector || ''
+      symbol: stock.symbol, name: stock.name || '', quantity: stock.quantity.toString(),
+      average_price: stock.average_price.toString(), type: stock.type || 'Stock',
+      region: stock.region || 'Global', sector: stock.sector || ''
     });
     setShowForm(true);
   };
@@ -190,68 +121,34 @@ const EnhancedPortfolioDashboard = () => {
   const openAddForm = () => {
     setFormMode('add');
     setEditingId(null);
-    setFormData({
-      symbol: '',
-      name: '',
-      quantity: '',
-      average_price: '',
-      type: 'Stock',
-      region: 'Global',
-      sector: ''
-    });
+    setFormData({ symbol: '', name: '', quantity: '', average_price: '', type: 'Stock', region: 'Global', sector: '' });
     setShowForm(true);
   };
 
-  // ============================================
-  // FILTER & SORT
-  // ============================================
-
   const getFilteredPortfolio = () => {
     let filtered = portfolio;
-
     if (filterSignal !== 'ALL') {
       filtered = filtered.filter(stock => stock.signal === filterSignal);
     }
-
     return filtered.sort((a, b) => {
       switch (sortBy) {
-        case 'score':
-          return (b.latest_score || 0) - (a.latest_score || 0);
-        case 'upside':
-          return (b.upside_downside_percent || 0) - (a.upside_downside_percent || 0);
-        case 'symbol':
-          return a.symbol.localeCompare(b.symbol);
-        default:
-          return 0;
+        case 'score': return (b.latest_score || 0) - (a.latest_score || 0);
+        case 'upside': return (b.upside_downside_percent || 0) - (a.upside_downside_percent || 0);
+        case 'symbol': return a.symbol.localeCompare(b.symbol);
+        default: return 0;
       }
     });
   };
 
   const filteredPortfolio = getFilteredPortfolio();
 
-  // ============================================
-  // HELPER FUNCTIONS
-  // ============================================
-
   const getSignalColor = (signal) => {
-    const colors = {
-      'STRONG_BUY': '#10b981',
-      'BUY': '#3b82f6',
-      'HOLD': '#f59e0b',
-      'REDUCE': '#ef4444',
-      'SELL': '#7f1d1d'
-    };
+    const colors = { 'STRONG_BUY': '#10b981', 'BUY': '#3b82f6', 'HOLD': '#f59e0b', 'REDUCE': '#ef4444', 'SELL': '#7f1d1d' };
     return colors[signal] || '#6b7280';
   };
 
   const getSignalEmoji = (signal) => {
-    const emojis = {
-      'STRONG_BUY': '🚀',
-      'BUY': '✅',
-      'HOLD': '⏸️',
-      'REDUCE': '⚠️',
-      'SELL': '❌'
-    };
+    const emojis = { 'STRONG_BUY': '🚀', 'BUY': '✅', 'HOLD': '⏸️', 'REDUCE': '⚠️', 'SELL': '❌' };
     return emojis[signal] || '•';
   };
 
@@ -261,362 +158,184 @@ const EnhancedPortfolioDashboard = () => {
   };
 
   const formatPrice = (num) => {
-    if (!num) return 'N/A';
-    return `$${num.toFixed(2)}`;
+    if (!num && num !== 0) return 'N/A';
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(num);
   };
-
-  // ============================================
-  // RENDER
-  // ============================================
 
   if (loading && portfolio.length === 0) {
     return (
       <div className="dashboard-container">
-        <div className="loading-spinner">
-          <div className="spinner"></div>
-          <p>Loading portfolio analysis...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error && portfolio.length === 0) {
-    return (
-      <div className="dashboard-container">
-        <div className="error-box">
-          <h2>⚠️ Error Loading Portfolio</h2>
-          <p>{error}</p>
-          <button onClick={fetchPortfolio} className="btn-primary">
-            Try Again
-          </button>
-        </div>
+        <div className="loading-spinner"><div className="spinner"></div></div>
       </div>
     );
   }
 
   return (
     <div className="dashboard-container">
-      {/* HEADER */}
       <div className="dashboard-header">
         <div>
-          <h1>📊 Professional Portfolio Dashboard</h1>
-          <p className="subtitle">
-            AI-Powered Stock Analysis | 6 Data Sources | Professional Grade Scoring
-          </p>
+          <h1>Alpha Dashboard</h1>
+          <p className="subtitle">Structural Alpha Tracking & Portfolio Audit</p>
         </div>
         <div className="header-actions">
-          {lastUpdate && (
-            <div className="last-update">
-              🕐 Last updated: {lastUpdate.toLocaleTimeString()}
-            </div>
-          )}
-          <button onClick={() => openAddForm()} className="btn-add">
-            ➕ Add Stock
-          </button>
-          <button onClick={fetchPortfolio} className="btn-refresh">
-            🔄 Refresh
-          </button>
+          {lastUpdate && <div className="last-update">Updated: {lastUpdate.toLocaleTimeString()}</div>}
+          <button onClick={() => openAddForm()} className="btn-primary">Add Asset</button>
+          <button onClick={fetchPortfolio} className="btn-secondary">Refresh</button>
         </div>
       </div>
 
-      {/* ADD/EDIT FORM MODAL */}
       {showForm && (
-        <div className="modal-overlay">
-          <div className="modal-content">
+        <div className="modal-overlay" onClick={() => setShowForm(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>{formMode === 'add' ? '➕ Add New Stock' : '✏️ Edit Stock'}</h2>
+              <h2>{formMode === 'add' ? 'Add Asset' : 'Edit Asset'}</h2>
               <button onClick={() => setShowForm(false)} className="btn-close">✕</button>
             </div>
-            
             <form onSubmit={formMode === 'add' ? handleAddStock : handleEditStock}>
               <div className="form-grid">
                 <div className="form-group">
-                  <label>Symbol *</label>
-                  <input
-                    type="text"
-                    placeholder="e.g., CRWD, TCS"
-                    value={formData.symbol}
-                    onChange={(e) => setFormData({...formData, symbol: e.target.value.toUpperCase()})}
-                    disabled={formMode === 'edit'}
-                  />
+                  <label>Symbol</label>
+                  <input type="text" placeholder="e.g. CRWD" value={formData.symbol} onChange={(e) => setFormData({...formData, symbol: e.target.value.toUpperCase()})} disabled={formMode === 'edit'} />
                 </div>
-
                 <div className="form-group">
-                  <label>Company Name</label>
-                  <input
-                    type="text"
-                    placeholder="e.g., CrowdStrike Holdings"
-                    value={formData.name}
-                    onChange={(e) => setFormData({...formData, name: e.target.value})}
-                  />
+                  <label>Quantity</label>
+                  <input type="number" step="0.01" value={formData.quantity} onChange={(e) => setFormData({...formData, quantity: e.target.value})} />
                 </div>
-
                 <div className="form-group">
-                  <label>Quantity *</label>
-                  <input
-                    type="number"
-                    placeholder="Number of shares"
-                    step="0.01"
-                    value={formData.quantity}
-                    onChange={(e) => setFormData({...formData, quantity: e.target.value})}
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label>Average Price ($) *</label>
-                  <input
-                    type="number"
-                    placeholder="Entry price per share"
-                    step="0.01"
-                    value={formData.average_price}
-                    onChange={(e) => setFormData({...formData, average_price: e.target.value})}
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label>Type</label>
-                  <select value={formData.type} onChange={(e) => setFormData({...formData, type: e.target.value})}>
-                    <option>Stock</option>
-                    <option>ETF</option>
-                  </select>
-                </div>
-
-                <div className="form-group">
-                  <label>Region</label>
-                  <select value={formData.region} onChange={(e) => setFormData({...formData, region: e.target.value})}>
-                    <option>Global</option>
-                    <option>India</option>
-                  </select>
-                </div>
-
-                <div className="form-group">
-                  <label>Sector</label>
-                  <input
-                    type="text"
-                    placeholder="e.g., Technology, Healthcare"
-                    value={formData.sector}
-                    onChange={(e) => setFormData({...formData, sector: e.target.value})}
-                  />
+                  <label>Average Price</label>
+                  <input type="number" step="0.01" value={formData.average_price} onChange={(e) => setFormData({...formData, average_price: e.target.value})} />
                 </div>
               </div>
-
               <div className="form-actions">
-                <button type="submit" className="btn-submit">
-                  {formMode === 'add' ? 'Add Stock' : 'Update Stock'}
-                </button>
-                <button type="button" onClick={() => setShowForm(false)} className="btn-cancel">
-                  Cancel
-                </button>
+                <button type="button" onClick={() => setShowForm(false)} className="btn-secondary">Cancel</button>
+                <button type="submit" className="btn-primary">{formMode === 'add' ? 'Save' : 'Update'}</button>
               </div>
             </form>
           </div>
         </div>
       )}
 
-      {/* SUMMARY STATS */}
-      {stats && (
-        <div className="summary-section">
-          <h2>Portfolio Summary</h2>
-          <div className="stats-grid">
-            <div className="stat-card strong-buy">
-              <div className="stat-icon">🚀</div>
-              <div className="stat-content">
-                <p className="stat-label">Strong Buys</p>
-                <p className="stat-value">{stats.strongBuys}</p>
-              </div>
+      {/* NEWS MODAL */}
+      {newsModalStock && (
+        <div className="modal-overlay" onClick={() => setNewsModalStock(null)}>
+          <div className="modal-content news-modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Latest Intelligence: {newsModalStock.symbol}</h2>
+              <button onClick={() => setNewsModalStock(null)} className="btn-close">✕</button>
             </div>
-
-            <div className="stat-card buy">
-              <div className="stat-icon">✅</div>
-              <div className="stat-content">
-                <p className="stat-label">Buys</p>
-                <p className="stat-value">{stats.buys}</p>
-              </div>
-            </div>
-
-            <div className="stat-card hold">
-              <div className="stat-icon">⏸️</div>
-              <div className="stat-content">
-                <p className="stat-label">Holds</p>
-                <p className="stat-value">{stats.holds}</p>
-              </div>
-            </div>
-
-            <div className="stat-card reduce">
-              <div className="stat-icon">⚠️</div>
-              <div className="stat-content">
-                <p className="stat-label">Reduces</p>
-                <p className="stat-value">{stats.reduces}</p>
-              </div>
-            </div>
-
-            <div className="stat-card sell">
-              <div className="stat-icon">❌</div>
-              <div className="stat-content">
-                <p className="stat-label">Sells</p>
-                <p className="stat-value">{stats.sells}</p>
-              </div>
-            </div>
-
-            <div className="stat-card average">
-              <div className="stat-icon">📈</div>
-              <div className="stat-content">
-                <p className="stat-label">Average Score</p>
-                <p className="stat-value">{stats.averageScore}/10</p>
-              </div>
+            <div className="news-container">
+              {newsModalStock.recent_news && newsModalStock.recent_news.length > 0 ? (
+                newsModalStock.recent_news.map((news, idx) => (
+                  <a href={news.url} target="_blank" rel="noopener noreferrer" key={idx} className="news-card">
+                    <span className="news-date">{new Date(news.published_at).toLocaleDateString()}</span>
+                    <h3 className="news-headline">{news.headline}</h3>
+                    {news.description && <p className="news-desc">{news.description.substring(0, 150)}...</p>}
+                  </a>
+                ))
+              ) : (
+                <p className="no-news">No actionable intelligence found for this asset in the current cycle.</p>
+              )}
             </div>
           </div>
         </div>
       )}
 
-      {/* CONTROLS */}
+      {stats && (
+        <div className="summary-section">
+          <div className="stats-grid">
+            <div className="stat-card total-value">
+              <div className="stat-label">Total Value</div>
+              <div className="stat-value">{formatPrice(stats.totalValue)}</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Average Score</div>
+              <div className="stat-value">{stats.averageScore}/10</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Strong Buys</div>
+              <div className="stat-value" style={{color: 'var(--color-strong-buy)'}}>{stats.strongBuys}</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Buys</div>
+              <div className="stat-value" style={{color: 'var(--color-buy)'}}>{stats.buys}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="controls-section">
-        <div className="filter-group">
-          <label>Filter by Signal:</label>
-          <select value={filterSignal} onChange={(e) => setFilterSignal(e.target.value)}>
-            <option value="ALL">All Signals</option>
-            <option value="STRONG_BUY">🚀 Strong Buy</option>
-            <option value="BUY">✅ Buy</option>
-            <option value="HOLD">⏸️ Hold</option>
-            <option value="REDUCE">⚠️ Reduce</option>
-            <option value="SELL">❌ Sell</option>
-          </select>
-        </div>
-
-        <div className="sort-group">
-          <label>Sort by:</label>
-          <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
-            <option value="score">Score (High to Low)</option>
-            <option value="upside">Upside % (High to Low)</option>
-            <option value="symbol">Symbol (A-Z)</option>
-          </select>
-        </div>
-
-        <div className="results-count">
-          Showing {filteredPortfolio.length} of {portfolio.length} stocks
-        </div>
+        <select className="minimal-select" value={filterSignal} onChange={(e) => setFilterSignal(e.target.value)}>
+          <option value="ALL">All Signals</option>
+          <option value="STRONG_BUY">Strong Buy</option>
+          <option value="BUY">Buy</option>
+          <option value="HOLD">Hold</option>
+          <option value="REDUCE">Reduce</option>
+          <option value="SELL">Sell</option>
+        </select>
+        <select className="minimal-select" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+          <option value="score">Score (High to Low)</option>
+          <option value="symbol">Symbol (A-Z)</option>
+        </select>
+        <div className="results-count">{filteredPortfolio.length} Assets</div>
       </div>
 
-      {/* PORTFOLIO TABLE */}
       <div className="portfolio-section">
-        <h2>Portfolio Analysis</h2>
-        
         {filteredPortfolio.length === 0 ? (
-          <div className="no-results">
-            <p>No stocks in portfolio. Click "Add Stock" to get started!</p>
-          </div>
+          <div className="no-results">Portfolio empty. Initiate tracking by adding an asset.</div>
         ) : (
           <div className="table-wrapper">
             <table className="portfolio-table">
               <thead>
                 <tr>
-                  <th className="col-symbol">Symbol</th>
-                  <th className="col-price">Price</th>
-                  <th className="col-score">Score</th>
-                  <th className="col-signal">Signal</th>
-                  <th className="col-target">Price Target</th>
-                  <th className="col-upside">Upside</th>
-                  <th className="col-confidence">Confidence</th>
-                  <th className="col-actions">Actions</th>
+                  <th>Asset</th>
+                  <th>Price</th>
+                  <th>Score</th>
+                  <th>Signal</th>
+                  <th>Total Value</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredPortfolio.map((stock) => (
-                  <tr key={stock.id} className={`row-${stock.signal?.toLowerCase()}`}>
-                    <td className="col-symbol">
+                {filteredPortfolio.map((stock) => {
+                  const totalValue = (parseFloat(stock.current_price) || 0) * (parseFloat(stock.quantity) || 0);
+                  
+                  return (
+                  <tr key={stock.id}>
+                    <td>
                       <strong className="stock-symbol">{stock.symbol}</strong>
-                      <span className="stock-name">{stock.name}</span>
                     </td>
-
-                    <td className="col-price">
-                      <span className="price-value">
-                        {formatPrice(stock.current_price)}
-                      </span>
+                    <td>
+                      <div className="price-value">{formatPrice(stock.current_price)}</div>
                       {stock.change_percent && (
-                        <span className={`change ${stock.change_percent > 0 ? 'positive' : 'negative'}`}>
-                          {stock.change_percent > 0 ? '▲' : '▼'} {formatPercent(stock.change_percent)}
-                        </span>
+                        <div className={`change ${stock.change_percent > 0 ? 'positive' : 'negative'}`}>
+                          {stock.change_percent > 0 ? '+' : ''}{stock.change_percent.toFixed(2)}%
+                        </div>
                       )}
                     </td>
-
-                    <td className="col-score">
+                    <td>
                       <div className="score-badge">
-                        <span className="score-number">
-                          {stock.latest_score?.toFixed(1) || '—'}
-                        </span>
-                        <span className="score-max">/10</span>
-                      </div>
-                      <div className="score-bar">
-                        <div 
-                          className="score-fill"
-                          style={{
-                            width: `${((stock.latest_score || 0) / 10) * 100}%`,
-                            backgroundColor: getSignalColor(stock.signal)
-                          }}
-                        ></div>
+                        <span className="score-number">{stock.latest_score?.toFixed(1) || '—'}</span>
                       </div>
                     </td>
-
-                    <td className="col-signal">
-                      <span 
-                        className="signal-badge"
-                        style={{ backgroundColor: getSignalColor(stock.signal) }}
-                      >
-                        {getSignalEmoji(stock.signal)} {stock.signal}
+                    <td>
+                      <span className="signal-badge" style={{ color: getSignalColor(stock.signal), backgroundColor: `${getSignalColor(stock.signal)}15` }}>
+                        {stock.signal?.replace('_', ' ') || 'PENDING'}
                       </span>
                     </td>
-
-                    <td className="col-target">
-                      {formatPrice(stock.analyst_price_target)}
+                    <td>
+                      <div className="price-value">{formatPrice(totalValue)}</div>
                     </td>
-
-                    <td className="col-upside">
-                      <span className={stock.upside_downside_percent > 0 ? 'positive' : 'negative'}>
-                        {stock.upside_downside_percent ? 
-                          `${stock.upside_downside_percent > 0 ? '+' : ''}${stock.upside_downside_percent.toFixed(1)}%` 
-                          : '—'
-                        }
-                      </span>
-                    </td>
-
-                    <td className="col-confidence">
-                      <span className="confidence-badge">
-                        {stock.confidence}%
-                      </span>
-                    </td>
-
                     <td className="col-actions">
-                      <button 
-                        onClick={() => openEditForm(stock)}
-                        className="btn-action btn-edit"
-                        title="Edit stock"
-                      >
-                        ✏️
-                      </button>
-                      <button 
-                        onClick={() => handleDeleteStock(stock.id)}
-                        className="btn-action btn-delete"
-                        title="Delete stock"
-                      >
-                        🗑️
-                      </button>
+                      <button onClick={() => setNewsModalStock(stock)} className="btn-icon" title="View Intelligence">📰</button>
+                      <button onClick={() => openEditForm(stock)} className="btn-icon" title="Edit">✏️</button>
+                      <button onClick={() => handleDeleteStock(stock.id)} className="btn-icon" title="Remove">🗑️</button>
                     </td>
                   </tr>
-                ))}
+                )})}
               </tbody>
             </table>
           </div>
         )}
-      </div>
-
-      {/* FOOTER */}
-      <div className="dashboard-footer">
-        <p>
-          💡 <strong>Data Updated Daily at 5 PM ET</strong> via GitHub Actions automation
-        </p>
-        <p className="footer-note">
-          News analyzed every 6 hours (weekdays) and 24 hours (weekends). All data from real market sources.
-        </p>
       </div>
     </div>
   );
