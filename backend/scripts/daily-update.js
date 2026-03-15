@@ -105,20 +105,17 @@ class PriceAnalyzer {
       const res = await axios.get(`https://api.polygon.io/v2/aggs/ticker/${symbol}/range/1/day/${startStr}/${endStr}?adjusted=true&sort=desc&limit=250&apiKey=${process.env.POLYGON_API_KEY}`, { timeout: 8000 });
       
       if (res.data && res.data.results && res.data.results.length > 0) {
-        const history = res.data.results; // array of { c: closePrice }, sorted newest to oldest
+        const history = res.data.results; 
         
-        // Calculate 200 SMA
         const period = Math.min(200, history.length);
         const sum200 = history.slice(0, period).reduce((acc, val) => acc + val.c, 0);
         const sma200 = sum200 / period;
 
-        // Calculate 14-Day RSI
         let rsi = 50;
         if (history.length >= 15) {
           let gains = 0, losses = 0;
-          // Iterate chronologically backwards through the newest 15 days
           for (let i = 14; i > 0; i--) {
-            let diff = history[i-1].c - history[i].c; // Newer day close minus Older day close
+            let diff = history[i-1].c - history[i].c; 
             if (diff > 0) gains += diff;
             else losses -= diff;
           }
@@ -164,9 +161,42 @@ class PriceAnalyzer {
     } catch (e) { logger.warn(`News fetch failed for ${symbol}: ${e.message}`); }
     return [];
   }
+
+  // 6. INSIDER ACTION: SEC API (Form 4)
+  async fetchInsider(symbol) {
+    try {
+      // Using sec-api.io Insider Trading endpoint
+      const res = await axios.get(`https://api.sec-api.io/insider-trading?ticker=${symbol}&token=${process.env.SEC_API_KEY}`, { timeout: 8000 });
+      
+      if (res.data && Array.isArray(res.data)) {
+        let totalBought = 0;
+        let totalSold = 0;
+        
+        // Only look at the last 6 months of data to ensure relevance
+        const sixMonthsAgo = new Date();
+        sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+
+        res.data.forEach(trade => {
+          const tradeDate = new Date(trade.transactionDate);
+          if (tradeDate >= sixMonthsAgo && trade.shares && trade.sharePrice) {
+            const value = parseFloat(trade.shares) * parseFloat(trade.sharePrice);
+            
+            // Code P = Open Market Purchase, Code S = Open Market Sale
+            if (trade.transactionCode === 'P') totalBought += value;
+            if (trade.transactionCode === 'S') totalSold += value;
+          }
+        });
+
+        return { bought: totalBought, sold: totalSold };
+      }
+    } catch (e) {
+      logger.warn(`SEC Insider fetch failed for ${symbol}: ${e.message}`);
+    }
+    return null;
+  }
   
-  calculateScore(priceData, fundamentals, technicals, ratings, analyzedNews) {
-    let fundScore = 5; let techScore = 5; let ratingScore = 5; let newsScore = 5;
+  calculateScore(priceData, fundamentals, technicals, ratings, analyzedNews, insiderData) {
+    let fundScore = 5; let techScore = 5; let ratingScore = 5; let newsScore = 5; let insiderScore = 5;
 
     // --- 1. FUNDAMENTALS (29% Weight) ---
     if (fundamentals) {
@@ -219,10 +249,27 @@ class PriceAnalyzer {
       newsScore = Math.max(0, Math.min(10, newsScore));
     }
 
-    // Normalizing out of 10 for Phase 1. (80% utilized weight * 1.25 = 100%)
+    // --- 5. INSIDER ACTION (20% Weight) ---
+    if (insiderData) {
+      const { bought, sold } = insiderData;
+      
+      if (bought > 0 && sold === 0) insiderScore = 10; // Pure high conviction buying
+      else if (bought > sold * 2) insiderScore = 9; // Heavy buying vs light selling
+      else if (bought > sold) insiderScore = 7; // Mild bullishness
+      else if (sold > bought * 5) insiderScore = 2; // Massive dumping
+      else if (sold > bought * 2) insiderScore = 3; // Heavy selling
+      else if (sold > bought) insiderScore = 4; // Mild bearishness
+      else insiderScore = 5; // Neutral / No significant action
+    }
+
+    // --- FINAL COMPOSITE SCORE (Perfect 100% Weight Distribution) ---
     const finalScore = (
-      (fundScore * 0.29) + (techScore * 0.16) + (ratingScore * 0.20) + (newsScore * 0.15)
-    ) * 1.25;
+      (fundScore * 0.29) + 
+      (techScore * 0.16) + 
+      (ratingScore * 0.20) + 
+      (newsScore * 0.15) + 
+      (insiderScore * 0.20)
+    );
 
     return Math.max(0, Math.min(10, finalScore));
   }
@@ -243,7 +290,7 @@ async function updateMarketData() {
 
   try {
     logger.info('╔════════════════════════════════════════════════════════════╗');
-    logger.info('║        PHASE 1 MULTI-FACTOR MODEL (22% CAGR AUDIT)         ║');
+    logger.info('║        PHASE 2 MULTI-FACTOR MODEL (WITH INSIDER SEC)       ║');
     logger.info('╚════════════════════════════════════════════════════════════╝');
     
     const portfolio = await storage.getPortfolio();
@@ -255,20 +302,28 @@ async function updateMarketData() {
       try {
         logger.info(`Analyzing ${stock.symbol}...`);
         
-        const [priceData, fundamentals, technicals, ratings, rawNews] = await Promise.all([
+        // Added the SEC Insider fetch to the Promise.all array
+        const [priceData, fundamentals, technicals, ratings, rawNews, insiderData] = await Promise.all([
           analyzer.fetchPrice(stock.symbol),
           analyzer.fetchFundamentals(stock.symbol),
           analyzer.fetchTechnicals(stock.symbol),
           analyzer.fetchRatings(stock.symbol),
-          analyzer.fetchNews(stock.symbol)
+          analyzer.fetchNews(stock.symbol),
+          analyzer.fetchInsider(stock.symbol)
         ]);
         
         if (rawNews && rawNews.length > 0) {
           rawNews.forEach(n => logger.info(`  📰 ${n.headline.substring(0, 60)}...`));
         }
 
+        if (insiderData && (insiderData.bought > 0 || insiderData.sold > 0)) {
+          logger.info(`  👔 Insiders: $${insiderData.bought.toLocaleString()} Bought | $${insiderData.sold.toLocaleString()} Sold (Last 6 Months)`);
+        }
+
         const analyzedNews = newsAnalyzer.analyzeNews(rawNews, stock.symbol);
-        const score = analyzer.calculateScore(priceData, fundamentals, technicals, ratings, analyzedNews);
+        
+        // Passing the insiderData into the score calculator
+        const score = analyzer.calculateScore(priceData, fundamentals, technicals, ratings, analyzedNews, insiderData);
         const signal = analyzer.getSignal(score);
 
         const updates = {
@@ -291,8 +346,7 @@ async function updateMarketData() {
         await storage.updateStock(stock.symbol, updates);
         logger.info(`✓ ${stock.symbol}: Score ${score.toFixed(1)}/10 → ${signal}\n`);
         
-        // CRITICAL: 13-second pacing delay. 
-        // Completely neutralizes Polygon's 5/min limit and Finnhub's 60/min limit.
+        // 13-second pacing delay to protect Polygon and Finnhub
         await sleep(13000); 
 
       } catch (e) {
