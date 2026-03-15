@@ -161,22 +161,24 @@ class PriceAnalyzer {
   }
 
   async fetchNews(symbol) {
-    // Use Finnhub News API instead of newsdata.io
-    try {
-      const res = await axios.get(
-        `https://finnhub.io/api/v1/company-news?symbol=${symbol}&token=${process.env.FINNHUB_API_KEY}`,
-        { timeout: 8000 }
-      );
+  try {
+    const res = await axios.get(
+      `https://financialmodelingprep.com/api/v3/stock_news?symbols=${symbol}&limit=3&apikey=${process.env.FMP_API_KEY}`,
+      { timeout: 8000 }
+    );
 
-      if (res.data && Array.isArray(res.data)) {
-        return res.data.slice(0, 3); // Get first 3 articles
-      }
-    } catch (e) {
-      logger.warn(`Finnhub news fetch failed for ${symbol}: ${e.message}`);
+    if (res.data && Array.isArray(res.data) && res.data.length > 0) {
+      return res.data.map(article => ({
+        title: article.title || '',
+        description: article.text || article.summary || ''
+      }));
     }
-
-    return [];
+  } catch (e) {
+    logger.warn(`FMP news fetch failed for ${symbol}: ${e.message}`);
   }
+
+  return [];
+}
 
   calculateScore(priceData, ratings, news) {
     let score = 5;
