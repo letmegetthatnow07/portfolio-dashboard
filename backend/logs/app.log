@@ -586,3 +586,121 @@
 [2026-03-15T09:01:49.392Z] INFO: ⏱️  Duration: 268.01s
 [2026-03-15T09:01:49.392Z] INFO: 🕐 Finished: 2026-03-15T09:01:49.392Z
 [2026-03-15T09:01:49.392Z] INFO: 
+[2026-03-15T09:12:15.599Z] INFO: 
+[2026-03-15T09:12:15.600Z] INFO: ╔════════════════════════════════════════════════════════════╗
+[2026-03-15T09:12:15.601Z] INFO: ║       DAILY MARKET DATA UPDATE - PRODUCTION VERSION        ║
+[2026-03-15T09:12:15.601Z] INFO: ╚════════════════════════════════════════════════════════════╝
+[2026-03-15T09:12:15.601Z] INFO: 📅 Date: 2026-03-15T09:12:15.601Z
+[2026-03-15T09:12:15.601Z] INFO: 
+[2026-03-15T09:12:16.407Z] INFO: 📊 Updating 18 stocks from portfolio...
+[2026-03-15T09:12:16.407Z] INFO: 
+[2026-03-15T09:12:16.407Z] INFO: STEP 1: Fetching current prices...
+[2026-03-15T09:12:16.998Z] INFO:   ✓ SPMO: $116.18 (ALPHA_VANTAGE)
+[2026-03-15T09:12:29.496Z] INFO:   ✓ SMH: $387.33 (ALPHA_VANTAGE)
+[2026-03-15T09:12:41.983Z] INFO:   ✓ TPL: $531.13 (ALPHA_VANTAGE)
+[2026-03-15T09:12:54.476Z] INFO:   ✓ MELI: $1670.00 (ALPHA_VANTAGE)
+[2026-03-15T09:13:06.968Z] INFO:   ✓ VRT: $258.88 (ALPHA_VANTAGE)
+[2026-03-15T09:13:19.455Z] INFO:   ✓ MU: $426.13 (ALPHA_VANTAGE)
+[2026-03-15T09:13:31.962Z] INFO:   ✓ AVNV: $77.54 (ALPHA_VANTAGE)
+[2026-03-15T09:13:44.455Z] INFO:   ✓ BWXT: $194.13 (ALPHA_VANTAGE)
+[2026-03-15T09:13:56.945Z] INFO:   ✓ GEV: $805.02 (ALPHA_VANTAGE)
+[2026-03-15T09:14:09.436Z] INFO:   ✓ CRWD: $441.78 (ALPHA_VANTAGE)
+[2026-03-15T09:14:21.941Z] INFO:   ✓ SHLD: $75.61 (ALPHA_VANTAGE)
+[2026-03-15T09:14:34.432Z] INFO:   ✓ FTAI: $222.24 (ALPHA_VANTAGE)
+[2026-03-15T09:14:46.920Z] INFO:   ✓ RKLB: $68.41 (ALPHA_VANTAGE)
+[2026-03-15T09:14:59.414Z] INFO:   ✓ SCCO: $170.83 (ALPHA_VANTAGE)
+[2026-03-15T09:15:11.905Z] INFO:   ✓ KTOS: $87.53 (ALPHA_VANTAGE)
+[2026-03-15T09:15:24.396Z] INFO:   ✓ AGX: $458.31 (ALPHA_VANTAGE)
+[2026-03-15T09:15:36.884Z] INFO:   ✓ BNO: $49.04 (ALPHA_VANTAGE)
+[2026-03-15T09:15:49.375Z] INFO:   ✓ LLY: $985.08 (ALPHA_VANTAGE)
+[2026-03-15T09:16:01.380Z] INFO: ✓ Fetched prices for 18/18 stocks
+
+[2026-03-15T09:16:01.380Z] INFO: STEP 2: Fetching analyst ratings...
+[2026-03-15T09:16:01.774Z] INFO:   ✓ TPL: Ratings fetched
+[2026-03-15T09:16:01.895Z] INFO:   ✓ MELI: Ratings fetched
+[2026-03-15T09:16:02.077Z] INFO:   ✓ VRT: Ratings fetched
+[2026-03-15T09:16:02.222Z] INFO:   ✓ MU: Ratings fetched
+[2026-03-15T09:16:02.459Z] INFO:   ✓ BWXT: Ratings fetched
+[2026-03-15T09:16:02.610Z] INFO:   ✓ GEV: Ratings fetched
+[2026-03-15T09:16:02.701Z] INFO:   ✓ CRWD: Ratings fetched
+[2026-03-15T09:16:02.831Z] INFO:   ✓ FTAI: Ratings fetched
+[2026-03-15T09:16:02.875Z] INFO:   ✓ RKLB: Ratings fetched
+[2026-03-15T09:16:02.923Z] INFO:   ✓ SCCO: Ratings fetched
+[2026-03-15T09:16:02.970Z] INFO:   ✓ KTOS: Ratings fetched
+[2026-03-15T09:16:03.015Z] INFO:   ✓ AGX: Ratings fetched
+[2026-03-15T09:16:03.096Z] INFO:   ✓ LLY: Ratings fetched
+[2026-03-15T09:16:03.096Z] INFO: ✓ Fetched ratings for 13 stocks
+
+[2026-03-15T09:16:03.096Z] INFO: STEP 3: Fetching news (via Finnhub)...
+[2026-03-15T09:16:03.332Z] WARN: FMP news fetch failed for SPMO: Request failed with status code 403
+[2026-03-15T09:16:03.368Z] WARN: FMP news fetch failed for SMH: Request failed with status code 403
+[2026-03-15T09:16:03.399Z] WARN: FMP news fetch failed for TPL: Request failed with status code 403
+[2026-03-15T09:16:03.501Z] WARN: FMP news fetch failed for MELI: Request failed with status code 403
+[2026-03-15T09:16:03.541Z] WARN: FMP news fetch failed for VRT: Request failed with status code 403
+[2026-03-15T09:16:03.582Z] WARN: FMP news fetch failed for MU: Request failed with status code 403
+[2026-03-15T09:16:03.610Z] WARN: FMP news fetch failed for AVNV: Request failed with status code 403
+[2026-03-15T09:16:03.641Z] WARN: FMP news fetch failed for BWXT: Request failed with status code 403
+[2026-03-15T09:16:03.669Z] WARN: FMP news fetch failed for GEV: Request failed with status code 403
+[2026-03-15T09:16:03.697Z] WARN: FMP news fetch failed for CRWD: Request failed with status code 403
+[2026-03-15T09:16:03.728Z] WARN: FMP news fetch failed for SHLD: Request failed with status code 403
+[2026-03-15T09:16:03.757Z] WARN: FMP news fetch failed for FTAI: Request failed with status code 403
+[2026-03-15T09:16:03.784Z] WARN: FMP news fetch failed for RKLB: Request failed with status code 403
+[2026-03-15T09:16:03.811Z] WARN: FMP news fetch failed for SCCO: Request failed with status code 403
+[2026-03-15T09:16:03.838Z] WARN: FMP news fetch failed for KTOS: Request failed with status code 403
+[2026-03-15T09:16:03.867Z] WARN: FMP news fetch failed for AGX: Request failed with status code 403
+[2026-03-15T09:16:03.940Z] WARN: FMP news fetch failed for BNO: Request failed with status code 403
+[2026-03-15T09:16:04.202Z] WARN: FMP news fetch failed for LLY: Request failed with status code 403
+[2026-03-15T09:16:04.202Z] INFO: ✓ Fetched 0 news articles
+
+[2026-03-15T09:16:04.202Z] INFO: STEP 4: Calculating composite scores...
+[2026-03-15T09:16:04.326Z] WARN: FMP news fetch failed for SPMO: Request failed with status code 403
+[2026-03-15T09:16:04.762Z] INFO:   ✓ SPMO: 6.0/10 → REDUCE
+[2026-03-15T09:16:05.313Z] WARN: FMP news fetch failed for SMH: Request failed with status code 403
+[2026-03-15T09:16:05.748Z] INFO:   ✓ SMH: 5.0/10 → REDUCE
+[2026-03-15T09:16:06.032Z] WARN: FMP news fetch failed for TPL: Request failed with status code 403
+[2026-03-15T09:16:06.467Z] INFO:   ✓ TPL: 7.8/10 → BUY
+[2026-03-15T09:16:06.819Z] WARN: FMP news fetch failed for MELI: Request failed with status code 403
+[2026-03-15T09:16:07.254Z] INFO:   ✓ MELI: 7.3/10 → HOLD
+[2026-03-15T09:16:07.357Z] WARN: FMP news fetch failed for VRT: Request failed with status code 403
+[2026-03-15T09:16:07.792Z] INFO:   ✓ VRT: 8.0/10 → BUY
+[2026-03-15T09:16:08.919Z] WARN: FMP news fetch failed for MU: Request failed with status code 403
+[2026-03-15T09:16:09.354Z] INFO:   ✓ MU: 7.2/10 → HOLD
+[2026-03-15T09:16:09.469Z] WARN: FMP news fetch failed for AVNV: Request failed with status code 403
+[2026-03-15T09:16:09.904Z] INFO:   ✓ AVNV: 6.0/10 → REDUCE
+[2026-03-15T09:16:10.341Z] WARN: FMP news fetch failed for BWXT: Request failed with status code 403
+[2026-03-15T09:16:10.776Z] INFO:   ✓ BWXT: 6.7/10 → HOLD
+[2026-03-15T09:16:10.932Z] WARN: FMP news fetch failed for GEV: Request failed with status code 403
+[2026-03-15T09:16:11.366Z] INFO:   ✓ GEV: 8.0/10 → BUY
+[2026-03-15T09:16:11.705Z] WARN: FMP news fetch failed for CRWD: Request failed with status code 403
+[2026-03-15T09:16:12.140Z] INFO:   ✓ CRWD: 6.7/10 → HOLD
+[2026-03-15T09:16:12.258Z] WARN: FMP news fetch failed for SHLD: Request failed with status code 403
+[2026-03-15T09:16:12.693Z] INFO:   ✓ SHLD: 6.0/10 → REDUCE
+[2026-03-15T09:16:19.658Z] WARN: FMP news fetch failed for FTAI: Request failed with status code 403
+[2026-03-15T09:16:20.093Z] INFO:   ✓ FTAI: 7.4/10 → HOLD
+[2026-03-15T09:16:20.666Z] WARN: FMP news fetch failed for RKLB: Request failed with status code 403
+[2026-03-15T09:16:21.101Z] INFO:   ✓ RKLB: 7.8/10 → BUY
+[2026-03-15T09:16:21.639Z] WARN: FMP news fetch failed for SCCO: Request failed with status code 403
+[2026-03-15T09:16:22.074Z] INFO:   ✓ SCCO: 4.9/10 → SELL
+[2026-03-15T09:16:22.401Z] WARN: FMP news fetch failed for KTOS: Request failed with status code 403
+[2026-03-15T09:16:22.836Z] INFO:   ✓ KTOS: 6.9/10 → HOLD
+[2026-03-15T09:16:23.227Z] WARN: FMP news fetch failed for AGX: Request failed with status code 403
+[2026-03-15T09:16:23.662Z] INFO:   ✓ AGX: 6.4/10 → REDUCE
+[2026-03-15T09:16:23.972Z] WARN: FMP news fetch failed for BNO: Request failed with status code 403
+[2026-03-15T09:16:24.407Z] INFO:   ✓ BNO: 5.0/10 → REDUCE
+[2026-03-15T09:16:24.711Z] WARN: FMP news fetch failed for LLY: Request failed with status code 403
+[2026-03-15T09:16:25.145Z] INFO:   ✓ LLY: 6.9/10 → HOLD
+[2026-03-15T09:16:25.145Z] INFO: ✓ Calculated scores for 18 stocks
+
+[2026-03-15T09:16:25.145Z] INFO: ╔════════════════════════════════════════════════════════════╗
+[2026-03-15T09:16:25.146Z] INFO: ║           UPDATE SUMMARY                                    ║
+[2026-03-15T09:16:25.146Z] INFO: ╚════════════════════════════════════════════════════════════╝
+[2026-03-15T09:16:25.146Z] INFO: ✓ Portfolio stocks: 18
+[2026-03-15T09:16:25.146Z] INFO: ✓ Prices updated: 18
+[2026-03-15T09:16:25.146Z] INFO: ✓ Ratings fetched: 13
+[2026-03-15T09:16:25.146Z] INFO: ✓ News articles: 0
+[2026-03-15T09:16:25.146Z] INFO: ✓ Scores calculated: 18
+[2026-03-15T09:16:25.146Z] INFO: 
+[2026-03-15T09:16:25.146Z] INFO: ✅ UPDATE COMPLETED SUCCESSFULLY!
+[2026-03-15T09:16:25.146Z] INFO: ⏱️  Duration: 249.55s
+[2026-03-15T09:16:25.146Z] INFO: 🕐 Finished: 2026-03-15T09:16:25.146Z
+[2026-03-15T09:16:25.146Z] INFO: 
