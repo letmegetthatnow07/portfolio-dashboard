@@ -4,6 +4,7 @@
   "description": "Backend scripts for portfolio dashboard",
   "main": "index.js",
   "scripts": {
+    "update": "node scripts/daily-update.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
