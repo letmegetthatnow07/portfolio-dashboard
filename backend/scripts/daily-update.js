@@ -2,58 +2,50 @@
 
 require('dotenv').config();
 const axios = require('axios');
-const fs = require('fs');
-const path = require('path');
 const logger = require('../lib/logger');
+const { createClient } = require('redis');
+
+let redisClient = null;
+
+async function getRedisClient() {
+  if (!redisClient) {
+    redisClient = createClient({
+      url: process.env.REDIS_URL
+    });
+    
+    redisClient.on('error', (err) => logger.error('Redis error:', err));
+    await redisClient.connect();
+  }
+  return redisClient;
+}
 
 class PortfolioStorage {
-  constructor() {
-    this.dataDir = path.join(process.cwd(), 'data');
-    this.dataFile = path.join(this.dataDir, 'portfolio-data.json');
-    this.initializeDataDirectory();
-  }
-
-  initializeDataDirectory() {
-    if (!fs.existsSync(this.dataDir)) {
-      fs.mkdirSync(this.dataDir, { recursive: true });
-    }
-
-    if (!fs.existsSync(this.dataFile)) {
-      const initialData = {
-        stocks: [],
-        lastUpdated: null,
-        metadata: {
-          version: '2.0',
-          createdAt: new Date().toISOString()
-        }
-      };
-      fs.writeFileSync(this.dataFile, JSON.stringify(initialData, null, 2));
-    }
-  }
-
-  readData() {
+  async readData() {
     try {
-      const data = fs.readFileSync(this.dataFile, 'utf8');
-      return JSON.parse(data);
+      const client = await getRedisClient();
+      const data = await client.get('portfolio');
+      return data ? JSON.parse(data) : { stocks: [] };
     } catch (e) {
+      logger.error(`Error reading from Redis: ${e.message}`);
       return { stocks: [] };
     }
   }
 
-  writeData(data) {
+  async writeData(data) {
     try {
+      const client = await getRedisClient();
       data.lastUpdated = new Date().toISOString();
-      fs.writeFileSync(this.dataFile, JSON.stringify(data, null, 2));
+      await client.set('portfolio', JSON.stringify(data));
       return true;
     } catch (e) {
-      logger.error(`Error writing data: ${e.message}`);
+      logger.error(`Error writing to Redis: ${e.message}`);
       return false;
     }
   }
 
-  updateStock(symbol, updates) {
+  async updateStock(symbol, updates) {
     try {
-      const data = this.readData();
+      const data = await this.readData();
       let stock = data.stocks.find(s => s.symbol === symbol);
 
       if (!stock) {
@@ -76,7 +68,7 @@ class PortfolioStorage {
         data.stocks[index] = stock;
       }
 
-      this.writeData(data);
+      await this.writeData(data);
       return true;
     } catch (e) {
       logger.error(`Error updating stock: ${e.message}`);
@@ -84,8 +76,8 @@ class PortfolioStorage {
     }
   }
 
-  getPortfolio() {
-    return this.readData();
+  async getPortfolio() {
+    return await this.readData();
   }
 }
 
@@ -221,7 +213,7 @@ async function updateMarketData() {
     logger.info(`📅 Date: ${new Date().toISOString()}`);
     logger.info('');
 
-    const portfolio = storage.getPortfolio();
+    const portfolio = await storage.getPortfolio();
     const stocks = portfolio.stocks || [];
 
     if (stocks.length === 0) {
@@ -229,6 +221,9 @@ async function updateMarketData() {
       logger.info('ℹ️  Add stocks via website dashboard to start analysis');
       logger.info('');
       logger.info('✅ UPDATE COMPLETED (NO STOCKS TO ANALYZE)');
+      
+      const client = await getRedisClient();
+      await client.quit();
       process.exit(0);
     }
 
@@ -242,102 +237,6 @@ async function updateMarketData() {
       try {
         const priceData = await analyzer.fetchPrice(stock.symbol);
         if (priceData) {
-          storage.updateStock(stock.symbol, {
+          await storage.updateStock(stock.symbol, {
             current_price: priceData.price,
             change_percent: priceData.changePercent,
-            priceSource: priceData.source
-          });
-          priceCount++;
-          logger.info(`  ✓ ${stock.symbol}: $${priceData.price.toFixed(2)}`);
-        }
-        await new Promise(r => setTimeout(r, 12000));
-      } catch (e) {
-        logger.warn(`  ⚠ ${stock.symbol}: ${e.message}`);
-      }
-    }
-    logger.info(`✓ Fetched prices for ${priceCount}/${stocks.length} stocks\n`);
-
-    logger.info('STEP 2: Fetching analyst ratings...');
-    let ratingCount = 0;
-
-    for (const stock of stocks) {
-      try {
-        const ratings = await analyzer.fetchRatings(stock.symbol);
-        if (ratings) {
-          ratingCount++;
-          logger.info(`  ✓ ${stock.symbol}: Ratings fetched`);
-        }
-      } catch (e) {
-        logger.warn(`  ⚠ ${stock.symbol}: ${e.message}`);
-      }
-    }
-    logger.info(`✓ Fetched ratings for ${ratingCount} stocks\n`);
-
-    logger.info('STEP 3: Fetching news...');
-    let newsCount = 0;
-
-    for (const stock of stocks) {
-      try {
-        const news = await analyzer.fetchNews(stock.symbol);
-        if (news && news.length > 0) {
-          newsCount += news.length;
-          logger.info(`  ✓ ${stock.symbol}: ${news.length} articles`);
-        }
-      } catch (e) {
-        logger.warn(`  ⚠ ${stock.symbol}: ${e.message}`);
-      }
-    }
-    logger.info(`✓ Fetched ${newsCount} news articles\n`);
-
-    logger.info('STEP 4: Calculating composite scores...');
-    let scoredCount = 0;
-
-    for (const stock of stocks) {
-      try {
-        const priceData = await analyzer.fetchPrice(stock.symbol);
-        const ratings = await analyzer.fetchRatings(stock.symbol);
-        const news = await analyzer.fetchNews(stock.symbol);
-
-        const score = analyzer.calculateScore(priceData, ratings, news);
-        const signal = analyzer.getSignal(score);
-
-        storage.updateStock(stock.symbol, {
-          latest_score: Math.round(score * 10) / 10,
-          signal: signal,
-          confidence: ratings ? 85 : 60,
-          current_price: priceData ? priceData.price : stock.current_price || stock.average_price
-        });
-
-        scoredCount++;
-        logger.info(`  ✓ ${stock.symbol}: ${score.toFixed(1)}/10 → ${signal}`);
-      } catch (e) {
-        logger.error(`Score calculation error for ${stock.symbol}`, e);
-      }
-    }
-    logger.info(`✓ Calculated scores for ${scoredCount} stocks\n`);
-
-    logger.info('╔════════════════════════════════════════════════════════════╗');
-    logger.info('║           UPDATE SUMMARY                                    ║');
-    logger.info('╚════════════════════════════════════════════════════════════╝');
-    logger.info(`✓ Portfolio stocks: ${stocks.length}`);
-    logger.info(`✓ Prices updated: ${priceCount}`);
-    logger.info(`✓ Ratings fetched: ${ratingCount}`);
-    logger.info(`✓ News articles: ${newsCount}`);
-    logger.info(`✓ Scores calculated: ${scoredCount}`);
-    logger.info('');
-
-    const duration = (Date.now() - startTime) / 1000;
-    logger.info(`✅ UPDATE COMPLETED SUCCESSFULLY!`);
-    logger.info(`⏱️  Duration: ${duration.toFixed(2)}s`);
-    logger.info(`🕐 Finished: ${new Date().toISOString()}`);
-    logger.info('');
-
-    process.exit(0);
-
-  } catch (error) {
-    logger.error('FATAL ERROR', error);
-    process.exit(1);
-  }
-}
-
-updateMarketData();
