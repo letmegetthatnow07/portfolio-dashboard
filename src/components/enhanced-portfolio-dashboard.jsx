@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import './enhanced-portfolio-dashboard.css';
+import CorrelationHeatmap from './CorrelationHeatmap';
 
 const EnhancedPortfolioDashboard = () => {
   const [portfolio, setPortfolio] = useState([]);
