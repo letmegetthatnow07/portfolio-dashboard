@@ -5,7 +5,6 @@ const EnhancedPortfolioDashboard = () => {
   const [portfolio, setPortfolio] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
   const [lastUpdate, setLastUpdate] = useState(null);
   const [sortBy, setSortBy] = useState('score');
   const [filterSignal, setFilterSignal] = useState('ALL');
@@ -17,13 +16,11 @@ const EnhancedPortfolioDashboard = () => {
   });
   const [editingId, setEditingId] = useState(null);
   
-  // New state for the News Modal
   const [newsModalStock, setNewsModalStock] = useState(null);
 
   const fetchPortfolio = async () => {
     try {
       setLoading(true);
-      setError(null);
       const response = await fetch('/api/portfolio');
       if (!response.ok) throw new Error(`API error: ${response.status}`);
       const data = await response.json();
@@ -33,12 +30,9 @@ const EnhancedPortfolioDashboard = () => {
         setPortfolio(sorted);
         setStats(data.stats);
         setLastUpdate(new Date(data.timestamp));
-      } else {
-        throw new Error('Invalid response format');
       }
     } catch (err) {
       console.error('Error fetching portfolio:', err);
-      setError(err.message);
     } finally {
       setLoading(false);
     }
@@ -52,10 +46,7 @@ const EnhancedPortfolioDashboard = () => {
 
   const handleAddStock = async (e) => {
     e.preventDefault();
-    if (!formData.symbol || !formData.quantity || !formData.average_price) {
-      alert('Please fill all required fields');
-      return;
-    }
+    if (!formData.symbol || !formData.quantity || !formData.average_price) return;
     try {
       const response = await fetch('/api/portfolio/add', {
         method: 'POST',
@@ -65,11 +56,9 @@ const EnhancedPortfolioDashboard = () => {
       if (response.ok) {
         setShowForm(false);
         fetchPortfolio();
-      } else {
-        alert('Error adding stock. Check console for details.');
       }
     } catch (err) {
-      alert('Error adding stock: ' + err.message);
+      console.error(err);
     }
   };
 
@@ -85,11 +74,9 @@ const EnhancedPortfolioDashboard = () => {
         setShowForm(false);
         setEditingId(null);
         fetchPortfolio();
-      } else {
-        alert('Error editing stock.');
       }
     } catch (err) {
-      alert('Error editing stock: ' + err.message);
+      console.error(err);
     }
   };
 
@@ -97,13 +84,9 @@ const EnhancedPortfolioDashboard = () => {
     if (!window.confirm('Are you sure you want to delete this stock?')) return;
     try {
       const response = await fetch(`/api/portfolio/delete/${id}`, { method: 'DELETE' });
-      if (response.ok) {
-        fetchPortfolio();
-      } else {
-        alert('Error deleting stock.');
-      }
+      if (response.ok) fetchPortfolio();
     } catch (err) {
-      alert('Error deleting stock: ' + err.message);
+      console.error(err);
     }
   };
 
@@ -145,16 +128,6 @@ const EnhancedPortfolioDashboard = () => {
   const getSignalColor = (signal) => {
     const colors = { 'STRONG_BUY': '#10b981', 'BUY': '#3b82f6', 'HOLD': '#f59e0b', 'REDUCE': '#ef4444', 'SELL': '#7f1d1d' };
     return colors[signal] || '#6b7280';
-  };
-
-  const getSignalEmoji = (signal) => {
-    const emojis = { 'STRONG_BUY': '🚀', 'BUY': '✅', 'HOLD': '⏸️', 'REDUCE': '⚠️', 'SELL': '❌' };
-    return emojis[signal] || '•';
-  };
-
-  const formatPercent = (num) => {
-    if (!num) return '0%';
-    return `${num > 0 ? '+' : ''}${num.toFixed(1)}%`;
   };
 
   const formatPrice = (num) => {
@@ -215,7 +188,6 @@ const EnhancedPortfolioDashboard = () => {
         </div>
       )}
 
-      {/* NEWS MODAL */}
       {newsModalStock && (
         <div className="modal-overlay" onClick={() => setNewsModalStock(null)}>
           <div className="modal-content news-modal" onClick={e => e.stopPropagation()}>
