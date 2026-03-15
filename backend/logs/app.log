@@ -704,3 +704,121 @@
 [2026-03-15T09:16:25.146Z] INFO: ⏱️  Duration: 249.55s
 [2026-03-15T09:16:25.146Z] INFO: 🕐 Finished: 2026-03-15T09:16:25.146Z
 [2026-03-15T09:16:25.146Z] INFO: 
+[2026-03-15T09:20:36.861Z] INFO: 
+[2026-03-15T09:20:36.862Z] INFO: ╔════════════════════════════════════════════════════════════╗
+[2026-03-15T09:20:36.863Z] INFO: ║       DAILY MARKET DATA UPDATE - PRODUCTION VERSION        ║
+[2026-03-15T09:20:36.863Z] INFO: ╚════════════════════════════════════════════════════════════╝
+[2026-03-15T09:20:36.863Z] INFO: 📅 Date: 2026-03-15T09:20:36.863Z
+[2026-03-15T09:20:36.863Z] INFO: 
+[2026-03-15T09:20:37.564Z] INFO: 📊 Updating 18 stocks from portfolio...
+[2026-03-15T09:20:37.565Z] INFO: 
+[2026-03-15T09:20:37.565Z] INFO: STEP 1: Fetching current prices...
+[2026-03-15T09:20:38.152Z] INFO:   ✓ SPMO: $116.18 (ALPHA_VANTAGE)
+[2026-03-15T09:20:50.698Z] INFO:   ✓ SMH: $387.33 (ALPHA_VANTAGE)
+[2026-03-15T09:21:03.379Z] INFO:   ✓ TPL: $531.13 (ALPHA_VANTAGE)
+[2026-03-15T09:21:15.920Z] INFO:   ✓ MELI: $1670.00 (ALPHA_VANTAGE)
+[2026-03-15T09:21:28.476Z] INFO:   ✓ VRT: $258.88 (ALPHA_VANTAGE)
+[2026-03-15T09:21:41.015Z] INFO:   ✓ MU: $426.13 (ALPHA_VANTAGE)
+[2026-03-15T09:21:53.549Z] INFO:   ✓ AVNV: $77.54 (ALPHA_VANTAGE)
+[2026-03-15T09:22:06.087Z] INFO:   ✓ BWXT: $194.13 (ALPHA_VANTAGE)
+[2026-03-15T09:22:18.618Z] INFO:   ✓ GEV: $805.02 (ALPHA_VANTAGE)
+[2026-03-15T09:22:31.174Z] INFO:   ✓ CRWD: $441.78 (ALPHA_VANTAGE)
+[2026-03-15T09:22:43.710Z] INFO:   ✓ SHLD: $75.61 (ALPHA_VANTAGE)
+[2026-03-15T09:22:56.247Z] INFO:   ✓ FTAI: $222.24 (ALPHA_VANTAGE)
+[2026-03-15T09:23:08.785Z] INFO:   ✓ RKLB: $68.41 (ALPHA_VANTAGE)
+[2026-03-15T09:23:21.323Z] INFO:   ✓ SCCO: $170.83 (ALPHA_VANTAGE)
+[2026-03-15T09:23:33.865Z] INFO:   ✓ KTOS: $87.53 (ALPHA_VANTAGE)
+[2026-03-15T09:23:46.403Z] INFO:   ✓ AGX: $458.31 (ALPHA_VANTAGE)
+[2026-03-15T09:23:58.943Z] INFO:   ✓ BNO: $49.04 (ALPHA_VANTAGE)
+[2026-03-15T09:24:11.486Z] INFO:   ✓ LLY: $985.08 (ALPHA_VANTAGE)
+[2026-03-15T09:24:23.491Z] INFO: ✓ Fetched prices for 18/18 stocks
+
+[2026-03-15T09:24:23.492Z] INFO: STEP 2: Fetching analyst ratings...
+[2026-03-15T09:24:31.624Z] INFO:   ✓ TPL: Ratings fetched
+[2026-03-15T09:24:31.753Z] INFO:   ✓ MELI: Ratings fetched
+[2026-03-15T09:24:31.940Z] INFO:   ✓ VRT: Ratings fetched
+[2026-03-15T09:24:32.112Z] INFO:   ✓ MU: Ratings fetched
+[2026-03-15T09:24:32.315Z] INFO:   ✓ BWXT: Ratings fetched
+[2026-03-15T09:24:32.401Z] INFO:   ✓ GEV: Ratings fetched
+[2026-03-15T09:24:32.513Z] INFO:   ✓ CRWD: Ratings fetched
+[2026-03-15T09:24:32.675Z] INFO:   ✓ FTAI: Ratings fetched
+[2026-03-15T09:24:32.759Z] INFO:   ✓ RKLB: Ratings fetched
+[2026-03-15T09:24:32.850Z] INFO:   ✓ SCCO: Ratings fetched
+[2026-03-15T09:24:32.930Z] INFO:   ✓ KTOS: Ratings fetched
+[2026-03-15T09:24:33.020Z] INFO:   ✓ AGX: Ratings fetched
+[2026-03-15T09:24:33.194Z] INFO:   ✓ LLY: Ratings fetched
+[2026-03-15T09:24:33.194Z] INFO: ✓ Fetched ratings for 13 stocks
+
+[2026-03-15T09:24:33.194Z] INFO: STEP 3: Fetching news (via Finnhub)...
+[2026-03-15T09:24:33.527Z] WARN: Polygon news fetch failed for SPMO: Request failed with status code 401
+[2026-03-15T09:24:33.600Z] WARN: Polygon news fetch failed for SMH: Request failed with status code 401
+[2026-03-15T09:24:33.671Z] WARN: Polygon news fetch failed for TPL: Request failed with status code 401
+[2026-03-15T09:24:33.742Z] WARN: Polygon news fetch failed for MELI: Request failed with status code 401
+[2026-03-15T09:24:33.814Z] WARN: Polygon news fetch failed for VRT: Request failed with status code 401
+[2026-03-15T09:24:33.885Z] WARN: Polygon news fetch failed for MU: Request failed with status code 401
+[2026-03-15T09:24:33.957Z] WARN: Polygon news fetch failed for AVNV: Request failed with status code 401
+[2026-03-15T09:24:34.028Z] WARN: Polygon news fetch failed for BWXT: Request failed with status code 401
+[2026-03-15T09:24:34.103Z] WARN: Polygon news fetch failed for GEV: Request failed with status code 401
+[2026-03-15T09:24:34.174Z] WARN: Polygon news fetch failed for CRWD: Request failed with status code 401
+[2026-03-15T09:24:34.246Z] WARN: Polygon news fetch failed for SHLD: Request failed with status code 401
+[2026-03-15T09:24:34.318Z] WARN: Polygon news fetch failed for FTAI: Request failed with status code 401
+[2026-03-15T09:24:34.388Z] WARN: Polygon news fetch failed for RKLB: Request failed with status code 401
+[2026-03-15T09:24:34.461Z] WARN: Polygon news fetch failed for SCCO: Request failed with status code 401
+[2026-03-15T09:24:34.532Z] WARN: Polygon news fetch failed for KTOS: Request failed with status code 401
+[2026-03-15T09:24:34.607Z] WARN: Polygon news fetch failed for AGX: Request failed with status code 401
+[2026-03-15T09:24:34.680Z] WARN: Polygon news fetch failed for BNO: Request failed with status code 401
+[2026-03-15T09:24:34.751Z] WARN: Polygon news fetch failed for LLY: Request failed with status code 401
+[2026-03-15T09:24:34.751Z] INFO: ✓ Fetched 0 news articles
+
+[2026-03-15T09:24:34.751Z] INFO: STEP 4: Calculating composite scores...
+[2026-03-15T09:24:34.993Z] WARN: Polygon news fetch failed for SPMO: Request failed with status code 401
+[2026-03-15T09:24:35.438Z] INFO:   ✓ SPMO: 6.0/10 → REDUCE
+[2026-03-15T09:24:35.840Z] WARN: Polygon news fetch failed for SMH: Request failed with status code 401
+[2026-03-15T09:24:36.285Z] INFO:   ✓ SMH: 5.0/10 → REDUCE
+[2026-03-15T09:24:36.545Z] WARN: Polygon news fetch failed for TPL: Request failed with status code 401
+[2026-03-15T09:24:36.990Z] INFO:   ✓ TPL: 7.8/10 → BUY
+[2026-03-15T09:24:37.400Z] WARN: Polygon news fetch failed for MELI: Request failed with status code 401
+[2026-03-15T09:24:37.844Z] INFO:   ✓ MELI: 7.3/10 → HOLD
+[2026-03-15T09:24:38.103Z] WARN: Polygon news fetch failed for VRT: Request failed with status code 401
+[2026-03-15T09:24:38.548Z] INFO:   ✓ VRT: 8.0/10 → BUY
+[2026-03-15T09:24:38.933Z] WARN: Polygon news fetch failed for MU: Request failed with status code 401
+[2026-03-15T09:24:39.377Z] INFO:   ✓ MU: 7.2/10 → HOLD
+[2026-03-15T09:24:39.672Z] WARN: Polygon news fetch failed for AVNV: Request failed with status code 401
+[2026-03-15T09:24:40.116Z] INFO:   ✓ AVNV: 6.0/10 → REDUCE
+[2026-03-15T09:24:40.593Z] WARN: Polygon news fetch failed for BWXT: Request failed with status code 401
+[2026-03-15T09:24:41.038Z] INFO:   ✓ BWXT: 6.7/10 → HOLD
+[2026-03-15T09:24:41.278Z] WARN: Polygon news fetch failed for GEV: Request failed with status code 401
+[2026-03-15T09:24:41.723Z] INFO:   ✓ GEV: 8.0/10 → BUY
+[2026-03-15T09:24:42.160Z] WARN: Polygon news fetch failed for CRWD: Request failed with status code 401
+[2026-03-15T09:24:42.605Z] INFO:   ✓ CRWD: 6.7/10 → HOLD
+[2026-03-15T09:24:42.941Z] WARN: Polygon news fetch failed for SHLD: Request failed with status code 401
+[2026-03-15T09:24:43.386Z] INFO:   ✓ SHLD: 6.0/10 → REDUCE
+[2026-03-15T09:24:43.715Z] WARN: Polygon news fetch failed for FTAI: Request failed with status code 401
+[2026-03-15T09:24:44.159Z] INFO:   ✓ FTAI: 7.4/10 → HOLD
+[2026-03-15T09:24:44.456Z] WARN: Polygon news fetch failed for RKLB: Request failed with status code 401
+[2026-03-15T09:24:44.900Z] INFO:   ✓ RKLB: 7.8/10 → BUY
+[2026-03-15T09:24:45.225Z] WARN: Polygon news fetch failed for SCCO: Request failed with status code 401
+[2026-03-15T09:24:45.669Z] INFO:   ✓ SCCO: 4.9/10 → SELL
+[2026-03-15T09:24:45.993Z] WARN: Polygon news fetch failed for KTOS: Request failed with status code 401
+[2026-03-15T09:24:46.438Z] INFO:   ✓ KTOS: 6.9/10 → HOLD
+[2026-03-15T09:24:48.207Z] WARN: Polygon news fetch failed for AGX: Request failed with status code 401
+[2026-03-15T09:24:48.652Z] INFO:   ✓ AGX: 6.4/10 → REDUCE
+[2026-03-15T09:24:49.003Z] WARN: Polygon news fetch failed for BNO: Request failed with status code 401
+[2026-03-15T09:24:49.448Z] INFO:   ✓ BNO: 5.0/10 → REDUCE
+[2026-03-15T09:24:49.769Z] WARN: Polygon news fetch failed for LLY: Request failed with status code 401
+[2026-03-15T09:24:50.213Z] INFO:   ✓ LLY: 6.9/10 → HOLD
+[2026-03-15T09:24:50.213Z] INFO: ✓ Calculated scores for 18 stocks
+
+[2026-03-15T09:24:50.214Z] INFO: ╔════════════════════════════════════════════════════════════╗
+[2026-03-15T09:24:50.214Z] INFO: ║           UPDATE SUMMARY                                    ║
+[2026-03-15T09:24:50.214Z] INFO: ╚════════════════════════════════════════════════════════════╝
+[2026-03-15T09:24:50.214Z] INFO: ✓ Portfolio stocks: 18
+[2026-03-15T09:24:50.214Z] INFO: ✓ Prices updated: 18
+[2026-03-15T09:24:50.214Z] INFO: ✓ Ratings fetched: 13
+[2026-03-15T09:24:50.214Z] INFO: ✓ News articles: 0
+[2026-03-15T09:24:50.214Z] INFO: ✓ Scores calculated: 18
+[2026-03-15T09:24:50.214Z] INFO: 
+[2026-03-15T09:24:50.214Z] INFO: ✅ UPDATE COMPLETED SUCCESSFULLY!
+[2026-03-15T09:24:50.214Z] INFO: ⏱️  Duration: 253.35s
+[2026-03-15T09:24:50.214Z] INFO: 🕐 Finished: 2026-03-15T09:24:50.214Z
+[2026-03-15T09:24:50.214Z] INFO: 
