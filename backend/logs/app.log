@@ -1121,3 +1121,81 @@
 [2026-03-15T12:41:17.551Z] INFO: ✓ BNO: Score 8.5/10 → BUY | Value: $38.39
 [2026-03-15T12:41:20.229Z] INFO: ✓ LLY: Score 10.0/10 → STRONG_BUY | Value: $29.72
 [2026-03-15T12:41:21.729Z] INFO: ✅ UPDATE COMPLETED: 18 Stocks Analyzed.
+[2026-03-15T13:21:52.710Z] INFO: ╔════════════════════════════════════════════════════════════╗
+[2026-03-15T13:21:52.711Z] INFO: ║        PHASE 1 MULTI-FACTOR MODEL (22% CAGR AUDIT)         ║
+[2026-03-15T13:21:52.711Z] INFO: ╚════════════════════════════════════════════════════════════╝
+[2026-03-15T13:21:53.752Z] INFO: Analyzing SPMO...
+[2026-03-15T13:21:53.970Z] WARN: Fundamentals fetch failed for SPMO: Request failed with status code 403
+[2026-03-15T13:21:54.196Z] WARN: Technicals fetch failed for SPMO: Request failed with status code 403
+[2026-03-15T13:21:55.110Z] INFO: ✓ SPMO: Score 5.0/10 → REDUCE
+[2026-03-15T13:21:56.112Z] INFO: Analyzing SMH...
+[2026-03-15T13:21:56.142Z] WARN: Fundamentals fetch failed for SMH: Request failed with status code 403
+[2026-03-15T13:21:56.188Z] WARN: Technicals fetch failed for SMH: Request failed with status code 403
+[2026-03-15T13:21:57.102Z] INFO: ✓ SMH: Score 5.3/10 → REDUCE
+[2026-03-15T13:21:58.103Z] INFO: Analyzing TPL...
+[2026-03-15T13:21:58.135Z] WARN: Fundamentals fetch failed for TPL: Request failed with status code 403
+[2026-03-15T13:21:58.197Z] WARN: Technicals fetch failed for TPL: Request failed with status code 403
+[2026-03-15T13:21:59.111Z] INFO: ✓ TPL: Score 6.1/10 → HOLD
+[2026-03-15T13:22:00.112Z] INFO: Analyzing MELI...
+[2026-03-15T13:22:00.146Z] WARN: Fundamentals fetch failed for MELI: Request failed with status code 403
+[2026-03-15T13:22:00.183Z] WARN: Technicals fetch failed for MELI: Request failed with status code 403
+[2026-03-15T13:22:01.222Z] INFO: ✓ MELI: Score 6.4/10 → HOLD
+[2026-03-15T13:22:02.222Z] INFO: Analyzing VRT...
+[2026-03-15T13:22:02.295Z] WARN: Fundamentals fetch failed for VRT: Request failed with status code 403
+[2026-03-15T13:22:02.310Z] WARN: Technicals fetch failed for VRT: Request failed with status code 403
+[2026-03-15T13:22:03.226Z] INFO: ✓ VRT: Score 6.1/10 → HOLD
+[2026-03-15T13:22:04.227Z] INFO: Analyzing MU...
+[2026-03-15T13:22:04.259Z] WARN: Fundamentals fetch failed for MU: Request failed with status code 403
+[2026-03-15T13:22:04.301Z] WARN: Technicals fetch failed for MU: Request failed with status code 403
+[2026-03-15T13:22:05.284Z] INFO: ✓ MU: Score 6.2/10 → HOLD
+[2026-03-15T13:22:06.285Z] INFO: Analyzing AVNV...
+[2026-03-15T13:22:06.314Z] WARN: Fundamentals fetch failed for AVNV: Request failed with status code 403
+[2026-03-15T13:22:06.356Z] WARN: Technicals fetch failed for AVNV: Request failed with status code 403
+[2026-03-15T13:22:14.292Z] WARN: Ratings fetch failed for AVNV: timeout of 8000ms exceeded
+[2026-03-15T13:22:15.206Z] INFO: ✓ AVNV: Score 5.0/10 → REDUCE
+[2026-03-15T13:22:16.207Z] INFO: Analyzing BWXT...
+[2026-03-15T13:22:16.297Z] WARN: Fundamentals fetch failed for BWXT: Request failed with status code 403
+[2026-03-15T13:22:16.497Z] WARN: Technicals fetch failed for BWXT: Request failed with status code 403
+[2026-03-15T13:22:20.011Z] INFO: ✓ BWXT: Score 5.6/10 → HOLD
+[2026-03-15T13:22:21.012Z] INFO: Analyzing GEV...
+[2026-03-15T13:22:21.044Z] WARN: Fundamentals fetch failed for GEV: Request failed with status code 403
+[2026-03-15T13:22:21.088Z] WARN: Technicals fetch failed for GEV: Request failed with status code 403
+[2026-03-15T13:22:22.054Z] INFO: ✓ GEV: Score 6.0/10 → HOLD
+[2026-03-15T13:22:23.055Z] INFO: Analyzing CRWD...
+[2026-03-15T13:22:23.086Z] WARN: Fundamentals fetch failed for CRWD: Request failed with status code 403
+[2026-03-15T13:22:23.124Z] WARN: Technicals fetch failed for CRWD: Request failed with status code 403
+[2026-03-15T13:22:24.050Z] INFO: ✓ CRWD: Score 5.9/10 → HOLD
+[2026-03-15T13:22:25.051Z] INFO: Analyzing SHLD...
+[2026-03-15T13:22:25.080Z] WARN: Fundamentals fetch failed for SHLD: Request failed with status code 403
+[2026-03-15T13:22:25.131Z] WARN: Technicals fetch failed for SHLD: Request failed with status code 403
+[2026-03-15T13:22:26.058Z] INFO: ✓ SHLD: Score 5.0/10 → REDUCE
+[2026-03-15T13:22:27.059Z] INFO: Analyzing FTAI...
+[2026-03-15T13:22:27.090Z] WARN: Fundamentals fetch failed for FTAI: Request failed with status code 403
+[2026-03-15T13:22:27.128Z] WARN: Technicals fetch failed for FTAI: Request failed with status code 403
+[2026-03-15T13:22:28.062Z] INFO: ✓ FTAI: Score 6.8/10 → HOLD
+[2026-03-15T13:22:29.063Z] INFO: Analyzing RKLB...
+[2026-03-15T13:22:29.111Z] WARN: Fundamentals fetch failed for RKLB: Request failed with status code 403
+[2026-03-15T13:22:29.140Z] WARN: Technicals fetch failed for RKLB: Request failed with status code 403
+[2026-03-15T13:22:30.105Z] INFO: ✓ RKLB: Score 6.1/10 → HOLD
+[2026-03-15T13:22:31.106Z] INFO: Analyzing SCCO...
+[2026-03-15T13:22:31.138Z] WARN: Fundamentals fetch failed for SCCO: Request failed with status code 403
+[2026-03-15T13:22:31.235Z] WARN: Technicals fetch failed for SCCO: Request failed with status code 403
+[2026-03-15T13:22:32.148Z] INFO: ✓ SCCO: Score 4.0/10 → SELL
+[2026-03-15T13:22:33.148Z] INFO: Analyzing KTOS...
+[2026-03-15T13:22:33.178Z] WARN: Fundamentals fetch failed for KTOS: Request failed with status code 403
+[2026-03-15T13:22:33.247Z] WARN: Technicals fetch failed for KTOS: Request failed with status code 403
+[2026-03-15T13:22:34.195Z] INFO: ✓ KTOS: Score 6.2/10 → HOLD
+[2026-03-15T13:22:35.196Z] INFO: Analyzing AGX...
+[2026-03-15T13:22:35.228Z] WARN: Fundamentals fetch failed for AGX: Request failed with status code 403
+[2026-03-15T13:22:35.268Z] WARN: Technicals fetch failed for AGX: Request failed with status code 403
+[2026-03-15T13:22:36.181Z] INFO: ✓ AGX: Score 5.1/10 → REDUCE
+[2026-03-15T13:22:37.182Z] INFO: Analyzing BNO...
+[2026-03-15T13:22:37.253Z] WARN: Technicals fetch failed for BNO: Request failed with status code 403
+[2026-03-15T13:22:37.263Z] WARN: Fundamentals fetch failed for BNO: Request failed with status code 403
+[2026-03-15T13:22:45.188Z] WARN: Ratings fetch failed for BNO: timeout of 8000ms exceeded
+[2026-03-15T13:22:46.101Z] INFO: ✓ BNO: Score 5.5/10 → HOLD
+[2026-03-15T13:22:47.103Z] INFO: Analyzing LLY...
+[2026-03-15T13:22:47.210Z] WARN: Fundamentals fetch failed for LLY: Request failed with status code 403
+[2026-03-15T13:22:47.452Z] WARN: Technicals fetch failed for LLY: Request failed with status code 403
+[2026-03-15T13:22:48.365Z] INFO: ✓ LLY: Score 6.0/10 → HOLD
+[2026-03-15T13:22:49.366Z] INFO: ✅ UPDATE COMPLETED: 18 Assets Analyzed.
