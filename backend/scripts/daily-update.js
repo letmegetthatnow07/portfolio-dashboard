@@ -216,7 +216,7 @@ async function updateMarketData() {
   try {
     logger.info('');
     logger.info('╔════════════════════════════════════════════════════════════╗');
-    logger.info('║       DAILY MARKET DATA UPDATE - WORKING VERSION           ║');
+    logger.info('║       DAILY MARKET DATA UPDATE - PRODUCTION VERSION        ║');
     logger.info('╚════════════════════════════════════════════════════════════╝');
     logger.info(`📅 Date: ${new Date().toISOString()}`);
     logger.info('');
