@@ -466,3 +466,123 @@
 [2026-03-15T08:26:27.168Z] INFO: ⏱️  Duration: 241.64s
 [2026-03-15T08:26:27.168Z] INFO: 🕐 Finished: 2026-03-15T08:26:27.168Z
 [2026-03-15T08:26:27.168Z] INFO: 
+[2026-03-15T08:57:21.385Z] INFO: 
+[2026-03-15T08:57:21.387Z] INFO: ╔════════════════════════════════════════════════════════════╗
+[2026-03-15T08:57:21.387Z] INFO: ║       DAILY MARKET DATA UPDATE - PRODUCTION VERSION        ║
+[2026-03-15T08:57:21.387Z] INFO: ╚════════════════════════════════════════════════════════════╝
+[2026-03-15T08:57:21.387Z] INFO: 📅 Date: 2026-03-15T08:57:21.387Z
+[2026-03-15T08:57:21.387Z] INFO: 
+[2026-03-15T08:57:22.098Z] INFO: 📊 Updating 18 stocks from portfolio...
+[2026-03-15T08:57:22.099Z] INFO: 
+[2026-03-15T08:57:22.099Z] INFO: STEP 1: Fetching current prices...
+[2026-03-15T08:57:22.719Z] INFO:   ✓ SPMO: $116.18 (ALPHA_VANTAGE)
+[2026-03-15T08:57:35.259Z] INFO:   ✓ SMH: $387.33 (ALPHA_VANTAGE)
+[2026-03-15T08:57:47.802Z] INFO:   ✓ TPL: $531.13 (ALPHA_VANTAGE)
+[2026-03-15T08:58:00.337Z] INFO:   ✓ MELI: $1670.00 (ALPHA_VANTAGE)
+[2026-03-15T08:58:12.899Z] INFO:   ✓ VRT: $258.88 (ALPHA_VANTAGE)
+[2026-03-15T08:58:25.438Z] INFO:   ✓ MU: $426.13 (ALPHA_VANTAGE)
+[2026-03-15T08:58:37.973Z] INFO:   ✓ AVNV: $77.54 (ALPHA_VANTAGE)
+[2026-03-15T08:58:50.513Z] INFO:   ✓ BWXT: $194.13 (ALPHA_VANTAGE)
+[2026-03-15T08:59:03.052Z] INFO:   ✓ GEV: $805.02 (ALPHA_VANTAGE)
+[2026-03-15T08:59:15.588Z] INFO:   ✓ CRWD: $441.78 (ALPHA_VANTAGE)
+[2026-03-15T08:59:28.122Z] INFO:   ✓ SHLD: $75.61 (ALPHA_VANTAGE)
+[2026-03-15T08:59:40.658Z] INFO:   ✓ FTAI: $222.24 (ALPHA_VANTAGE)
+[2026-03-15T08:59:53.195Z] INFO:   ✓ RKLB: $68.41 (ALPHA_VANTAGE)
+[2026-03-15T09:00:05.736Z] INFO:   ✓ SCCO: $170.83 (ALPHA_VANTAGE)
+[2026-03-15T09:00:18.274Z] INFO:   ✓ KTOS: $87.53 (ALPHA_VANTAGE)
+[2026-03-15T09:00:30.811Z] INFO:   ✓ AGX: $458.31 (ALPHA_VANTAGE)
+[2026-03-15T09:00:43.348Z] INFO:   ✓ BNO: $49.04 (ALPHA_VANTAGE)
+[2026-03-15T09:00:55.885Z] INFO:   ✓ LLY: $985.08 (ALPHA_VANTAGE)
+[2026-03-15T09:01:07.890Z] INFO: ✓ Fetched prices for 18/18 stocks
+
+[2026-03-15T09:01:07.890Z] INFO: STEP 2: Fetching analyst ratings...
+[2026-03-15T09:01:08.203Z] INFO:   ✓ TPL: Ratings fetched
+[2026-03-15T09:01:08.311Z] INFO:   ✓ MELI: Ratings fetched
+[2026-03-15T09:01:08.413Z] INFO:   ✓ VRT: Ratings fetched
+[2026-03-15T09:01:08.499Z] INFO:   ✓ MU: Ratings fetched
+[2026-03-15T09:01:08.675Z] INFO:   ✓ BWXT: Ratings fetched
+[2026-03-15T09:01:08.768Z] INFO:   ✓ GEV: Ratings fetched
+[2026-03-15T09:01:08.845Z] INFO:   ✓ CRWD: Ratings fetched
+[2026-03-15T09:01:09.036Z] INFO:   ✓ FTAI: Ratings fetched
+[2026-03-15T09:01:09.119Z] INFO:   ✓ RKLB: Ratings fetched
+[2026-03-15T09:01:09.233Z] INFO:   ✓ SCCO: Ratings fetched
+[2026-03-15T09:01:09.325Z] INFO:   ✓ KTOS: Ratings fetched
+[2026-03-15T09:01:09.407Z] INFO:   ✓ AGX: Ratings fetched
+[2026-03-15T09:01:09.648Z] INFO:   ✓ LLY: Ratings fetched
+[2026-03-15T09:01:09.648Z] INFO: ✓ Fetched ratings for 13 stocks
+
+[2026-03-15T09:01:09.648Z] INFO: STEP 3: Fetching news (via Finnhub)...
+[2026-03-15T09:01:09.733Z] WARN: Finnhub news fetch failed for SPMO: Request failed with status code 422
+[2026-03-15T09:01:09.813Z] WARN: Finnhub news fetch failed for SMH: Request failed with status code 422
+[2026-03-15T09:01:09.895Z] WARN: Finnhub news fetch failed for TPL: Request failed with status code 422
+[2026-03-15T09:01:09.973Z] WARN: Finnhub news fetch failed for MELI: Request failed with status code 422
+[2026-03-15T09:01:10.052Z] WARN: Finnhub news fetch failed for VRT: Request failed with status code 422
+[2026-03-15T09:01:10.128Z] WARN: Finnhub news fetch failed for MU: Request failed with status code 422
+[2026-03-15T09:01:10.211Z] WARN: Finnhub news fetch failed for AVNV: Request failed with status code 422
+[2026-03-15T09:01:10.294Z] WARN: Finnhub news fetch failed for BWXT: Request failed with status code 422
+[2026-03-15T09:01:10.371Z] WARN: Finnhub news fetch failed for GEV: Request failed with status code 422
+[2026-03-15T09:01:10.450Z] WARN: Finnhub news fetch failed for CRWD: Request failed with status code 422
+[2026-03-15T09:01:10.524Z] WARN: Finnhub news fetch failed for SHLD: Request failed with status code 422
+[2026-03-15T09:01:10.601Z] WARN: Finnhub news fetch failed for FTAI: Request failed with status code 422
+[2026-03-15T09:01:10.683Z] WARN: Finnhub news fetch failed for RKLB: Request failed with status code 422
+[2026-03-15T09:01:10.762Z] WARN: Finnhub news fetch failed for SCCO: Request failed with status code 422
+[2026-03-15T09:01:10.849Z] WARN: Finnhub news fetch failed for KTOS: Request failed with status code 422
+[2026-03-15T09:01:10.924Z] WARN: Finnhub news fetch failed for AGX: Request failed with status code 422
+[2026-03-15T09:01:11.006Z] WARN: Finnhub news fetch failed for BNO: Request failed with status code 422
+[2026-03-15T09:01:11.084Z] WARN: Finnhub news fetch failed for LLY: Request failed with status code 422
+[2026-03-15T09:01:11.084Z] INFO: ✓ Fetched 0 news articles
+
+[2026-03-15T09:01:11.084Z] INFO: STEP 4: Calculating composite scores...
+[2026-03-15T09:01:11.416Z] WARN: Finnhub news fetch failed for SPMO: Request failed with status code 422
+[2026-03-15T09:01:11.862Z] INFO:   ✓ SPMO: 6.0/10 → REDUCE
+[2026-03-15T09:01:12.303Z] WARN: Finnhub news fetch failed for SMH: Request failed with status code 422
+[2026-03-15T09:01:12.748Z] INFO:   ✓ SMH: 5.0/10 → REDUCE
+[2026-03-15T09:01:16.737Z] WARN: Finnhub news fetch failed for TPL: Request failed with status code 422
+[2026-03-15T09:01:17.182Z] INFO:   ✓ TPL: 7.8/10 → BUY
+[2026-03-15T09:01:25.270Z] WARN: Ratings fetch failed for MELI: timeout of 8000ms exceeded
+[2026-03-15T09:01:25.358Z] WARN: Finnhub news fetch failed for MELI: Request failed with status code 422
+[2026-03-15T09:01:25.804Z] INFO:   ✓ MELI: 6.0/10 → REDUCE
+[2026-03-15T09:01:33.893Z] WARN: Ratings fetch failed for VRT: timeout of 8000ms exceeded
+[2026-03-15T09:01:33.977Z] WARN: Finnhub news fetch failed for VRT: Request failed with status code 422
+[2026-03-15T09:01:34.423Z] INFO:   ✓ VRT: 6.0/10 → REDUCE
+[2026-03-15T09:01:39.023Z] WARN: Finnhub news fetch failed for MU: Request failed with status code 422
+[2026-03-15T09:01:39.469Z] INFO:   ✓ MU: 8.3/10 → BUY
+[2026-03-15T09:01:39.726Z] WARN: Finnhub news fetch failed for AVNV: Request failed with status code 422
+[2026-03-15T09:01:40.171Z] INFO:   ✓ AVNV: 6.0/10 → REDUCE
+[2026-03-15T09:01:40.530Z] WARN: Finnhub news fetch failed for BWXT: Request failed with status code 422
+[2026-03-15T09:01:40.975Z] INFO:   ✓ BWXT: 6.7/10 → HOLD
+[2026-03-15T09:01:41.294Z] WARN: Finnhub news fetch failed for GEV: Request failed with status code 422
+[2026-03-15T09:01:41.739Z] INFO:   ✓ GEV: 8.0/10 → BUY
+[2026-03-15T09:01:42.141Z] WARN: Finnhub news fetch failed for CRWD: Request failed with status code 422
+[2026-03-15T09:01:42.586Z] INFO:   ✓ CRWD: 6.7/10 → HOLD
+[2026-03-15T09:01:42.958Z] WARN: Finnhub news fetch failed for SHLD: Request failed with status code 422
+[2026-03-15T09:01:43.404Z] INFO:   ✓ SHLD: 5.0/10 → REDUCE
+[2026-03-15T09:01:43.806Z] WARN: Finnhub news fetch failed for FTAI: Request failed with status code 422
+[2026-03-15T09:01:44.251Z] INFO:   ✓ FTAI: 7.4/10 → HOLD
+[2026-03-15T09:01:44.619Z] WARN: Finnhub news fetch failed for RKLB: Request failed with status code 422
+[2026-03-15T09:01:45.065Z] INFO:   ✓ RKLB: 6.8/10 → HOLD
+[2026-03-15T09:01:45.553Z] WARN: Finnhub news fetch failed for SCCO: Request failed with status code 422
+[2026-03-15T09:01:45.999Z] INFO:   ✓ SCCO: 4.9/10 → SELL
+[2026-03-15T09:01:46.351Z] WARN: Finnhub news fetch failed for KTOS: Request failed with status code 422
+[2026-03-15T09:01:46.796Z] INFO:   ✓ KTOS: 6.9/10 → HOLD
+[2026-03-15T09:01:47.179Z] WARN: Finnhub news fetch failed for AGX: Request failed with status code 422
+[2026-03-15T09:01:47.624Z] INFO:   ✓ AGX: 6.4/10 → REDUCE
+[2026-03-15T09:01:48.170Z] WARN: Finnhub news fetch failed for BNO: Request failed with status code 422
+[2026-03-15T09:01:48.615Z] INFO:   ✓ BNO: 5.0/10 → REDUCE
+[2026-03-15T09:01:48.946Z] WARN: Finnhub news fetch failed for LLY: Request failed with status code 422
+[2026-03-15T09:01:49.392Z] INFO:   ✓ LLY: 6.9/10 → HOLD
+[2026-03-15T09:01:49.392Z] INFO: ✓ Calculated scores for 18 stocks
+
+[2026-03-15T09:01:49.392Z] INFO: ╔════════════════════════════════════════════════════════════╗
+[2026-03-15T09:01:49.392Z] INFO: ║           UPDATE SUMMARY                                    ║
+[2026-03-15T09:01:49.392Z] INFO: ╚════════════════════════════════════════════════════════════╝
+[2026-03-15T09:01:49.392Z] INFO: ✓ Portfolio stocks: 18
+[2026-03-15T09:01:49.392Z] INFO: ✓ Prices updated: 18
+[2026-03-15T09:01:49.392Z] INFO: ✓ Ratings fetched: 13
+[2026-03-15T09:01:49.392Z] INFO: ✓ News articles: 0
+[2026-03-15T09:01:49.392Z] INFO: ✓ Scores calculated: 18
+[2026-03-15T09:01:49.392Z] INFO: 
+[2026-03-15T09:01:49.392Z] INFO: ✅ UPDATE COMPLETED SUCCESSFULLY!
+[2026-03-15T09:01:49.392Z] INFO: ⏱️  Duration: 268.01s
+[2026-03-15T09:01:49.392Z] INFO: 🕐 Finished: 2026-03-15T09:01:49.392Z
+[2026-03-15T09:01:49.392Z] INFO: 
