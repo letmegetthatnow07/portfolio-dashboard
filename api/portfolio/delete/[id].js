@@ -12,7 +12,6 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Stock ID is required' });
     }
 
-    // Get portfolio from KV
     let portfolio = { stocks: [] };
     try {
       const stored = await kv.get('portfolio');
@@ -23,7 +22,6 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: 'Error reading portfolio' });
     }
 
-    // Find stock to delete
     const stockIndex = portfolio.stocks.findIndex(s => s.id === id);
     if (stockIndex < 0) {
       return res.status(404).json({ error: 'Stock not found' });
@@ -31,7 +29,6 @@ export default async function handler(req, res) {
 
     const deletedStock = portfolio.stocks.splice(stockIndex, 1)[0];
 
-    // Save to KV
     portfolio.lastUpdated = new Date().toISOString();
     await kv.set('portfolio', portfolio);
 
