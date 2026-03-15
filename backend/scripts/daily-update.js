@@ -160,25 +160,44 @@ class PriceAnalyzer {
     return null;
   }
 
- async fetchNews(symbol) {
-  try {
-    const res = await axios.get(
-      `https://api.polygon.io/v2/reference/news?query=${symbol}&limit=3&apikey=${process.env.POLYGON_API_KEY}`,
-      { timeout: 8000 }
-    );
+  async fetchNews(symbol) {
+    // Try NewsAPI.org first
+    try {
+      // Added "stock" to the query to ensure financial context, avoiding generic news matches
+      const res = await axios.get(
+        `https://newsapi.org/v2/everything?q=${symbol} stock&sortBy=publishedAt&language=en&pageSize=3&apiKey=${process.env.NEWS_API_KEY}`,
+        { timeout: 8000 }
+      );
 
-    if (res.data && res.data.results && res.data.results.length > 0) {
-      return res.data.results.map(article => ({
-        title: article.title || '',
-        description: article.description || ''
-      }));
+      if (res.data && res.data.articles && res.data.articles.length > 0) {
+        return res.data.articles.map(article => ({
+          title: article.title || '',
+          description: article.description || ''
+        }));
+      }
+    } catch (e) {
+      logger.warn(`NewsAPI fetch failed for ${symbol}: ${e.message}. Falling back to Marketaux...`);
     }
-  } catch (e) {
-    logger.warn(`Polygon news fetch failed for ${symbol}: ${e.message}`);
-  }
 
-  return [];
-}
+    // Fallback: Try Marketaux
+    try {
+      const res = await axios.get(
+        `https://api.marketaux.com/v1/news/all?symbols=${symbol}&filter_entities=true&limit=3&api_token=${process.env.MARKETAUX_API_KEY}`,
+        { timeout: 8000 }
+      );
+
+      if (res.data && res.data.data && res.data.data.length > 0) {
+        return res.data.data.map(article => ({
+          title: article.title || '',
+          description: article.description || ''
+        }));
+      }
+    } catch (e) {
+      logger.warn(`Marketaux news fetch failed for ${symbol}: ${e.message}`);
+    }
+
+    return [];
+  }
   
   calculateScore(priceData, ratings, news) {
     let score = 5;
@@ -232,7 +251,7 @@ async function updateMarketData() {
   try {
     logger.info('');
     logger.info('╔════════════════════════════════════════════════════════════╗');
-    logger.info('║       DAILY MARKET DATA UPDATE - PRODUCTION VERSION        ║');
+    logger.info('║        DAILY MARKET DATA UPDATE - PRODUCTION VERSION       ║');
     logger.info('╚════════════════════════════════════════════════════════════╝');
     logger.info(`📅 Date: ${new Date().toISOString()}`);
     logger.info('');
@@ -292,7 +311,7 @@ async function updateMarketData() {
     }
     logger.info(`✓ Fetched ratings for ${ratingCount} stocks\n`);
 
-    logger.info('STEP 3: Fetching news (via Finnhub)...');
+    logger.info('STEP 3: Fetching news (via NewsAPI/Marketaux)...');
     let newsCount = 0;
 
     for (const stock of stocks) {
@@ -336,7 +355,7 @@ async function updateMarketData() {
     logger.info(`✓ Calculated scores for ${scoredCount} stocks\n`);
 
     logger.info('╔════════════════════════════════════════════════════════════╗');
-    logger.info('║           UPDATE SUMMARY                                    ║');
+    logger.info('║                   UPDATE SUMMARY                           ║');
     logger.info('╚════════════════════════════════════════════════════════════╝');
     logger.info(`✓ Portfolio stocks: ${stocks.length}`);
     logger.info(`✓ Prices updated: ${priceCount}`);
