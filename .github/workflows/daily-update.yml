@@ -28,15 +28,16 @@ jobs:
         run: npm install
 
       - name: Run market data update
-        working-directory: backend
-        env:
-          ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-          NEWSDATA_API_KEY: ${{ secrets.NEWSDATA_API_KEY }}
-          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
-          EODHD_API_KEY: ${{ secrets.EODHD_API_KEY }}
-        run: npm run update
-
+  working-directory: backend
+  env:
+    REDIS_URL: ${{ secrets.REDIS_URL }}
+    ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+    FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+    NEWSDATA_API_KEY: ${{ secrets.NEWSDATA_API_KEY }}
+    FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+    EODHD_API_KEY: ${{ secrets.EODHD_API_KEY }}
+  run: npm run update
+  
       - name: Configure git
         run: |
           git config --local user.email "action@github.com"
