@@ -1,4 +1,18 @@
-import { kv } from '@vercel/kv';
+import { createClient } from 'redis';
+
+let redisClient = null;
+
+async function getRedisClient() {
+  if (!redisClient) {
+    redisClient = createClient({
+      url: process.env.REDIS_URL
+    });
+    
+    redisClient.on('error', (err) => console.error('Redis error:', err));
+    await redisClient.connect();
+  }
+  return redisClient;
+}
 
 export default async function handler(req, res) {
   try {
@@ -6,19 +20,19 @@ export default async function handler(req, res) {
       return res.status(405).json({ error: 'Method not allowed' });
     }
 
+    const client = await getRedisClient();
     let portfolio = { stocks: [], lastUpdated: null };
-    
+
     try {
-      const stored = await kv.get('portfolio');
-      if (stored) {
-        portfolio = stored;
+      const data = await client.get('portfolio');
+      if (data) {
+        portfolio = JSON.parse(data);
       }
     } catch (e) {
-      console.error('Error reading from KV:', e);
+      console.error('Redis read error:', e);
     }
 
     const stocks = portfolio.stocks || [];
-    
     const stats = {
       totalStocks: stocks.length,
       strongBuys: stocks.filter(s => s.signal === 'STRONG_BUY').length,
