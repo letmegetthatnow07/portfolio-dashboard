@@ -1,4 +1,18 @@
-import { kv } from '@vercel/kv';
+import { createClient } from 'redis';
+
+let redisClient = null;
+
+async function getRedisClient() {
+  if (!redisClient) {
+    redisClient = createClient({
+      url: process.env.REDIS_URL
+    });
+    
+    redisClient.on('error', (err) => console.error('Redis error:', err));
+    await redisClient.connect();
+  }
+  return redisClient;
+}
 
 export default async function handler(req, res) {
   const { id } = req.query;
@@ -14,11 +28,13 @@ export default async function handler(req, res) {
 
     const { name, quantity, average_price, current_price, type, region, sector } = req.body;
 
+    const client = await getRedisClient();
     let portfolio = { stocks: [] };
+
     try {
-      const stored = await kv.get('portfolio');
-      if (stored) {
-        portfolio = stored;
+      const data = await client.get('portfolio');
+      if (data) {
+        portfolio = JSON.parse(data);
       }
     } catch (e) {
       return res.status(500).json({ error: 'Error reading portfolio' });
@@ -42,7 +58,7 @@ export default async function handler(req, res) {
     stock.updatedAt = new Date().toISOString();
 
     portfolio.lastUpdated = new Date().toISOString();
-    await kv.set('portfolio', portfolio);
+    await client.set('portfolio', JSON.stringify(portfolio));
 
     return res.status(200).json({
       status: 'success',
