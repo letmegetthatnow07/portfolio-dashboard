@@ -65,14 +65,21 @@ class PortfolioStorage {
 
 class PriceAnalyzer {
   
-  // 1. PRICE: Finnhub
+  // 1. PRICE: Finnhub -> FMP (Backup)
   async fetchPrice(symbol) {
     try {
       const res = await axios.get(`https://finnhub.io/api/v1/quote?symbol=${symbol}&token=${process.env.FINNHUB_API_KEY}`, { timeout: 8000 });
       if (res.data && res.data.c && res.data.c > 0) {
         return { price: res.data.c, changePercent: res.data.dp || 0 };
       }
-    } catch (e) { logger.warn(`Finnhub price failed for ${symbol}: ${e.message}`); }
+    } catch (e) { logger.warn(`Finnhub price failed for ${symbol}. Trying FMP backup...`); }
+
+    try {
+      const res = await axios.get(`https://financialmodelingprep.com/api/v3/quote/${symbol}?apikey=${process.env.FMP_API_KEY}`, { timeout: 8000 });
+      if (res.data && res.data.length > 0) {
+        return { price: res.data[0].price, changePercent: res.data[0].changesPercentage || 0 };
+      }
+    } catch (e) { logger.error(`All price fetches failed for ${symbol}`); }
     return null;
   }
 
@@ -92,7 +99,7 @@ class PriceAnalyzer {
     return null;
   }
 
-  // 3. TECHNICALS: Polygon.io (Historical EOD) + Local Math
+  // 3. TECHNICALS: Polygon.io + Local Math
   async fetchTechnicals(symbol) {
     try {
       const end = new Date();
@@ -130,9 +137,7 @@ class PriceAnalyzer {
         }
         return { rsi, sma200 };
       }
-    } catch (e) {
-      logger.warn(`Technicals fetch failed for ${symbol}: ${e.message}`);
-    }
+    } catch (e) { logger.warn(`Technicals fetch failed for ${symbol}: ${e.message}`); }
     return null;
   }
 
@@ -162,36 +167,63 @@ class PriceAnalyzer {
     return [];
   }
 
-  // 6. INSIDER ACTION: SEC API (Form 4)
+  // 6. INSIDER ACTION: SEC API (Primary) -> Finnhub (Backup)
   async fetchInsider(symbol) {
     try {
-      // Using sec-api.io Insider Trading endpoint
-      const res = await axios.get(`https://api.sec-api.io/insider-trading?ticker=${symbol}&token=${process.env.SEC_API_KEY}`, { timeout: 8000 });
+      // FIX: sec-api.io uses a POST request with a Lucene JSON query
+      const payload = {
+        query: `issuer.tradingSymbol:${symbol}`,
+        from: "0",
+        size: "50",
+        sort: [{ "transactionDate": "desc" }]
+      };
       
-      if (res.data && Array.isArray(res.data)) {
-        let totalBought = 0;
-        let totalSold = 0;
+      const res = await axios.post(`https://api.sec-api.io/insider-trading?token=${process.env.SEC_API_KEY}`, payload, { timeout: 8000 });
+      
+      const trades = res.data.transactions || (Array.isArray(res.data) ? res.data : []);
+
+      if (trades && trades.length > 0) {
+        let totalBought = 0; let totalSold = 0;
         
-        // Only look at the last 6 months of data to ensure relevance
         const sixMonthsAgo = new Date();
         sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
 
-        res.data.forEach(trade => {
-          const tradeDate = new Date(trade.transactionDate);
-          if (tradeDate >= sixMonthsAgo && trade.shares && trade.sharePrice) {
-            const value = parseFloat(trade.shares) * parseFloat(trade.sharePrice);
-            
-            // Code P = Open Market Purchase, Code S = Open Market Sale
-            if (trade.transactionCode === 'P') totalBought += value;
-            if (trade.transactionCode === 'S') totalSold += value;
+        trades.forEach(trade => {
+          const tradeDate = new Date(trade.transactionDate || trade.filingDate);
+          const shares = parseFloat(trade.shares || trade.securitiesTransacted || 0);
+          const price = parseFloat(trade.pricePerShare || trade.price || 0);
+          const code = trade.transactionCode || trade.code;
+
+          if (tradeDate >= sixMonthsAgo && shares > 0 && price > 0) {
+            const value = shares * price;
+            if (code === 'P' || code === 'P - Purchase') totalBought += value;
+            if (code === 'S' || code === 'S - Sale') totalSold += value;
           }
         });
 
         return { bought: totalBought, sold: totalSold };
       }
     } catch (e) {
-      logger.warn(`SEC Insider fetch failed for ${symbol}: ${e.message}`);
+      logger.warn(`SEC Insider fetch failed for ${symbol}. Trying Finnhub backup...`);
     }
+
+    // BACKUP: Finnhub Insider Sentiment 
+    try {
+      const startStr = new Date(new Date().setMonth(new Date().getMonth() - 6)).toISOString().split('T')[0];
+      const endStr = new Date().toISOString().split('T')[0];
+      const res = await axios.get(`https://finnhub.io/api/v1/stock/insider-sentiment?symbol=${symbol}&from=${startStr}&to=${endStr}&token=${process.env.FINNHUB_API_KEY}`, { timeout: 8000 });
+      
+      if (res.data && res.data.data && res.data.data.length > 0) {
+        let mspbr = 0; 
+        res.data.data.forEach(month => { mspbr += month.mspr; });
+        const avgMspr = mspbr / res.data.data.length;
+        
+        // Translate ratio into pseudo-buying/selling
+        if (avgMspr > 0) return { bought: avgMspr * 1000000, sold: 0 };
+        if (avgMspr < 0) return { bought: 0, sold: Math.abs(avgMspr) * 1000000 };
+      }
+    } catch (e) { logger.warn(`Finnhub Insider backup failed for ${symbol}: ${e.message}`); }
+    
     return null;
   }
   
@@ -253,16 +285,15 @@ class PriceAnalyzer {
     if (insiderData) {
       const { bought, sold } = insiderData;
       
-      if (bought > 0 && sold === 0) insiderScore = 10; // Pure high conviction buying
-      else if (bought > sold * 2) insiderScore = 9; // Heavy buying vs light selling
-      else if (bought > sold) insiderScore = 7; // Mild bullishness
-      else if (sold > bought * 5) insiderScore = 2; // Massive dumping
-      else if (sold > bought * 2) insiderScore = 3; // Heavy selling
-      else if (sold > bought) insiderScore = 4; // Mild bearishness
-      else insiderScore = 5; // Neutral / No significant action
+      if (bought > 0 && sold === 0) insiderScore = 10; 
+      else if (bought > sold * 2) insiderScore = 9; 
+      else if (bought > sold) insiderScore = 7; 
+      else if (sold > bought * 5) insiderScore = 2; 
+      else if (sold > bought * 2) insiderScore = 3; 
+      else if (sold > bought) insiderScore = 4; 
+      else insiderScore = 5; 
     }
 
-    // --- FINAL COMPOSITE SCORE (Perfect 100% Weight Distribution) ---
     const finalScore = (
       (fundScore * 0.29) + 
       (techScore * 0.16) + 
@@ -284,7 +315,6 @@ class PriceAnalyzer {
 }
 
 async function updateMarketData() {
-  const startTime = Date.now();
   const storage = new PortfolioStorage();
   const analyzer = new PriceAnalyzer();
 
@@ -302,7 +332,6 @@ async function updateMarketData() {
       try {
         logger.info(`Analyzing ${stock.symbol}...`);
         
-        // Added the SEC Insider fetch to the Promise.all array
         const [priceData, fundamentals, technicals, ratings, rawNews, insiderData] = await Promise.all([
           analyzer.fetchPrice(stock.symbol),
           analyzer.fetchFundamentals(stock.symbol),
@@ -317,12 +346,10 @@ async function updateMarketData() {
         }
 
         if (insiderData && (insiderData.bought > 0 || insiderData.sold > 0)) {
-          logger.info(`  👔 Insiders: $${insiderData.bought.toLocaleString()} Bought | $${insiderData.sold.toLocaleString()} Sold (Last 6 Months)`);
+          logger.info(`  👔 Insiders: $${insiderData.bought.toLocaleString(undefined, {maximumFractionDigits:0})} Bought | $${insiderData.sold.toLocaleString(undefined, {maximumFractionDigits:0})} Sold (Last 6 Months)`);
         }
 
         const analyzedNews = newsAnalyzer.analyzeNews(rawNews, stock.symbol);
-        
-        // Passing the insiderData into the score calculator
         const score = analyzer.calculateScore(priceData, fundamentals, technicals, ratings, analyzedNews, insiderData);
         const signal = analyzer.getSignal(score);
 
@@ -346,7 +373,6 @@ async function updateMarketData() {
         await storage.updateStock(stock.symbol, updates);
         logger.info(`✓ ${stock.symbol}: Score ${score.toFixed(1)}/10 → ${signal}\n`);
         
-        // 13-second pacing delay to protect Polygon and Finnhub
         await sleep(13000); 
 
       } catch (e) {
