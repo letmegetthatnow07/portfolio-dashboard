@@ -160,26 +160,26 @@ class PriceAnalyzer {
     return null;
   }
 
-  async fetchNews(symbol) {
+ async fetchNews(symbol) {
   try {
     const res = await axios.get(
-      `https://financialmodelingprep.com/api/v3/stock_news?symbols=${symbol}&limit=3&apikey=${process.env.FMP_API_KEY}`,
+      `https://api.polygon.io/v2/reference/news?query=${symbol}&limit=3&apikey=${process.env.POLYGON_API_KEY}`,
       { timeout: 8000 }
     );
 
-    if (res.data && Array.isArray(res.data) && res.data.length > 0) {
-      return res.data.map(article => ({
+    if (res.data && res.data.results && res.data.results.length > 0) {
+      return res.data.results.map(article => ({
         title: article.title || '',
-        description: article.text || article.summary || ''
+        description: article.description || ''
       }));
     }
   } catch (e) {
-    logger.warn(`FMP news fetch failed for ${symbol}: ${e.message}`);
+    logger.warn(`Polygon news fetch failed for ${symbol}: ${e.message}`);
   }
 
   return [];
 }
-
+  
   calculateScore(priceData, ratings, news) {
     let score = 5;
 
