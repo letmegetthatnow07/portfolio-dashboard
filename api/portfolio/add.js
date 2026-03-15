@@ -1,25 +1,17 @@
-/**
- * Add New Stock to Portfolio
- * POST /api/portfolio/add
- * Professional creation with validation
- */
-
-const dataStorage = require('../../backend/lib/dataStorage');
+import fs from 'fs';
+import path from 'path';
 
 export default function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ 
-      error: 'Method not allowed',
-      allowed: ['POST']
-    });
-  }
-
   try {
+    if (req.method !== 'POST') {
+      return res.status(405).json({ error: 'Method not allowed' });
+    }
+
     const { symbol, name, type, region, sector, quantity, average_price } = req.body;
 
-    // Professional validation
+    // Validate input
     if (!symbol || typeof symbol !== 'string') {
-      return res.status(400).json({ error: 'Symbol is required and must be a string' });
+      return res.status(400).json({ error: 'Symbol is required' });
     }
 
     const cleanSymbol = symbol.trim().toUpperCase();
@@ -28,52 +20,69 @@ export default function handler(req, res) {
       return res.status(400).json({ error: 'Symbol must be 1-10 characters' });
     }
 
-    if (type && !['Stock', 'ETF', 'Fund', 'Crypto'].includes(type)) {
-      return res.status(400).json({ error: 'Invalid stock type' });
+    // Initialize data directory
+    const dataDir = path.join(process.cwd(), 'data');
+    const dataFile = path.join(dataDir, 'portfolio-data.json');
+
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
     }
 
-    if (region && !['Global', 'US', 'India', 'Europe', 'Asia'].includes(region)) {
-      return res.status(400).json({ error: 'Invalid region' });
+    // Read existing portfolio
+    let portfolio = { stocks: [], lastUpdated: null };
+    
+    if (fs.existsSync(dataFile)) {
+      try {
+        const data = fs.readFileSync(dataFile, 'utf8');
+        portfolio = JSON.parse(data);
+      } catch (e) {
+        console.error('Error reading portfolio:', e);
+      }
     }
 
-    if (quantity !== undefined && (isNaN(quantity) || quantity < 0)) {
-      return res.status(400).json({ error: 'Quantity must be non-negative' });
+    // Check if stock already exists
+    if (portfolio.stocks.find(s => s.symbol === cleanSymbol)) {
+      return res.status(400).json({ error: 'Stock already in portfolio' });
     }
 
-    if (average_price !== undefined && (isNaN(average_price) || average_price < 0)) {
-      return res.status(400).json({ error: 'Average price must be non-negative' });
-    }
-
-    // Add stock
-    const result = dataStorage.addStock(cleanSymbol, {
+    // Create new stock
+    const newStock = {
+      id: Date.now().toString(),
+      symbol: cleanSymbol,
       name: name || cleanSymbol,
       type: type || 'Stock',
       region: region || 'Global',
       sector: sector || '',
       quantity: quantity ? parseFloat(quantity) : 0,
-      average_price: average_price ? parseFloat(average_price) : 0
-    });
+      average_price: average_price ? parseFloat(average_price) : 0,
+      current_price: 0,
+      change_percent: 0,
+      latest_score: 5,
+      signal: 'HOLD',
+      confidence: 0,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
 
-    if (!result.success) {
-      return res.status(400).json({ 
-        error: 'Failed to add stock',
-        message: result.error
-      });
-    }
+    // Add to portfolio
+    portfolio.stocks.push(newStock);
+    portfolio.lastUpdated = new Date().toISOString();
+
+    // Write to file
+    fs.writeFileSync(dataFile, JSON.stringify(portfolio, null, 2));
 
     return res.status(201).json({
       status: 'success',
       message: `Stock ${cleanSymbol} added successfully`,
-      stock: result.stock,
+      stock: newStock,
       timestamp: new Date().toISOString()
     });
 
   } catch (error) {
     console.error('Add stock error:', error);
-    return res.status(500).json({ 
+    return res.status(500).json({
       error: 'Failed to add stock',
-      message: error.message,
-      timestamp: new Date().toISOString()
+      message: error.message
     });
   }
 }
