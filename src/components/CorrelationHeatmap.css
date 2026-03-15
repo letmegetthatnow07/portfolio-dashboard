@@ -1,0 +1,67 @@
+.correlation-container {
+  background: var(--bg-surface);
+  border-radius: 12px;
+  padding: 24px;
+  margin-top: 32px;
+  border: 1px solid var(--border-color);
+  overflow-x: auto;
+}
+
+.heatmap-header h2 {
+  margin: 0 0 8px 0;
+  font-size: 1.25rem;
+}
+
+.heatmap-table {
+  border-collapse: separate;
+  border-spacing: 4px;
+  width: max-content;
+  margin-top: 16px;
+}
+
+.heatmap-table th, .row-header {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-align: center;
+  padding: 8px;
+}
+
+.heatmap-table td {
+  width: 45px;
+  height: 45px;
+  text-align: center;
+  vertical-align: middle;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border-radius: 4px;
+  transition: transform 0.2s;
+  cursor: crosshair;
+}
+
+.heatmap-table td:hover {
+  transform: scale(1.1);
+  z-index: 10;
+  position: relative;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+
+.matrix-legend {
+  display: flex;
+  gap: 16px;
+  margin-top: 24px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.color-box {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+}
