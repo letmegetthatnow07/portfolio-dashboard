@@ -6,6 +6,7 @@
   "scripts": {
     "update": "node scripts/daily-update.js",
     "update:news": "node scripts/news-update.js",
+    "calculate-matrix": "node scripts/generate-correlation.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
