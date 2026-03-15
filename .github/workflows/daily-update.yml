@@ -9,13 +9,14 @@ on:
   workflow_dispatch:
     inputs:
       run_type:
-        description: 'Which script to run?'
+        description: 'Which engine to run?'
         required: true
         default: 'master'
         type: choice
         options:
           - master
           - news
+          - matrix
 
 permissions:
   contents: write
@@ -43,16 +44,17 @@ jobs:
         id: run-logic
         run: |
           HOUR=$(date -u +"%H")
-          MIN=$(date -u +"%M")
           
-          # If triggered manually, use the input choice
+          # If triggered manually, use the dropdown choice
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             if [ "${{ github.event.inputs.run_type }}" == "master" ]; then
               echo "SCRIPT_TO_RUN=npm run update" >> $GITHUB_ENV
+            elif [ "${{ github.event.inputs.run_type }}" == "matrix" ]; then
+              echo "SCRIPT_TO_RUN=npm run calculate-matrix" >> $GITHUB_ENV
             else
               echo "SCRIPT_TO_RUN=npm run update:news" >> $GITHUB_ENV
             fi
-          # Otherwise, determine by CRON hour (21 UTC = 5PM ET Master Run)
+          # If triggered by schedule, determine by UTC hour (21 = 5PM ET)
           elif [ "$HOUR" == "21" ]; then
             echo "SCRIPT_TO_RUN=npm run update" >> $GITHUB_ENV
           else
@@ -75,7 +77,7 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
 
-      - name: Commit CSV History (If Master Run)
+      - name: Commit CSV History
         run: |
           git add backend/data/score_history.csv || true
           git commit -m "📊 Auto: EOD History Update $(date)" || true
