@@ -822,3 +822,157 @@
 [2026-03-15T09:24:50.214Z] INFO: ⏱️  Duration: 253.35s
 [2026-03-15T09:24:50.214Z] INFO: 🕐 Finished: 2026-03-15T09:24:50.214Z
 [2026-03-15T09:24:50.214Z] INFO: 
+[2026-03-15T10:02:20.093Z] INFO: 
+[2026-03-15T10:02:20.095Z] INFO: ╔════════════════════════════════════════════════════════════╗
+[2026-03-15T10:02:20.095Z] INFO: ║        DAILY MARKET DATA UPDATE - PRODUCTION VERSION       ║
+[2026-03-15T10:02:20.095Z] INFO: ╚════════════════════════════════════════════════════════════╝
+[2026-03-15T10:02:20.095Z] INFO: 📅 Date: 2026-03-15T10:02:20.095Z
+[2026-03-15T10:02:20.095Z] INFO: 
+[2026-03-15T10:02:20.923Z] INFO: 📊 Updating 18 stocks from portfolio...
+[2026-03-15T10:02:20.924Z] INFO: 
+[2026-03-15T10:02:20.924Z] INFO: STEP 1: Fetching current prices...
+[2026-03-15T10:02:21.440Z] INFO:   ✓ SPMO: $116.18 (ALPHA_VANTAGE)
+[2026-03-15T10:02:33.923Z] INFO:   ✓ SMH: $387.33 (ALPHA_VANTAGE)
+[2026-03-15T10:02:46.389Z] INFO:   ✓ TPL: $531.13 (ALPHA_VANTAGE)
+[2026-03-15T10:02:58.855Z] INFO:   ✓ MELI: $1670.00 (ALPHA_VANTAGE)
+[2026-03-15T10:03:11.323Z] INFO:   ✓ VRT: $258.88 (ALPHA_VANTAGE)
+[2026-03-15T10:03:23.788Z] INFO:   ✓ MU: $426.13 (ALPHA_VANTAGE)
+[2026-03-15T10:03:36.249Z] INFO:   ✓ AVNV: $77.54 (ALPHA_VANTAGE)
+[2026-03-15T10:03:48.734Z] INFO:   ✓ BWXT: $194.13 (ALPHA_VANTAGE)
+[2026-03-15T10:04:01.197Z] INFO:   ✓ GEV: $805.02 (ALPHA_VANTAGE)
+[2026-03-15T10:04:13.661Z] INFO:   ✓ CRWD: $441.78 (ALPHA_VANTAGE)
+[2026-03-15T10:04:26.126Z] INFO:   ✓ SHLD: $75.61 (ALPHA_VANTAGE)
+[2026-03-15T10:04:38.603Z] INFO:   ✓ FTAI: $222.24 (ALPHA_VANTAGE)
+[2026-03-15T10:04:51.068Z] INFO:   ✓ RKLB: $68.41 (ALPHA_VANTAGE)
+[2026-03-15T10:05:03.553Z] INFO:   ✓ SCCO: $170.83 (ALPHA_VANTAGE)
+[2026-03-15T10:05:16.019Z] INFO:   ✓ KTOS: $87.53 (ALPHA_VANTAGE)
+[2026-03-15T10:05:28.482Z] INFO:   ✓ AGX: $458.31 (ALPHA_VANTAGE)
+[2026-03-15T10:05:40.945Z] INFO:   ✓ BNO: $49.04 (ALPHA_VANTAGE)
+[2026-03-15T10:05:53.410Z] INFO:   ✓ LLY: $985.08 (ALPHA_VANTAGE)
+[2026-03-15T10:06:05.413Z] INFO: ✓ Fetched prices for 18/18 stocks
+
+[2026-03-15T10:06:05.413Z] INFO: STEP 2: Fetching analyst ratings...
+[2026-03-15T10:06:06.097Z] INFO:   ✓ TPL: Ratings fetched
+[2026-03-15T10:06:06.242Z] INFO:   ✓ MELI: Ratings fetched
+[2026-03-15T10:06:06.382Z] INFO:   ✓ VRT: Ratings fetched
+[2026-03-15T10:06:06.465Z] INFO:   ✓ MU: Ratings fetched
+[2026-03-15T10:06:06.676Z] INFO:   ✓ BWXT: Ratings fetched
+[2026-03-15T10:06:06.714Z] INFO:   ✓ GEV: Ratings fetched
+[2026-03-15T10:06:06.756Z] INFO:   ✓ CRWD: Ratings fetched
+[2026-03-15T10:06:06.921Z] INFO:   ✓ FTAI: Ratings fetched
+[2026-03-15T10:06:06.956Z] INFO:   ✓ RKLB: Ratings fetched
+[2026-03-15T10:06:06.982Z] INFO:   ✓ SCCO: Ratings fetched
+[2026-03-15T10:06:07.024Z] INFO:   ✓ KTOS: Ratings fetched
+[2026-03-15T10:06:07.051Z] INFO:   ✓ AGX: Ratings fetched
+[2026-03-15T10:06:07.120Z] INFO:   ✓ LLY: Ratings fetched
+[2026-03-15T10:06:07.120Z] INFO: ✓ Fetched ratings for 13 stocks
+
+[2026-03-15T10:06:07.120Z] INFO: STEP 3: Fetching news (via NewsAPI/Marketaux)...
+[2026-03-15T10:06:07.336Z] WARN: NewsAPI fetch failed for SPMO: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:07.436Z] WARN: Marketaux news fetch failed for SPMO: Request failed with status code 401
+[2026-03-15T10:06:07.468Z] WARN: NewsAPI fetch failed for SMH: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:07.858Z] WARN: Marketaux news fetch failed for SMH: Request failed with status code 401
+[2026-03-15T10:06:07.886Z] WARN: NewsAPI fetch failed for TPL: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:07.929Z] WARN: Marketaux news fetch failed for TPL: Request failed with status code 401
+[2026-03-15T10:06:07.961Z] WARN: NewsAPI fetch failed for MELI: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:07.996Z] WARN: Marketaux news fetch failed for MELI: Request failed with status code 401
+[2026-03-15T10:06:08.028Z] WARN: NewsAPI fetch failed for VRT: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:08.073Z] WARN: Marketaux news fetch failed for VRT: Request failed with status code 401
+[2026-03-15T10:06:08.105Z] WARN: NewsAPI fetch failed for MU: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:08.140Z] WARN: Marketaux news fetch failed for MU: Request failed with status code 401
+[2026-03-15T10:06:08.170Z] WARN: NewsAPI fetch failed for AVNV: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:08.214Z] WARN: Marketaux news fetch failed for AVNV: Request failed with status code 401
+[2026-03-15T10:06:08.240Z] WARN: NewsAPI fetch failed for BWXT: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:08.274Z] WARN: Marketaux news fetch failed for BWXT: Request failed with status code 401
+[2026-03-15T10:06:08.304Z] WARN: NewsAPI fetch failed for GEV: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:08.347Z] WARN: Marketaux news fetch failed for GEV: Request failed with status code 401
+[2026-03-15T10:06:08.378Z] WARN: NewsAPI fetch failed for CRWD: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:08.416Z] WARN: Marketaux news fetch failed for CRWD: Request failed with status code 401
+[2026-03-15T10:06:08.447Z] WARN: NewsAPI fetch failed for SHLD: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:08.488Z] WARN: Marketaux news fetch failed for SHLD: Request failed with status code 401
+[2026-03-15T10:06:08.519Z] WARN: NewsAPI fetch failed for FTAI: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:08.562Z] WARN: Marketaux news fetch failed for FTAI: Request failed with status code 401
+[2026-03-15T10:06:08.589Z] WARN: NewsAPI fetch failed for RKLB: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:08.623Z] WARN: Marketaux news fetch failed for RKLB: Request failed with status code 401
+[2026-03-15T10:06:08.654Z] WARN: NewsAPI fetch failed for SCCO: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:08.698Z] WARN: Marketaux news fetch failed for SCCO: Request failed with status code 401
+[2026-03-15T10:06:08.730Z] WARN: NewsAPI fetch failed for KTOS: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:08.767Z] WARN: Marketaux news fetch failed for KTOS: Request failed with status code 401
+[2026-03-15T10:06:08.798Z] WARN: NewsAPI fetch failed for AGX: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:08.843Z] WARN: Marketaux news fetch failed for AGX: Request failed with status code 401
+[2026-03-15T10:06:08.873Z] WARN: NewsAPI fetch failed for BNO: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:08.912Z] WARN: Marketaux news fetch failed for BNO: Request failed with status code 401
+[2026-03-15T10:06:08.938Z] WARN: NewsAPI fetch failed for LLY: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:08.983Z] WARN: Marketaux news fetch failed for LLY: Request failed with status code 401
+[2026-03-15T10:06:08.984Z] INFO: ✓ Fetched 0 news articles
+
+[2026-03-15T10:06:08.984Z] INFO: STEP 4: Calculating composite scores...
+[2026-03-15T10:06:09.123Z] WARN: NewsAPI fetch failed for SPMO: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:09.159Z] WARN: Marketaux news fetch failed for SPMO: Request failed with status code 401
+[2026-03-15T10:06:09.586Z] INFO:   ✓ SPMO: 6.0/10 → REDUCE
+[2026-03-15T10:06:10.424Z] WARN: NewsAPI fetch failed for SMH: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:10.468Z] WARN: Marketaux news fetch failed for SMH: Request failed with status code 401
+[2026-03-15T10:06:10.894Z] INFO:   ✓ SMH: 5.0/10 → REDUCE
+[2026-03-15T10:06:10.989Z] WARN: NewsAPI fetch failed for TPL: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:11.033Z] WARN: Marketaux news fetch failed for TPL: Request failed with status code 401
+[2026-03-15T10:06:11.459Z] INFO:   ✓ TPL: 7.8/10 → BUY
+[2026-03-15T10:06:11.759Z] WARN: NewsAPI fetch failed for MELI: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:11.792Z] WARN: Marketaux news fetch failed for MELI: Request failed with status code 401
+[2026-03-15T10:06:12.218Z] INFO:   ✓ MELI: 7.3/10 → HOLD
+[2026-03-15T10:06:17.850Z] WARN: NewsAPI fetch failed for VRT: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:17.899Z] WARN: Marketaux news fetch failed for VRT: Request failed with status code 401
+[2026-03-15T10:06:18.325Z] INFO:   ✓ VRT: 8.0/10 → BUY
+[2026-03-15T10:06:18.540Z] WARN: NewsAPI fetch failed for MU: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:18.585Z] WARN: Marketaux news fetch failed for MU: Request failed with status code 401
+[2026-03-15T10:06:19.011Z] INFO:   ✓ MU: 8.3/10 → BUY
+[2026-03-15T10:06:19.520Z] WARN: NewsAPI fetch failed for AVNV: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:19.566Z] WARN: Marketaux news fetch failed for AVNV: Request failed with status code 401
+[2026-03-15T10:06:19.992Z] INFO:   ✓ AVNV: 5.0/10 → REDUCE
+[2026-03-15T10:06:20.115Z] WARN: NewsAPI fetch failed for BWXT: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:20.161Z] WARN: Marketaux news fetch failed for BWXT: Request failed with status code 401
+[2026-03-15T10:06:20.587Z] INFO:   ✓ BWXT: 7.6/10 → BUY
+[2026-03-15T10:06:20.979Z] WARN: NewsAPI fetch failed for GEV: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:21.015Z] WARN: Marketaux news fetch failed for GEV: Request failed with status code 401
+[2026-03-15T10:06:21.441Z] INFO:   ✓ GEV: 7.0/10 → HOLD
+[2026-03-15T10:06:21.611Z] WARN: NewsAPI fetch failed for CRWD: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:21.656Z] WARN: Marketaux news fetch failed for CRWD: Request failed with status code 401
+[2026-03-15T10:06:22.083Z] INFO:   ✓ CRWD: 7.7/10 → BUY
+[2026-03-15T10:06:22.360Z] WARN: NewsAPI fetch failed for SHLD: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:22.393Z] WARN: Marketaux news fetch failed for SHLD: Request failed with status code 401
+[2026-03-15T10:06:22.819Z] INFO:   ✓ SHLD: 5.0/10 → REDUCE
+[2026-03-15T10:06:22.903Z] WARN: NewsAPI fetch failed for FTAI: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:22.938Z] WARN: Marketaux news fetch failed for FTAI: Request failed with status code 401
+[2026-03-15T10:06:23.364Z] INFO:   ✓ FTAI: 8.2/10 → BUY
+[2026-03-15T10:06:23.694Z] WARN: NewsAPI fetch failed for RKLB: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:23.742Z] WARN: Marketaux news fetch failed for RKLB: Request failed with status code 401
+[2026-03-15T10:06:24.168Z] INFO:   ✓ RKLB: 6.8/10 → HOLD
+[2026-03-15T10:06:24.523Z] WARN: NewsAPI fetch failed for SCCO: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:24.568Z] WARN: Marketaux news fetch failed for SCCO: Request failed with status code 401
+[2026-03-15T10:06:24.994Z] INFO:   ✓ SCCO: 4.9/10 → SELL
+[2026-03-15T10:06:25.356Z] WARN: NewsAPI fetch failed for KTOS: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:25.395Z] WARN: Marketaux news fetch failed for KTOS: Request failed with status code 401
+[2026-03-15T10:06:25.821Z] INFO:   ✓ KTOS: 6.9/10 → HOLD
+[2026-03-15T10:06:26.135Z] WARN: NewsAPI fetch failed for AGX: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:26.181Z] WARN: Marketaux news fetch failed for AGX: Request failed with status code 401
+[2026-03-15T10:06:26.607Z] INFO:   ✓ AGX: 6.4/10 → REDUCE
+[2026-03-15T10:06:26.970Z] WARN: NewsAPI fetch failed for BNO: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:27.014Z] WARN: Marketaux news fetch failed for BNO: Request failed with status code 401
+[2026-03-15T10:06:27.440Z] INFO:   ✓ BNO: 5.0/10 → REDUCE
+[2026-03-15T10:06:27.911Z] WARN: NewsAPI fetch failed for LLY: Request failed with status code 401. Falling back to Marketaux...
+[2026-03-15T10:06:27.946Z] WARN: Marketaux news fetch failed for LLY: Request failed with status code 401
+[2026-03-15T10:06:28.372Z] INFO:   ✓ LLY: 6.9/10 → HOLD
+[2026-03-15T10:06:28.372Z] INFO: ✓ Calculated scores for 18 stocks
+
+[2026-03-15T10:06:28.372Z] INFO: ╔════════════════════════════════════════════════════════════╗
+[2026-03-15T10:06:28.372Z] INFO: ║                   UPDATE SUMMARY                           ║
+[2026-03-15T10:06:28.372Z] INFO: ╚════════════════════════════════════════════════════════════╝
+[2026-03-15T10:06:28.372Z] INFO: ✓ Portfolio stocks: 18
+[2026-03-15T10:06:28.372Z] INFO: ✓ Prices updated: 18
+[2026-03-15T10:06:28.372Z] INFO: ✓ Ratings fetched: 13
+[2026-03-15T10:06:28.372Z] INFO: ✓ News articles: 0
+[2026-03-15T10:06:28.372Z] INFO: ✓ Scores calculated: 18
+[2026-03-15T10:06:28.372Z] INFO: 
+[2026-03-15T10:06:28.372Z] INFO: ✅ UPDATE COMPLETED SUCCESSFULLY!
+[2026-03-15T10:06:28.372Z] INFO: ⏱️  Duration: 248.28s
+[2026-03-15T10:06:28.372Z] INFO: 🕐 Finished: 2026-03-15T10:06:28.372Z
+[2026-03-15T10:06:28.372Z] INFO: 
