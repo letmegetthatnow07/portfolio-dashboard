@@ -261,7 +261,8 @@ const EnhancedPortfolioDashboard = () => {
               <thead>
                 <tr>
                   <th>Asset</th>
-                  <th>Price</th>
+                  <th>Sector</th>
+                  <th>Price & P&L</th>
                   <th>Score</th>
                   <th>Signal</th>
                   <th>Total Value</th>
@@ -271,47 +272,78 @@ const EnhancedPortfolioDashboard = () => {
               <tbody>
                 {filteredPortfolio.map((stock) => {
                   const totalValue = (parseFloat(stock.current_price) || 0) * (parseFloat(stock.quantity) || 0);
-                  
+
                   return (
-                  <tr key={stock.id}>
-                    <td>
-                      <strong className="stock-symbol">{stock.symbol}</strong>
-                    </td>
-                    <td>
-                      <div className="price-value">{formatPrice(stock.current_price)}</div>
-                      {stock.change_percent && (
-                        <div className={`change ${stock.change_percent > 0 ? 'positive' : 'negative'}`}>
-                          {stock.change_percent > 0 ? '+' : ''}{stock.change_percent.toFixed(2)}%
+                    <tr key={stock.id}>
+
+                      {/* UPDATED: Symbol + name subtext */}
+                      <td>
+                        <strong className="stock-symbol">{stock.symbol}</strong>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{stock.name}</div>
+                      </td>
+
+                      {/* NEW: Automated sector data from Phase 3 */}
+                      <td>
+                        {stock.sector && (
+                          <span style={{ fontSize: '0.75rem', padding: '2px 6px', background: 'var(--bg-secondary)', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
+                            {stock.sector}
+                          </span>
+                        )}
+                      </td>
+
+                      {/* UPDATED: Price + intraday change_percent + Unrealized P&L */}
+                      <td>
+                        <div className="price-value">{formatPrice(stock.current_price)}</div>
+
+                        {/* Intraday change % (original) */}
+                        {stock.change_percent != null && (
+                          <div className={`change ${stock.change_percent >= 0 ? 'positive' : 'negative'}`} style={{ fontSize: '0.8rem', marginTop: '2px' }}>
+                            {stock.change_percent >= 0 ? '+' : ''}{stock.change_percent.toFixed(2)}% today
+                          </div>
+                        )}
+
+                        {/* Unrealized P&L (new) */}
+                        {stock.average_price > 0 && stock.current_price > 0 && (
+                          (() => {
+                            const profitDollar = (stock.current_price - stock.average_price) * stock.quantity;
+                            const profitPercent = ((stock.current_price - stock.average_price) / stock.average_price) * 100;
+                            const isProfit = profitDollar >= 0;
+                            return (
+                              <div className={`change ${isProfit ? 'positive' : 'negative'}`} style={{ fontSize: '0.8rem', marginTop: '4px' }}>
+                                {isProfit ? '▲' : '▼'} {formatPrice(Math.abs(profitDollar))} ({isProfit ? '+' : ''}{profitPercent.toFixed(2)}%)
+                              </div>
+                            );
+                          })()
+                        )}
+                      </td>
+
+                      <td>
+                        <div className="score-badge">
+                          <span className="score-number">{stock.latest_score?.toFixed(1) || '—'}</span>
                         </div>
-                      )}
-                    </td>
-                    <td>
-                      <div className="score-badge">
-                        <span className="score-number">{stock.latest_score?.toFixed(1) || '—'}</span>
-                      </div>
-                    </td>
-                    <td>
-                      <span className="signal-badge" style={{ color: getSignalColor(stock.signal), backgroundColor: `${getSignalColor(stock.signal)}15` }}>
-                        {stock.signal?.replace('_', ' ') || 'PENDING'}
-                      </span>
-                    </td>
-                    <td>
-                      <div className="price-value">{formatPrice(totalValue)}</div>
-                    </td>
-                    <td className="col-actions">
-                      <button onClick={() => setNewsModalStock(stock)} className="btn-icon" title="View Intelligence">📰</button>
-                      <button onClick={() => openEditForm(stock)} className="btn-icon" title="Edit">✏️</button>
-                      <button onClick={() => handleDeleteStock(stock.id)} className="btn-icon" title="Remove">🗑️</button>
-                    </td>
-                  </tr>
-                )})}
+                      </td>
+                      <td>
+                        <span className="signal-badge" style={{ color: getSignalColor(stock.signal), backgroundColor: `${getSignalColor(stock.signal)}15` }}>
+                          {stock.signal?.replace('_', ' ') || 'PENDING'}
+                        </span>
+                      </td>
+                      <td>
+                        <div className="price-value">{formatPrice(totalValue)}</div>
+                      </td>
+                      <td className="col-actions">
+                        <button onClick={() => setNewsModalStock(stock)} className="btn-icon" title="View Intelligence">📰</button>
+                        <button onClick={() => openEditForm(stock)} className="btn-icon" title="Edit">✏️</button>
+                        <button onClick={() => handleDeleteStock(stock.id)} className="btn-icon" title="Remove">🗑️</button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
       </div>
 
-      {/* The Heatmap is safely nested here inside the main container */}
       <CorrelationHeatmap />
 
     </div>
