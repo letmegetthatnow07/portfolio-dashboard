@@ -1,10 +1,9 @@
 {
   "name": "portfolio-dashboard-backend",
   "version": "1.0.0",
-  "description": "Portfolio dashboard backend",
-  "main": "scripts/daily-update.js",
+  "description": "Backend scripts for portfolio dashboard",
+  "main": "index.js",
   "scripts": {
-    "update": "node scripts/daily-update.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
@@ -13,3 +12,4 @@
     "redis": "^4.6.10",
     "sentiment": "^5.0.2"
   }
+}
