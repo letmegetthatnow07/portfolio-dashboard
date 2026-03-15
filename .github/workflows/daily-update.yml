@@ -1,9 +1,21 @@
-name: Daily Market Data Update
+name: Market & News Data Pipeline
 
 on:
   schedule:
-    - cron: '0 22 * * 1-5'
+    - cron: '0 13 * * 1-5'  # 9:00 AM ET (News Run 1)
+    - cron: '0 17 * * 1-5'  # 1:00 PM ET (News Run 2)
+    - cron: '15 20 * * 1-5' # 4:15 PM ET (News Run 3)
+    - cron: '0 21 * * 1-5'  # 5:00 PM ET (Master EOD Run)
   workflow_dispatch:
+    inputs:
+      run_type:
+        description: 'Which script to run?'
+        required: true
+        default: 'master'
+        type: choice
+        options:
+          - master
+          - news
 
 permissions:
   contents: write
@@ -12,7 +24,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  update-market-data:
+  update-pipeline:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -27,25 +39,44 @@ jobs:
         working-directory: backend
         run: npm install
 
-      - name: Run market data update
+      - name: Determine Run Type
+        id: run-logic
+        run: |
+          HOUR=$(date -u +"%H")
+          MIN=$(date -u +"%M")
+          
+          # If triggered manually, use the input choice
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            if [ "${{ github.event.inputs.run_type }}" == "master" ]; then
+              echo "SCRIPT_TO_RUN=npm run update" >> $GITHUB_ENV
+            else
+              echo "SCRIPT_TO_RUN=npm run update:news" >> $GITHUB_ENV
+            fi
+          # Otherwise, determine by CRON hour (21 UTC = 5PM ET Master Run)
+          elif [ "$HOUR" == "21" ]; then
+            echo "SCRIPT_TO_RUN=npm run update" >> $GITHUB_ENV
+          else
+            echo "SCRIPT_TO_RUN=npm run update:news" >> $GITHUB_ENV
+          fi
+
+      - name: Execute Pipeline
         working-directory: backend
         env:
           REDIS_URL: ${{ secrets.REDIS_URL }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           NEWSDATA_API_KEY: ${{ secrets.NEWSDATA_API_KEY }}
           FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
-          EODHD_API_KEY: ${{ secrets.EODHD_API_KEY }}
           POLYGON_API_KEY: ${{ secrets.POLYGON_API_KEY }}
           SEC_API_KEY: ${{ secrets.SEC_API_KEY }}
-        run: npm run update
+        run: ${{ env.SCRIPT_TO_RUN }}
 
       - name: Configure git
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
 
-      - name: Commit and push changes
+      - name: Commit CSV History (If Master Run)
         run: |
-          git add -A
-          git commit -m "📊 Auto: Market data update $(date)" || true
-          git push
+          git add backend/data/score_history.csv || true
+          git commit -m "📊 Auto: EOD History Update $(date)" || true
+          git push || true
