@@ -310,6 +310,10 @@ const EnhancedPortfolioDashboard = () => {
           </div>
         )}
       </div>
+
+      {/* The Heatmap is safely nested here inside the main container */}
+      <CorrelationHeatmap />
+
     </div>
   );
 };
