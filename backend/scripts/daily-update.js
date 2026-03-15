@@ -8,7 +8,6 @@ const logger = require('../lib/logger');
 const newsAnalyzer = require('../lib/advancedNewsAnalyzer'); 
 const { createClient } = require('redis');
 
-// Utility for rate-limit pacing
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 let redisClient = null;
@@ -66,26 +65,14 @@ class PortfolioStorage {
 
 class PriceAnalyzer {
   
-  // 1. PRICE: Finnhub (Primary) -> FMP (Backup)
+  // 1. PRICE: Finnhub
   async fetchPrice(symbol) {
     try {
       const res = await axios.get(`https://finnhub.io/api/v1/quote?symbol=${symbol}&token=${process.env.FINNHUB_API_KEY}`, { timeout: 8000 });
       if (res.data && res.data.c && res.data.c > 0) {
         return { price: res.data.c, changePercent: res.data.dp || 0 };
       }
-    } catch (e) {
-      logger.warn(`Finnhub price failed for ${symbol}. Trying FMP backup...`);
-    }
-
-    // Backup: FMP Quote
-    try {
-      const res = await axios.get(`https://financialmodelingprep.com/api/v3/quote/${symbol}?apikey=${process.env.FMP_API_KEY}`, { timeout: 8000 });
-      if (res.data && res.data.length > 0) {
-        return { price: res.data[0].price, changePercent: res.data[0].changesPercentage || 0 };
-      }
-    } catch (e) {
-      logger.error(`All price fetches failed for ${symbol}`);
-    }
+    } catch (e) { logger.warn(`Finnhub price failed for ${symbol}: ${e.message}`); }
     return null;
   }
 
@@ -101,27 +88,37 @@ class PriceAnalyzer {
           debtToEquity: m['longTermDebt/equityAnnual'] || m['totalDebt/totalEquityAnnual'] || 0
         };
       }
-    } catch (e) {
-      logger.warn(`Fundamentals fetch failed for ${symbol}: ${e.message}`);
-    }
+    } catch (e) { logger.warn(`Fundamentals fetch failed for ${symbol}: ${e.message}`); }
     return null;
   }
 
-  // 3. TECHNICALS: FMP Historical + Local Math
+  // 3. TECHNICALS: Polygon.io (Historical EOD) + Local Math
   async fetchTechnicals(symbol) {
     try {
-      const res = await axios.get(`https://financialmodelingprep.com/api/v3/historical-price-full/${symbol}?timeseries=200&apikey=${process.env.FMP_API_KEY}`, { timeout: 8000 });
-      if (res.data && res.data.historical && res.data.historical.length > 0) {
-        const history = res.data.historical; 
-        
-        const sum200 = history.reduce((acc, val) => acc + val.close, 0);
-        const sma200 = sum200 / history.length;
+      const end = new Date();
+      const start = new Date();
+      start.setFullYear(start.getFullYear() - 1);
+      
+      const endStr = end.toISOString().split('T')[0];
+      const startStr = start.toISOString().split('T')[0];
 
+      const res = await axios.get(`https://api.polygon.io/v2/aggs/ticker/${symbol}/range/1/day/${startStr}/${endStr}?adjusted=true&sort=desc&limit=250&apiKey=${process.env.POLYGON_API_KEY}`, { timeout: 8000 });
+      
+      if (res.data && res.data.results && res.data.results.length > 0) {
+        const history = res.data.results; // array of { c: closePrice }, sorted newest to oldest
+        
+        // Calculate 200 SMA
+        const period = Math.min(200, history.length);
+        const sum200 = history.slice(0, period).reduce((acc, val) => acc + val.c, 0);
+        const sma200 = sum200 / period;
+
+        // Calculate 14-Day RSI
         let rsi = 50;
         if (history.length >= 15) {
           let gains = 0, losses = 0;
+          // Iterate chronologically backwards through the newest 15 days
           for (let i = 14; i > 0; i--) {
-            let diff = history[i-1].close - history[i].close; 
+            let diff = history[i-1].c - history[i].c; // Newer day close minus Older day close
             if (diff > 0) gains += diff;
             else losses -= diff;
           }
@@ -222,7 +219,7 @@ class PriceAnalyzer {
       newsScore = Math.max(0, Math.min(10, newsScore));
     }
 
-    // Multiply by 1.25 to normalize to a 10-point scale (leaving room for 20% Insider block later)
+    // Normalizing out of 10 for Phase 1. (80% utilized weight * 1.25 = 100%)
     const finalScore = (
       (fundScore * 0.29) + (techScore * 0.16) + (ratingScore * 0.20) + (newsScore * 0.15)
     ) * 1.25;
@@ -294,9 +291,9 @@ async function updateMarketData() {
         await storage.updateStock(stock.symbol, updates);
         logger.info(`✓ ${stock.symbol}: Score ${score.toFixed(1)}/10 → ${signal}\n`);
         
-        // CRITICAL: 3.5 second delay. 18 stocks * 3.5s = 63 seconds. 
-        // This guarantees we never breach Finnhub's 60 requests per minute limit.
-        await sleep(3500); 
+        // CRITICAL: 13-second pacing delay. 
+        // Completely neutralizes Polygon's 5/min limit and Finnhub's 60/min limit.
+        await sleep(13000); 
 
       } catch (e) {
         logger.error(`Error updating ${stock.symbol}`, e);
