@@ -126,3 +126,139 @@
 [2026-03-15T07:05:27.679Z] INFO: ℹ️  Add stocks via website dashboard to start analysis
 [2026-03-15T07:05:27.680Z] INFO: 
 [2026-03-15T07:05:27.680Z] INFO: ✅ UPDATE COMPLETED (NO STOCKS TO ANALYZE)
+[2026-03-15T07:48:31.707Z] INFO: 
+[2026-03-15T07:48:31.708Z] INFO: ╔════════════════════════════════════════════════════════════╗
+[2026-03-15T07:48:31.708Z] INFO: ║       DAILY MARKET DATA UPDATE - PRODUCTION VERSION        ║
+[2026-03-15T07:48:31.708Z] INFO: ╚════════════════════════════════════════════════════════════╝
+[2026-03-15T07:48:31.709Z] INFO: 📅 Date: 2026-03-15T07:48:31.709Z
+[2026-03-15T07:48:31.709Z] INFO: 
+[2026-03-15T07:48:32.492Z] INFO: 📊 Updating 18 stocks from portfolio...
+[2026-03-15T07:48:32.492Z] INFO: 
+[2026-03-15T07:48:32.492Z] INFO: STEP 1: Fetching current prices...
+[2026-03-15T07:48:32.981Z] WARN: EODHD fetch failed for SPMO: Request failed with status code 401
+[2026-03-15T07:48:45.329Z] WARN: EODHD fetch failed for SMH: Request failed with status code 401
+[2026-03-15T07:48:57.713Z] WARN: EODHD fetch failed for TPL: Request failed with status code 401
+[2026-03-15T07:49:10.035Z] WARN: EODHD fetch failed for MELI: Request failed with status code 401
+[2026-03-15T07:49:22.367Z] WARN: EODHD fetch failed for VRT: Request failed with status code 401
+[2026-03-15T07:49:34.695Z] WARN: EODHD fetch failed for MU: Request failed with status code 401
+[2026-03-15T07:49:47.094Z] WARN: EODHD fetch failed for AVNV: Request failed with status code 401
+[2026-03-15T07:49:59.362Z] WARN: EODHD fetch failed for BWXT: Request failed with status code 401
+[2026-03-15T07:50:11.627Z] WARN: EODHD fetch failed for GEV: Request failed with status code 401
+[2026-03-15T07:50:23.902Z] WARN: EODHD fetch failed for CRWD: Request failed with status code 401
+[2026-03-15T07:50:36.203Z] WARN: EODHD fetch failed for SHLD: Request failed with status code 401
+[2026-03-15T07:50:48.492Z] WARN: EODHD fetch failed for FTAI: Request failed with status code 401
+[2026-03-15T07:51:00.765Z] WARN: EODHD fetch failed for RKLB: Request failed with status code 401
+[2026-03-15T07:51:13.038Z] WARN: EODHD fetch failed for SCCO: Request failed with status code 401
+[2026-03-15T07:51:25.308Z] WARN: EODHD fetch failed for KTOS: Request failed with status code 401
+[2026-03-15T07:51:37.573Z] WARN: EODHD fetch failed for AGX: Request failed with status code 401
+[2026-03-15T07:51:49.867Z] WARN: EODHD fetch failed for BNO: Request failed with status code 401
+[2026-03-15T07:52:02.252Z] WARN: EODHD fetch failed for LLY: Request failed with status code 401
+[2026-03-15T07:52:14.257Z] INFO: ✓ Fetched prices for 0/18 stocks
+
+[2026-03-15T07:52:14.257Z] INFO: STEP 2: Fetching analyst ratings...
+[2026-03-15T07:52:14.847Z] INFO:   ✓ TPL: Ratings fetched
+[2026-03-15T07:52:15.100Z] INFO:   ✓ MELI: Ratings fetched
+[2026-03-15T07:52:15.151Z] INFO:   ✓ VRT: Ratings fetched
+[2026-03-15T07:52:15.224Z] INFO:   ✓ MU: Ratings fetched
+[2026-03-15T07:52:15.337Z] INFO:   ✓ BWXT: Ratings fetched
+[2026-03-15T07:52:15.390Z] INFO:   ✓ GEV: Ratings fetched
+[2026-03-15T07:52:15.442Z] INFO:   ✓ CRWD: Ratings fetched
+[2026-03-15T07:52:15.510Z] INFO:   ✓ FTAI: Ratings fetched
+[2026-03-15T07:52:15.551Z] INFO:   ✓ RKLB: Ratings fetched
+[2026-03-15T07:52:15.586Z] INFO:   ✓ SCCO: Ratings fetched
+[2026-03-15T07:52:15.619Z] INFO:   ✓ KTOS: Ratings fetched
+[2026-03-15T07:52:15.656Z] INFO:   ✓ AGX: Ratings fetched
+[2026-03-15T07:52:15.807Z] INFO:   ✓ LLY: Ratings fetched
+[2026-03-15T07:52:15.807Z] INFO: ✓ Fetched ratings for 13 stocks
+
+[2026-03-15T07:52:15.807Z] INFO: STEP 3: Fetching news...
+[2026-03-15T07:52:15.929Z] WARN: News fetch failed for SPMO: Request failed with status code 422
+[2026-03-15T07:52:15.960Z] WARN: News fetch failed for SMH: Request failed with status code 422
+[2026-03-15T07:52:15.991Z] WARN: News fetch failed for TPL: Request failed with status code 422
+[2026-03-15T07:52:16.021Z] WARN: News fetch failed for MELI: Request failed with status code 422
+[2026-03-15T07:52:16.053Z] WARN: News fetch failed for VRT: Request failed with status code 422
+[2026-03-15T07:52:16.084Z] WARN: News fetch failed for MU: Request failed with status code 422
+[2026-03-15T07:52:16.116Z] WARN: News fetch failed for AVNV: Request failed with status code 422
+[2026-03-15T07:52:16.146Z] WARN: News fetch failed for BWXT: Request failed with status code 422
+[2026-03-15T07:52:16.177Z] WARN: News fetch failed for GEV: Request failed with status code 422
+[2026-03-15T07:52:16.208Z] WARN: News fetch failed for CRWD: Request failed with status code 422
+[2026-03-15T07:52:16.237Z] WARN: News fetch failed for SHLD: Request failed with status code 429
+[2026-03-15T07:52:16.266Z] WARN: News fetch failed for FTAI: Request failed with status code 429
+[2026-03-15T07:52:16.298Z] WARN: News fetch failed for RKLB: Request failed with status code 429
+[2026-03-15T07:52:16.327Z] WARN: News fetch failed for SCCO: Request failed with status code 429
+[2026-03-15T07:52:16.357Z] WARN: News fetch failed for KTOS: Request failed with status code 429
+[2026-03-15T07:52:16.386Z] WARN: News fetch failed for AGX: Request failed with status code 429
+[2026-03-15T07:52:16.421Z] WARN: News fetch failed for BNO: Request failed with status code 429
+[2026-03-15T07:52:16.451Z] WARN: News fetch failed for LLY: Request failed with status code 429
+[2026-03-15T07:52:16.451Z] INFO: ✓ Fetched 0 news articles
+
+[2026-03-15T07:52:16.451Z] INFO: STEP 4: Calculating composite scores...
+[2026-03-15T07:52:16.713Z] WARN: EODHD fetch failed for SPMO: Request failed with status code 401
+[2026-03-15T07:52:16.791Z] WARN: News fetch failed for SPMO: Request failed with status code 429
+[2026-03-15T07:52:17.219Z] INFO:   ✓ SPMO: 5.0/10 → REDUCE
+[2026-03-15T07:52:17.315Z] WARN: EODHD fetch failed for SMH: Request failed with status code 401
+[2026-03-15T07:52:18.812Z] WARN: News fetch failed for SMH: Request failed with status code 422
+[2026-03-15T07:52:19.239Z] INFO:   ✓ SMH: 5.0/10 → REDUCE
+[2026-03-15T07:52:19.364Z] WARN: EODHD fetch failed for TPL: Request failed with status code 401
+[2026-03-15T07:52:23.385Z] WARN: News fetch failed for TPL: Request failed with status code 422
+[2026-03-15T07:52:23.812Z] INFO:   ✓ TPL: 6.8/10 → HOLD
+[2026-03-15T07:52:23.923Z] WARN: EODHD fetch failed for MELI: Request failed with status code 401
+[2026-03-15T07:52:23.996Z] WARN: News fetch failed for MELI: Request failed with status code 422
+[2026-03-15T07:52:24.423Z] INFO:   ✓ MELI: 7.3/10 → HOLD
+[2026-03-15T07:52:24.518Z] WARN: EODHD fetch failed for VRT: Request failed with status code 401
+[2026-03-15T07:52:24.596Z] WARN: News fetch failed for VRT: Request failed with status code 422
+[2026-03-15T07:52:25.023Z] INFO:   ✓ VRT: 7.1/10 → HOLD
+[2026-03-15T07:52:25.130Z] WARN: EODHD fetch failed for MU: Request failed with status code 401
+[2026-03-15T07:52:25.324Z] WARN: News fetch failed for MU: Request failed with status code 422
+[2026-03-15T07:52:25.751Z] INFO:   ✓ MU: 7.2/10 → HOLD
+[2026-03-15T07:52:25.845Z] WARN: EODHD fetch failed for AVNV: Request failed with status code 401
+[2026-03-15T07:52:25.987Z] WARN: News fetch failed for AVNV: Request failed with status code 422
+[2026-03-15T07:52:26.414Z] INFO:   ✓ AVNV: 5.0/10 → REDUCE
+[2026-03-15T07:52:26.525Z] WARN: EODHD fetch failed for BWXT: Request failed with status code 401
+[2026-03-15T07:52:26.604Z] WARN: News fetch failed for BWXT: Request failed with status code 422
+[2026-03-15T07:52:27.031Z] INFO:   ✓ BWXT: 6.7/10 → HOLD
+[2026-03-15T07:52:27.127Z] WARN: EODHD fetch failed for GEV: Request failed with status code 401
+[2026-03-15T07:52:27.206Z] WARN: News fetch failed for GEV: Request failed with status code 422
+[2026-03-15T07:52:27.633Z] INFO:   ✓ GEV: 7.0/10 → HOLD
+[2026-03-15T07:52:27.736Z] WARN: EODHD fetch failed for CRWD: Request failed with status code 401
+[2026-03-15T07:52:27.843Z] WARN: News fetch failed for CRWD: Request failed with status code 422
+[2026-03-15T07:52:28.270Z] INFO:   ✓ CRWD: 6.7/10 → HOLD
+[2026-03-15T07:52:28.363Z] WARN: EODHD fetch failed for SHLD: Request failed with status code 401
+[2026-03-15T07:52:28.510Z] WARN: News fetch failed for SHLD: Request failed with status code 422
+[2026-03-15T07:52:28.937Z] INFO:   ✓ SHLD: 5.0/10 → REDUCE
+[2026-03-15T07:52:29.040Z] WARN: EODHD fetch failed for FTAI: Request failed with status code 401
+[2026-03-15T07:52:29.117Z] WARN: News fetch failed for FTAI: Request failed with status code 422
+[2026-03-15T07:52:29.544Z] INFO:   ✓ FTAI: 7.4/10 → HOLD
+[2026-03-15T07:52:29.638Z] WARN: EODHD fetch failed for RKLB: Request failed with status code 401
+[2026-03-15T07:52:29.717Z] WARN: News fetch failed for RKLB: Request failed with status code 422
+[2026-03-15T07:52:30.144Z] INFO:   ✓ RKLB: 6.8/10 → HOLD
+[2026-03-15T07:52:30.244Z] WARN: EODHD fetch failed for SCCO: Request failed with status code 401
+[2026-03-15T07:52:30.437Z] WARN: News fetch failed for SCCO: Request failed with status code 422
+[2026-03-15T07:52:30.864Z] INFO:   ✓ SCCO: 4.9/10 → SELL
+[2026-03-15T07:52:30.962Z] WARN: EODHD fetch failed for KTOS: Request failed with status code 401
+[2026-03-15T07:52:31.207Z] WARN: News fetch failed for KTOS: Request failed with status code 422
+[2026-03-15T07:52:31.634Z] INFO:   ✓ KTOS: 6.9/10 → HOLD
+[2026-03-15T07:52:31.738Z] WARN: EODHD fetch failed for AGX: Request failed with status code 401
+[2026-03-15T07:52:31.809Z] WARN: News fetch failed for AGX: Request failed with status code 422
+[2026-03-15T07:52:32.236Z] INFO:   ✓ AGX: 6.4/10 → REDUCE
+[2026-03-15T07:52:32.327Z] WARN: EODHD fetch failed for BNO: Request failed with status code 401
+[2026-03-15T07:52:32.396Z] WARN: News fetch failed for BNO: Request failed with status code 422
+[2026-03-15T07:52:32.823Z] INFO:   ✓ BNO: 5.0/10 → REDUCE
+[2026-03-15T07:52:32.919Z] WARN: EODHD fetch failed for LLY: Request failed with status code 401
+[2026-03-15T07:52:33.054Z] WARN: News fetch failed for LLY: Request failed with status code 422
+[2026-03-15T07:52:33.482Z] INFO:   ✓ LLY: 6.9/10 → HOLD
+[2026-03-15T07:52:33.482Z] INFO: ✓ Calculated scores for 18 stocks
+
+[2026-03-15T07:52:33.482Z] INFO: ╔════════════════════════════════════════════════════════════╗
+[2026-03-15T07:52:33.482Z] INFO: ║           UPDATE SUMMARY                                    ║
+[2026-03-15T07:52:33.482Z] INFO: ╚════════════════════════════════════════════════════════════╝
+[2026-03-15T07:52:33.482Z] INFO: ✓ Portfolio stocks: 18
+[2026-03-15T07:52:33.482Z] INFO: ✓ Prices updated: 0
+[2026-03-15T07:52:33.482Z] INFO: ✓ Ratings fetched: 13
+[2026-03-15T07:52:33.482Z] INFO: ✓ News articles: 0
+[2026-03-15T07:52:33.482Z] INFO: ✓ Scores calculated: 18
+[2026-03-15T07:52:33.482Z] INFO: 
+[2026-03-15T07:52:33.482Z] INFO: ✅ UPDATE COMPLETED SUCCESSFULLY!
+[2026-03-15T07:52:33.482Z] INFO: ⏱️  Duration: 241.78s
+[2026-03-15T07:52:33.482Z] INFO: 🕐 Finished: 2026-03-15T07:52:33.482Z
+[2026-03-15T07:52:33.482Z] INFO: 
