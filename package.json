@@ -8,6 +8,7 @@
     "react-dom": "^18.2.0",
     "react-scripts": "5.0.1",
     "lucide-react": "^0.383.0",
+    "redis": "^4.6.10",
     "@vercel/kv": "^0.2.4"
   },
   "scripts": {
