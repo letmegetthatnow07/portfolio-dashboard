@@ -65,7 +65,6 @@ class PortfolioStorage {
 
 class PriceAnalyzer {
   
-  // 1. PRICE: Finnhub -> FMP (Backup)
   async fetchPrice(symbol) {
     try {
       const res = await axios.get(`https://finnhub.io/api/v1/quote?symbol=${symbol}&token=${process.env.FINNHUB_API_KEY}`, { timeout: 8000 });
@@ -83,7 +82,6 @@ class PriceAnalyzer {
     return null;
   }
 
-  // 2. FUNDAMENTALS: Finnhub Basic Financials
   async fetchFundamentals(symbol) {
     try {
       const res = await axios.get(`https://finnhub.io/api/v1/stock/metric?symbol=${symbol}&metric=all&token=${process.env.FINNHUB_API_KEY}`, { timeout: 8000 });
@@ -99,7 +97,6 @@ class PriceAnalyzer {
     return null;
   }
 
-  // 3. TECHNICALS: Polygon.io + Local Math
   async fetchTechnicals(symbol) {
     try {
       const end = new Date();
@@ -141,7 +138,6 @@ class PriceAnalyzer {
     return null;
   }
 
-  // 4. RATINGS: Finnhub
   async fetchRatings(symbol) {
     try {
       const res = await axios.get(`https://finnhub.io/api/v1/stock/recommendation?symbol=${symbol}&token=${process.env.FINNHUB_API_KEY}`, { timeout: 8000 });
@@ -150,7 +146,6 @@ class PriceAnalyzer {
     return null;
   }
 
-  // 5. NEWS: NewsData.io
   async fetchNews(symbol) {
     try {
       const res = await axios.get(`https://newsdata.io/api/1/latest?apikey=${process.env.NEWSDATA_API_KEY}&q=${symbol} stock&language=en`, { timeout: 8000 });
@@ -167,10 +162,8 @@ class PriceAnalyzer {
     return [];
   }
 
-  // 6. INSIDER ACTION: SEC API (Primary) -> Finnhub (Backup)
   async fetchInsider(symbol) {
     try {
-      // FIX: sec-api.io uses a POST request with a Lucene JSON query
       const payload = {
         query: `issuer.tradingSymbol:${symbol}`,
         from: "0",
@@ -179,12 +172,10 @@ class PriceAnalyzer {
       };
       
       const res = await axios.post(`https://api.sec-api.io/insider-trading?token=${process.env.SEC_API_KEY}`, payload, { timeout: 8000 });
-      
       const trades = res.data.transactions || (Array.isArray(res.data) ? res.data : []);
 
       if (trades && trades.length > 0) {
         let totalBought = 0; let totalSold = 0;
-        
         const sixMonthsAgo = new Date();
         sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
 
@@ -203,11 +194,8 @@ class PriceAnalyzer {
 
         return { bought: totalBought, sold: totalSold };
       }
-    } catch (e) {
-      logger.warn(`SEC Insider fetch failed for ${symbol}. Trying Finnhub backup...`);
-    }
+    } catch (e) {}
 
-    // BACKUP: Finnhub Insider Sentiment 
     try {
       const startStr = new Date(new Date().setMonth(new Date().getMonth() - 6)).toISOString().split('T')[0];
       const endStr = new Date().toISOString().split('T')[0];
@@ -218,11 +206,10 @@ class PriceAnalyzer {
         res.data.data.forEach(month => { mspbr += month.mspr; });
         const avgMspr = mspbr / res.data.data.length;
         
-        // Translate ratio into pseudo-buying/selling
         if (avgMspr > 0) return { bought: avgMspr * 1000000, sold: 0 };
         if (avgMspr < 0) return { bought: 0, sold: Math.abs(avgMspr) * 1000000 };
       }
-    } catch (e) { logger.warn(`Finnhub Insider backup failed for ${symbol}: ${e.message}`); }
+    } catch (e) {}
     
     return null;
   }
@@ -230,7 +217,7 @@ class PriceAnalyzer {
   calculateScore(priceData, fundamentals, technicals, ratings, analyzedNews, insiderData) {
     let fundScore = 5; let techScore = 5; let ratingScore = 5; let newsScore = 5; let insiderScore = 5;
 
-    // --- 1. FUNDAMENTALS (29% Weight) ---
+    // --- 1. FUNDAMENTALS ---
     if (fundamentals) {
       let roicS = Math.max(0, Math.min(10, ((fundamentals.roic - 0.05) / 0.15) * 10));
       let fcfS = Math.max(0, Math.min(10, (fundamentals.fcfMargin / 0.05) * 10));
@@ -239,7 +226,7 @@ class PriceAnalyzer {
       fundScore = (roicS * 0.40) + (fcfS * 0.30) + (deS * 0.30);
     }
 
-    // --- 2. TECHNICALS (16% Weight) ---
+    // --- 2. TECHNICALS ---
     if (technicals && priceData && priceData.price) {
       let trendS = 5;
       if (technicals.sma200 > 0) {
@@ -259,7 +246,7 @@ class PriceAnalyzer {
       techScore = (trendS * 0.50) + (rsiS * 0.50);
     }
 
-    // --- 3. ANALYSTS (20% Weight) ---
+    // --- 3. ANALYSTS ---
     if (ratings) {
       const total = (ratings.strongBuy || 0) + (ratings.buy || 0) + (ratings.hold || 0) + (ratings.sell || 0) + (ratings.strongSell || 0);
       if (total > 0) {
@@ -270,7 +257,7 @@ class PriceAnalyzer {
       }
     }
 
-    // --- 4. NEWS & NLP (15% Weight) ---
+    // --- 4. NEWS & NLP ---
     if (analyzedNews && analyzedNews.length > 0) {
       const avgSentiment = analyzedNews.reduce((sum, item) => sum + item.sentiment.score, 0) / analyzedNews.length; 
       const avgImportance = analyzedNews.reduce((sum, item) => sum + item.importance, 0) / analyzedNews.length; 
@@ -281,10 +268,9 @@ class PriceAnalyzer {
       newsScore = Math.max(0, Math.min(10, newsScore));
     }
 
-    // --- 5. INSIDER ACTION (20% Weight) ---
+    // --- 5. INSIDER ACTION ---
     if (insiderData) {
       const { bought, sold } = insiderData;
-      
       if (bought > 0 && sold === 0) insiderScore = 10; 
       else if (bought > sold * 2) insiderScore = 9; 
       else if (bought > sold) insiderScore = 7; 
@@ -302,7 +288,17 @@ class PriceAnalyzer {
       (insiderScore * 0.20)
     );
 
-    return Math.max(0, Math.min(10, finalScore));
+    const boundedTotal = Math.max(0, Math.min(10, finalScore));
+
+    // Return an object with the breakdown so we can log it
+    return {
+      total: boundedTotal,
+      fund: fundScore,
+      tech: techScore,
+      rating: ratingScore,
+      news: newsScore,
+      insider: insiderScore
+    };
   }
 
   getSignal(score) {
@@ -346,12 +342,16 @@ async function updateMarketData() {
         }
 
         if (insiderData && (insiderData.bought > 0 || insiderData.sold > 0)) {
-          logger.info(`  👔 Insiders: $${insiderData.bought.toLocaleString(undefined, {maximumFractionDigits:0})} Bought | $${insiderData.sold.toLocaleString(undefined, {maximumFractionDigits:0})} Sold (Last 6 Months)`);
+          logger.info(`  👔 Insiders: $${insiderData.bought.toLocaleString(undefined, {maximumFractionDigits:0})} Bought | $${insiderData.sold.toLocaleString(undefined, {maximumFractionDigits:0})} Sold (Last 6 Mos)`);
         }
 
         const analyzedNews = newsAnalyzer.analyzeNews(rawNews, stock.symbol);
-        const score = analyzer.calculateScore(priceData, fundamentals, technicals, ratings, analyzedNews, insiderData);
+        const scoreObj = analyzer.calculateScore(priceData, fundamentals, technicals, ratings, analyzedNews, insiderData);
+        const score = scoreObj.total;
         const signal = analyzer.getSignal(score);
+
+        // This line prints the exact 0-10 score for every single pillar
+        logger.info(`  📊 Breakdown: Fund(${scoreObj.fund.toFixed(1)}) | Tech(${scoreObj.tech.toFixed(1)}) | Analyst(${scoreObj.rating.toFixed(1)}) | News(${scoreObj.news.toFixed(1)}) | Insider(${scoreObj.insider.toFixed(1)})`);
 
         const updates = {
           latest_score: Math.round(score * 10) / 10,
@@ -371,7 +371,7 @@ async function updateMarketData() {
         }
 
         await storage.updateStock(stock.symbol, updates);
-        logger.info(`✓ ${stock.symbol}: Score ${score.toFixed(1)}/10 → ${signal}\n`);
+        logger.info(`✓ ${stock.symbol}: Final Score ${score.toFixed(1)}/10 → ${signal}\n`);
         
         await sleep(13000); 
 
