@@ -1,20 +1,10 @@
 #!/usr/bin/env node
 
-/**
- * Daily Market Data Update - WORKING VERSION
- * No external module dependencies - self-contained
- * Directly fetches APIs and updates portfolio data
- */
-
 require('dotenv').config();
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const logger = require('../lib/logger');
-
-// ============================================
-// DATA STORAGE - INLINE (No external module)
-// ============================================
 
 class PortfolioStorage {
   constructor() {
@@ -99,10 +89,6 @@ class PortfolioStorage {
   }
 }
 
-// ============================================
-// API FETCHING - INLINE (No external module)
-// ============================================
-
 class PriceAnalyzer {
   async fetchPrice(symbol) {
     try {
@@ -123,7 +109,6 @@ class PriceAnalyzer {
       logger.warn(`Price fetch failed for ${symbol}: ${e.message}`);
     }
 
-    // Fallback to EODHD
     try {
       const res = await axios.get(
         `https://eodhd.com/api/eod/${symbol}.US?api_token=${process.env.EODHD_API_KEY}&fmt=json`,
@@ -182,13 +167,11 @@ class PriceAnalyzer {
   calculateScore(priceData, ratings, news) {
     let score = 5;
 
-    // Price trend component (20%)
     if (priceData && priceData.changePercent) {
       const changeScore = 5 + (priceData.changePercent / 10);
       score += changeScore * 0.2;
     }
 
-    // Ratings component (25%)
     if (ratings) {
       const total = (ratings.strongBuy || 0) + (ratings.buy || 0) + (ratings.hold || 0) + 
                     (ratings.sell || 0) + (ratings.strongSell || 0);
@@ -199,7 +182,6 @@ class PriceAnalyzer {
       }
     }
 
-    // News component (20%)
     if (news && news.length > 0) {
       const positiveWords = ['surge', 'gain', 'profit', 'growth', 'strong', 'beat', 'excellent', 'soar'];
       const negativeWords = ['fall', 'loss', 'decline', 'weak', 'poor', 'miss', 'crisis', 'crash'];
@@ -226,10 +208,6 @@ class PriceAnalyzer {
   }
 }
 
-// ============================================
-// MAIN UPDATE FUNCTION
-// ============================================
-
 async function updateMarketData() {
   const startTime = Date.now();
   const storage = new PortfolioStorage();
@@ -243,7 +221,6 @@ async function updateMarketData() {
     logger.info(`📅 Date: ${new Date().toISOString()}`);
     logger.info('');
 
-    // Get user's portfolio
     const portfolio = storage.getPortfolio();
     const stocks = portfolio.stocks || [];
 
@@ -258,7 +235,6 @@ async function updateMarketData() {
     logger.info(`📊 Updating ${stocks.length} stocks from portfolio...`);
     logger.info('');
 
-    // ========== STEP 1: Fetch Prices ==========
     logger.info('STEP 1: Fetching current prices...');
     let priceCount = 0;
 
@@ -274,14 +250,13 @@ async function updateMarketData() {
           priceCount++;
           logger.info(`  ✓ ${stock.symbol}: $${priceData.price.toFixed(2)}`);
         }
-        await new Promise(r => setTimeout(r, 12000)); // Rate limit
+        await new Promise(r => setTimeout(r, 12000));
       } catch (e) {
         logger.warn(`  ⚠ ${stock.symbol}: ${e.message}`);
       }
     }
     logger.info(`✓ Fetched prices for ${priceCount}/${stocks.length} stocks\n`);
 
-    // ========== STEP 2: Fetch Ratings ==========
     logger.info('STEP 2: Fetching analyst ratings...');
     let ratingCount = 0;
 
@@ -290,7 +265,7 @@ async function updateMarketData() {
         const ratings = await analyzer.fetchRatings(stock.symbol);
         if (ratings) {
           ratingCount++;
-          logger.debug(`  ✓ ${stock.symbol}: Ratings fetched`);
+          logger.info(`  ✓ ${stock.symbol}: Ratings fetched`);
         }
       } catch (e) {
         logger.warn(`  ⚠ ${stock.symbol}: ${e.message}`);
@@ -298,7 +273,6 @@ async function updateMarketData() {
     }
     logger.info(`✓ Fetched ratings for ${ratingCount} stocks\n`);
 
-    // ========== STEP 3: Fetch News ==========
     logger.info('STEP 3: Fetching news...');
     let newsCount = 0;
 
@@ -307,7 +281,7 @@ async function updateMarketData() {
         const news = await analyzer.fetchNews(stock.symbol);
         if (news && news.length > 0) {
           newsCount += news.length;
-          logger.debug(`  ✓ ${stock.symbol}: ${news.length} articles`);
+          logger.info(`  ✓ ${stock.symbol}: ${news.length} articles`);
         }
       } catch (e) {
         logger.warn(`  ⚠ ${stock.symbol}: ${e.message}`);
@@ -315,7 +289,6 @@ async function updateMarketData() {
     }
     logger.info(`✓ Fetched ${newsCount} news articles\n`);
 
-    // ========== STEP 4: Calculate Scores ==========
     logger.info('STEP 4: Calculating composite scores...');
     let scoredCount = 0;
 
@@ -343,7 +316,6 @@ async function updateMarketData() {
     }
     logger.info(`✓ Calculated scores for ${scoredCount} stocks\n`);
 
-    // ========== Summary ==========
     logger.info('╔════════════════════════════════════════════════════════════╗');
     logger.info('║           UPDATE SUMMARY                                    ║');
     logger.info('╚════════════════════════════════════════════════════════════╝');
@@ -369,70 +341,3 @@ async function updateMarketData() {
 }
 
 updateMarketData();
-```
-
-**Commit:** `Fix: Self-contained daily-update.js (no missing dependencies)`
-
----
-
-## backend/package.json
-
-**Make sure your backend/package.json has this (with axios only):**
-```json
-{
-  "name": "portfolio-dashboard-backend",
-  "version": "1.0.0",
-  "description": "Portfolio dashboard backend",
-  "main": "scripts/daily-update.js",
-  "scripts": {
-    "update": "node scripts/daily-update.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "dependencies": {
-    "axios": "^1.6.2",
-    "dotenv": "^16.3.1"
-  }
-}
-```
-
-**Commit:** `Fix: Minimal backend package.json`
-
----
-
-## Frontend package.json (Root Level)
-
-**Your root package.json should have React stuff:**
-```json
-{
-  "name": "portfolio-dashboard",
-  "version": "0.1.0",
-  "private": true,
-  "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "react-scripts": "5.0.1"
-  },
-  "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build",
-    "test": "react-scripts test",
-    "eject": "react-scripts eject"
-  },
-  "eslintConfig": {
-    "extends": [
-      "react-app"
-    ]
-  },
-  "browserslist": {
-    "production": [
-      ">0.2%",
-      "not dead",
-      "not op_mini all"
-    ],
-    "development": [
-      "last 1 chrome version",
-      "last 1 firefox version",
-      "last 1 safari version"
-    ]
-  }
-}
