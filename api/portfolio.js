@@ -33,8 +33,17 @@ export default async function handler(req, res) {
     }
 
     const stocks = portfolio.stocks || [];
+    
+    // Calculate total portfolio value safely
+    const totalPortfolioValue = stocks.reduce((sum, s) => {
+      const price = parseFloat(s.current_price) || 0;
+      const qty = parseFloat(s.quantity) || 0;
+      return sum + (price * qty);
+    }, 0);
+
     const stats = {
       totalStocks: stocks.length,
+      totalValue: totalPortfolioValue,
       strongBuys: stocks.filter(s => s.signal === 'STRONG_BUY').length,
       buys: stocks.filter(s => s.signal === 'BUY').length,
       holds: stocks.filter(s => s.signal === 'HOLD').length,
