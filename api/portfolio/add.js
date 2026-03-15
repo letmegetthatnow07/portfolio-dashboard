@@ -20,7 +20,7 @@ export default async function handler(req, res) {
       return res.status(405).json({ error: 'Method not allowed' });
     }
 
-    const { symbol, name, type, region, sector, quantity, average_price } = req.body;
+    const { symbol, name, type, region, quantity, average_price } = req.body;
 
     if (!symbol || typeof symbol !== 'string') {
       return res.status(400).json({ error: 'Symbol is required' });
@@ -48,13 +48,15 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Stock already in portfolio' });
     }
 
+    // Initialize the default stock object
     const newStock = {
       id: Date.now().toString(),
       symbol: cleanSymbol,
       name: name || cleanSymbol,
       type: type || 'Stock',
       region: region || 'Global',
-      sector: sector || '',
+      sector: '',
+      industry: '',
       quantity: quantity ? parseFloat(quantity) : 0,
       average_price: average_price ? parseFloat(average_price) : 0,
       current_price: 0,
@@ -65,6 +67,21 @@ export default async function handler(req, res) {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
+
+    // PHASE 3: AUTOMATED SECTOR & INDUSTRY TAGGING
+    // Silently fetches the exact ecosystem data from FMP
+    try {
+      const fmpRes = await fetch(`https://financialmodelingprep.com/api/v3/profile/${cleanSymbol}?apikey=${process.env.FMP_API_KEY}`);
+      const fmpData = await fmpRes.json();
+      
+      if (fmpData && fmpData.length > 0) {
+        newStock.sector = fmpData[0].sector || 'Unknown';
+        newStock.industry = fmpData[0].industry || 'Unknown';
+        newStock.name = fmpData[0].companyName || newStock.name; // Auto-corrects to the official Wall Street name
+      }
+    } catch (e) {
+      console.error(`FMP Profile fetch failed for ${cleanSymbol}:`, e);
+    }
 
     portfolio.stocks.push(newStock);
     portfolio.lastUpdated = new Date().toISOString();
