@@ -2,7 +2,6 @@ name: Daily Market Data Update
 
 on:
   schedule:
-    # Run Monday-Friday at 10 PM UTC = 5 PM ET
     - cron: '0 22 * * 1-5'
   workflow_dispatch:
 
@@ -12,50 +11,36 @@ permissions:
 jobs:
   update-market-data:
     runs-on: ubuntu-latest
-    
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
-      
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: '18'
-      
-      - name: Install dependencies
-        run: |
-          cd backend
-          npm install
-        continue-on-error: false
-      
-      - name: Initialize database
-        run: |
-          cd backend
-      
-      - name: Fetch and update market data
-        run: |
-          cd backend
-          npm run update
+          node-version: '20'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm install
+
+      - name: Run market data update
+        working-directory: backend
         env:
           ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           NEWSDATA_API_KEY: ${{ secrets.NEWSDATA_API_KEY }}
           FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
-          SEC_API_KEY: ${{ secrets.SEC_API_KEY }}
-          DATABASE_PATH: ../data/stocks.db
-          LOG_LEVEL: info
-          NODE_ENV: production
-      
-      - name: Commit database changes
+          EODHD_API_KEY: ${{ secrets.EODHD_API_KEY }}
+        run: npm run update
+
+      - name: Configure git
         run: |
           git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action Bot"
-          git add data/stocks.db || true
-          git add backend/logs/* || true
-          git commit -m "📊 Auto: Market data update $(date +'%Y-%m-%d %H:%M:%S UTC')" || true
-      
-      - name: Push changes to GitHub
-        uses: ad-m/github-push-action@master
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          branch: main
+          git config --local user.name "GitHub Action"
+
+      - name: Commit and push changes
+        run: |
+          git add -A
+          git commit -m "📊 Auto: Market data update $(date)" || true
+          git push
