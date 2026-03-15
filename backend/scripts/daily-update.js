@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 
-require('dotenv').config();
+const path = require('path');
+// This forces dotenv to look one folder up from the /scripts directory to find your .env file
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') }); 
+
 const axios = require('axios');
 const logger = require('../lib/logger');
 const { createClient } = require('redis');
@@ -161,39 +164,24 @@ class PriceAnalyzer {
   }
 
   async fetchNews(symbol) {
-    // Try NewsAPI.org first
     try {
-      // Added "stock" to the query to ensure financial context, avoiding generic news matches
+      // Using NewsData.io 'latest' endpoint. Added 'stock' to query for relevance.
       const res = await axios.get(
-        `https://newsapi.org/v2/everything?q=${symbol} stock&sortBy=publishedAt&language=en&pageSize=3&apiKey=${process.env.NEWS_API_KEY}`,
+        `https://newsdata.io/api/1/latest?apikey=${process.env.NEWSDATA_API_KEY}&q=${symbol} stock&language=en`,
         { timeout: 8000 }
       );
 
-      if (res.data && res.data.articles && res.data.articles.length > 0) {
-        return res.data.articles.map(article => ({
+      // NewsData.io returns an array of articles inside a 'results' object
+      if (res.data && res.data.results && res.data.results.length > 0) {
+        // We slice(0, 3) to limit it to 3 articles so it doesn't overload your scoring logic
+        return res.data.results.slice(0, 3).map(article => ({
           title: article.title || '',
-          description: article.description || ''
+          description: article.description || article.content || '' // Fallback to content if description is empty
         }));
       }
     } catch (e) {
-      logger.warn(`NewsAPI fetch failed for ${symbol}: ${e.message}. Falling back to Marketaux...`);
-    }
-
-    // Fallback: Try Marketaux
-    try {
-      const res = await axios.get(
-        `https://api.marketaux.com/v1/news/all?symbols=${symbol}&filter_entities=true&limit=3&api_token=${process.env.MARKETAUX_API_KEY}`,
-        { timeout: 8000 }
-      );
-
-      if (res.data && res.data.data && res.data.data.length > 0) {
-        return res.data.data.map(article => ({
-          title: article.title || '',
-          description: article.description || ''
-        }));
-      }
-    } catch (e) {
-      logger.warn(`Marketaux news fetch failed for ${symbol}: ${e.message}`);
+      // This will catch 401/403 errors or timeouts and log them gracefully
+      logger.warn(`NewsData.io fetch failed for ${symbol}: ${e.response ? e.response.status : e.message}`);
     }
 
     return [];
@@ -311,7 +299,7 @@ async function updateMarketData() {
     }
     logger.info(`✓ Fetched ratings for ${ratingCount} stocks\n`);
 
-    logger.info('STEP 3: Fetching news (via NewsAPI/Marketaux)...');
+    logger.info('STEP 3: Fetching news (via NewsData.io)...');
     let newsCount = 0;
 
     for (const stock of stocks) {
@@ -320,7 +308,13 @@ async function updateMarketData() {
         if (news && news.length > 0) {
           newsCount += news.length;
           logger.info(`  ✓ ${stock.symbol}: ${news.length} articles`);
+        } else {
+          logger.info(`  ℹ ${stock.symbol}: No recent news found`);
         }
+        
+        // Politeness delay: 1.5 seconds between requests to protect your 15-minute rate limit window
+        await new Promise(r => setTimeout(r, 1500)); 
+        
       } catch (e) {
         logger.warn(`  ⚠ ${stock.symbol}: ${e.message}`);
       }
