@@ -1,24 +1,20 @@
-import fs from 'fs';
-import path from 'path';
+import { kv } from '@vercel/kv';
 
-export default function handler(req, res) {
+export default async function handler(req, res) {
   try {
     if (req.method !== 'GET') {
       return res.status(405).json({ error: 'Method not allowed' });
     }
 
-    const dataDir = path.join(process.cwd(), 'data');
-    const dataFile = path.join(dataDir, 'portfolio-data.json');
-
-    let portfolio = { stocks: [], stats: {} };
-
-    if (fs.existsSync(dataFile)) {
-      try {
-        const data = fs.readFileSync(dataFile, 'utf8');
-        portfolio = JSON.parse(data);
-      } catch (e) {
-        console.error('Error reading portfolio data:', e);
+    let portfolio = { stocks: [], lastUpdated: null };
+    
+    try {
+      const stored = await kv.get('portfolio');
+      if (stored) {
+        portfolio = stored;
       }
+    } catch (e) {
+      console.error('Error reading from KV:', e);
     }
 
     const stocks = portfolio.stocks || [];
