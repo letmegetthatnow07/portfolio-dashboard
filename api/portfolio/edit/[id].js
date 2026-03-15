@@ -1,7 +1,6 @@
-import fs from 'fs';
-import path from 'path';
+import { kv } from '@vercel/kv';
 
-export default function handler(req, res) {
+export default async function handler(req, res) {
   const { id } = req.query;
 
   try {
@@ -15,19 +14,13 @@ export default function handler(req, res) {
 
     const { name, quantity, average_price, current_price, type, region, sector } = req.body;
 
-    // Initialize data
-    const dataDir = path.join(process.cwd(), 'data');
-    const dataFile = path.join(dataDir, 'portfolio-data.json');
-
-    if (!fs.existsSync(dataFile)) {
-      return res.status(404).json({ error: 'Portfolio not found' });
-    }
-
-    // Read portfolio
+    // Get portfolio from KV
     let portfolio = { stocks: [] };
     try {
-      const data = fs.readFileSync(dataFile, 'utf8');
-      portfolio = JSON.parse(data);
+      const stored = await kv.get('portfolio');
+      if (stored) {
+        portfolio = stored;
+      }
     } catch (e) {
       return res.status(500).json({ error: 'Error reading portfolio' });
     }
@@ -50,9 +43,9 @@ export default function handler(req, res) {
     
     stock.updatedAt = new Date().toISOString();
 
-    // Write back
+    // Save to KV
     portfolio.lastUpdated = new Date().toISOString();
-    fs.writeFileSync(dataFile, JSON.stringify(portfolio, null, 2));
+    await kv.set('portfolio', portfolio);
 
     return res.status(200).json({
       status: 'success',
