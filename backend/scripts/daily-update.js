@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const path = require('path');
+const fs = require('fs');
 require('dotenv').config({ path: path.resolve(__dirname, '../.env') }); 
 
 const axios = require('axios');
@@ -68,16 +69,12 @@ class PriceAnalyzer {
   async fetchPrice(symbol) {
     try {
       const res = await axios.get(`https://finnhub.io/api/v1/quote?symbol=${symbol}&token=${process.env.FINNHUB_API_KEY}`, { timeout: 8000 });
-      if (res.data && res.data.c && res.data.c > 0) {
-        return { price: res.data.c, changePercent: res.data.dp || 0 };
-      }
+      if (res.data && res.data.c && res.data.c > 0) return { price: res.data.c, changePercent: res.data.dp || 0 };
     } catch (e) { logger.warn(`Finnhub price failed for ${symbol}. Trying FMP backup...`); }
 
     try {
       const res = await axios.get(`https://financialmodelingprep.com/api/v3/quote/${symbol}?apikey=${process.env.FMP_API_KEY}`, { timeout: 8000 });
-      if (res.data && res.data.length > 0) {
-        return { price: res.data[0].price, changePercent: res.data[0].changesPercentage || 0 };
-      }
+      if (res.data && res.data.length > 0) return { price: res.data[0].price, changePercent: res.data[0].changesPercentage || 0 };
     } catch (e) { logger.error(`All price fetches failed for ${symbol}`); }
     return null;
   }
@@ -93,7 +90,7 @@ class PriceAnalyzer {
           debtToEquity: m['longTermDebt/equityAnnual'] || m['totalDebt/totalEquityAnnual'] || 0
         };
       }
-    } catch (e) { logger.warn(`Fundamentals fetch failed for ${symbol}: ${e.message}`); }
+    } catch (e) {}
     return null;
   }
 
@@ -110,7 +107,6 @@ class PriceAnalyzer {
       
       if (res.data && res.data.results && res.data.results.length > 0) {
         const history = res.data.results; 
-        
         const period = Math.min(200, history.length);
         const sum200 = history.slice(0, period).reduce((acc, val) => acc + val.c, 0);
         const sma200 = sum200 / period;
@@ -125,16 +121,12 @@ class PriceAnalyzer {
           }
           let avgGain = gains / 14;
           let avgLoss = losses / 14;
-          
           if (avgLoss === 0) rsi = 100;
-          else {
-            let rs = avgGain / avgLoss;
-            rsi = 100 - (100 / (1 + rs));
-          }
+          else rsi = 100 - (100 / (1 + (avgGain / avgLoss)));
         }
         return { rsi, sma200 };
       }
-    } catch (e) { logger.warn(`Technicals fetch failed for ${symbol}: ${e.message}`); }
+    } catch (e) {}
     return null;
   }
 
@@ -142,7 +134,7 @@ class PriceAnalyzer {
     try {
       const res = await axios.get(`https://finnhub.io/api/v1/stock/recommendation?symbol=${symbol}&token=${process.env.FINNHUB_API_KEY}`, { timeout: 8000 });
       if (res.data && res.data.length > 0) return res.data[0];
-    } catch (e) { logger.warn(`Ratings fetch failed for ${symbol}: ${e.message}`); }
+    } catch (e) {}
     return null;
   }
 
@@ -158,19 +150,13 @@ class PriceAnalyzer {
           published_at: article.pubDate || new Date().toISOString()
         }));
       }
-    } catch (e) { logger.warn(`News fetch failed for ${symbol}: ${e.message}`); }
+    } catch (e) {}
     return [];
   }
 
   async fetchInsider(symbol) {
     try {
-      const payload = {
-        query: `issuer.tradingSymbol:${symbol}`,
-        from: "0",
-        size: "50",
-        sort: [{ "transactionDate": "desc" }]
-      };
-      
+      const payload = { query: `issuer.tradingSymbol:${symbol}`, from: "0", size: "50", sort: [{ "transactionDate": "desc" }] };
       const res = await axios.post(`https://api.sec-api.io/insider-trading?token=${process.env.SEC_API_KEY}`, payload, { timeout: 8000 });
       const trades = res.data.transactions || (Array.isArray(res.data) ? res.data : []);
 
@@ -191,7 +177,6 @@ class PriceAnalyzer {
             if (code === 'S' || code === 'S - Sale') totalSold += value;
           }
         });
-
         return { bought: totalBought, sold: totalSold };
       }
     } catch (e) {}
@@ -200,12 +185,10 @@ class PriceAnalyzer {
       const startStr = new Date(new Date().setMonth(new Date().getMonth() - 6)).toISOString().split('T')[0];
       const endStr = new Date().toISOString().split('T')[0];
       const res = await axios.get(`https://finnhub.io/api/v1/stock/insider-sentiment?symbol=${symbol}&from=${startStr}&to=${endStr}&token=${process.env.FINNHUB_API_KEY}`, { timeout: 8000 });
-      
       if (res.data && res.data.data && res.data.data.length > 0) {
         let mspbr = 0; 
         res.data.data.forEach(month => { mspbr += month.mspr; });
         const avgMspr = mspbr / res.data.data.length;
-        
         if (avgMspr > 0) return { bought: avgMspr * 1000000, sold: 0 };
         if (avgMspr < 0) return { bought: 0, sold: Math.abs(avgMspr) * 1000000 };
       }
@@ -217,7 +200,6 @@ class PriceAnalyzer {
   calculateScore(priceData, fundamentals, technicals, ratings, analyzedNews, insiderData) {
     let fundScore = 5; let techScore = 5; let ratingScore = 5; let newsScore = 5; let insiderScore = 5;
 
-    // --- 1. FUNDAMENTALS ---
     if (fundamentals) {
       let roicS = Math.max(0, Math.min(10, ((fundamentals.roic - 0.05) / 0.15) * 10));
       let fcfS = Math.max(0, Math.min(10, (fundamentals.fcfMargin / 0.05) * 10));
@@ -226,7 +208,6 @@ class PriceAnalyzer {
       fundScore = (roicS * 0.40) + (fcfS * 0.30) + (deS * 0.30);
     }
 
-    // --- 2. TECHNICALS ---
     if (technicals && priceData && priceData.price) {
       let trendS = 5;
       if (technicals.sma200 > 0) {
@@ -234,7 +215,6 @@ class PriceAnalyzer {
         trendS = 5 + ((diff / 0.05) * 5); 
       }
       trendS = Math.max(0, Math.min(10, trendS));
-
       let rsiS = 5;
       const rsi = technicals.rsi;
       if (rsi >= 45 && rsi <= 65) rsiS = 10; 
@@ -242,33 +222,27 @@ class PriceAnalyzer {
       else if (rsi >= 35 && rsi < 45) rsiS = 9; 
       else if (rsi > 65 && rsi <= 80) rsiS = 10 - (((rsi - 65) / 15) * 8); 
       else if (rsi > 80) rsiS = 2; 
-
       techScore = (trendS * 0.50) + (rsiS * 0.50);
     }
 
-    // --- 3. ANALYSTS ---
     if (ratings) {
       const total = (ratings.strongBuy || 0) + (ratings.buy || 0) + (ratings.hold || 0) + (ratings.sell || 0) + (ratings.strongSell || 0);
       if (total > 0) {
         const bullish = (ratings.strongBuy || 0) + (ratings.buy || 0);
         const bearish = (ratings.sell || 0) + (ratings.strongSell || 0);
-        ratingScore = ((bullish / total) * 10) - ((bearish / total) * 5);
-        ratingScore = Math.max(0, Math.min(10, ratingScore));
+        ratingScore = Math.max(0, Math.min(10, ((bullish / total) * 10) - ((bearish / total) * 5)));
       }
     }
 
-    // --- 4. NEWS & NLP ---
     if (analyzedNews && analyzedNews.length > 0) {
       const avgSentiment = analyzedNews.reduce((sum, item) => sum + item.sentiment.score, 0) / analyzedNews.length; 
       const avgImportance = analyzedNews.reduce((sum, item) => sum + item.importance, 0) / analyzedNews.length; 
-
       newsScore = 5 + (avgSentiment * 4);
       if (avgSentiment > 0) newsScore += (avgImportance / 10);
       else if (avgSentiment < 0) newsScore -= (avgImportance / 10);
       newsScore = Math.max(0, Math.min(10, newsScore));
     }
 
-    // --- 5. INSIDER ACTION ---
     if (insiderData) {
       const { bought, sold } = insiderData;
       if (bought > 0 && sold === 0) insiderScore = 10; 
@@ -277,28 +251,12 @@ class PriceAnalyzer {
       else if (sold > bought * 5) insiderScore = 2; 
       else if (sold > bought * 2) insiderScore = 3; 
       else if (sold > bought) insiderScore = 4; 
-      else insiderScore = 5; 
     }
 
-    const finalScore = (
-      (fundScore * 0.29) + 
-      (techScore * 0.16) + 
-      (ratingScore * 0.20) + 
-      (newsScore * 0.15) + 
-      (insiderScore * 0.20)
-    );
-
+    const finalScore = (fundScore * 0.29) + (techScore * 0.16) + (ratingScore * 0.20) + (newsScore * 0.15) + (insiderScore * 0.20);
     const boundedTotal = Math.max(0, Math.min(10, finalScore));
 
-    // Return an object with the breakdown so we can log it
-    return {
-      total: boundedTotal,
-      fund: fundScore,
-      tech: techScore,
-      rating: ratingScore,
-      news: newsScore,
-      insider: insiderScore
-    };
+    return { total: boundedTotal, fund: fundScore, tech: techScore, rating: ratingScore, news: newsScore, insider: insiderScore };
   }
 
   getSignal(score) {
@@ -314,9 +272,21 @@ async function updateMarketData() {
   const storage = new PortfolioStorage();
   const analyzer = new PriceAnalyzer();
 
+  // Ensure CSV data directory exists
+  const dataDir = path.resolve(__dirname, '../data');
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
+  const csvPath = path.join(dataDir, 'score_history.csv');
+  
+  // Write Excel headers if file is brand new
+  if (!fs.existsSync(csvPath)) {
+    fs.writeFileSync(csvPath, 'Date,Symbol,Final_Score,Signal,Price,Total_Value,Fundamentals,Technicals,Analysts,News,Insiders\n');
+  }
+
   try {
     logger.info('╔════════════════════════════════════════════════════════════╗');
-    logger.info('║        PHASE 2 MULTI-FACTOR MODEL (WITH INSIDER SEC)       ║');
+    logger.info('║        PHASE 2 MULTI-FACTOR MODEL + EXCEL TRACKER          ║');
     logger.info('╚════════════════════════════════════════════════════════════╝');
     
     const portfolio = await storage.getPortfolio();
@@ -336,21 +306,12 @@ async function updateMarketData() {
           analyzer.fetchNews(stock.symbol),
           analyzer.fetchInsider(stock.symbol)
         ]);
-        
-        if (rawNews && rawNews.length > 0) {
-          rawNews.forEach(n => logger.info(`  📰 ${n.headline.substring(0, 60)}...`));
-        }
-
-        if (insiderData && (insiderData.bought > 0 || insiderData.sold > 0)) {
-          logger.info(`  👔 Insiders: $${insiderData.bought.toLocaleString(undefined, {maximumFractionDigits:0})} Bought | $${insiderData.sold.toLocaleString(undefined, {maximumFractionDigits:0})} Sold (Last 6 Mos)`);
-        }
 
         const analyzedNews = newsAnalyzer.analyzeNews(rawNews, stock.symbol);
         const scoreObj = analyzer.calculateScore(priceData, fundamentals, technicals, ratings, analyzedNews, insiderData);
         const score = scoreObj.total;
         const signal = analyzer.getSignal(score);
 
-        // This line prints the exact 0-10 score for every single pillar
         logger.info(`  📊 Breakdown: Fund(${scoreObj.fund.toFixed(1)}) | Tech(${scoreObj.tech.toFixed(1)}) | Analyst(${scoreObj.rating.toFixed(1)}) | News(${scoreObj.news.toFixed(1)}) | Insider(${scoreObj.insider.toFixed(1)})`);
 
         const updates = {
@@ -358,6 +319,7 @@ async function updateMarketData() {
           signal: signal,
           current_price: priceData ? priceData.price : stock.current_price,
           change_percent: priceData ? priceData.changePercent : stock.change_percent,
+          score_breakdown: scoreObj // Saved for the future 6-hour News Engine
         };
 
         if (updates.current_price && stock.quantity) {
@@ -365,26 +327,26 @@ async function updateMarketData() {
         }
 
         if (rawNews.length > 0) {
-          updates.recent_news = rawNews.map(n => ({
-            headline: n.headline, url: n.url, published_at: n.published_at
-          }));
+          updates.recent_news = rawNews.map(n => ({ headline: n.headline, url: n.url, published_at: n.published_at }));
         }
 
         await storage.updateStock(stock.symbol, updates);
+        
+        // Write today's results to the Excel-compatible CSV file
+        const today = new Date().toISOString().split('T')[0];
+        const csvLine = `${today},${stock.symbol},${score.toFixed(2)},${signal},${updates.current_price || 0},${updates.total_value || 0},${scoreObj.fund.toFixed(2)},${scoreObj.tech.toFixed(2)},${scoreObj.rating.toFixed(2)},${scoreObj.news.toFixed(2)},${scoreObj.insider.toFixed(2)}\n`;
+        fs.appendFileSync(csvPath, csvLine);
+
         logger.info(`✓ ${stock.symbol}: Final Score ${score.toFixed(1)}/10 → ${signal}\n`);
         
         await sleep(13000); 
-
-      } catch (e) {
-        logger.error(`Error updating ${stock.symbol}`, e);
-      }
+      } catch (e) { logger.error(`Error updating ${stock.symbol}`, e); }
     }
 
-    logger.info(`✅ UPDATE COMPLETED.`);
+    logger.info(`✅ UPDATE AND CSV EXPORT COMPLETED.`);
     const client = await getRedisClient();
     await client.quit();
     process.exit(0);
-
   } catch (error) {
     logger.error('FATAL ERROR', error);
     process.exit(1);
