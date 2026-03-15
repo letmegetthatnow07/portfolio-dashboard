@@ -1741,3 +1741,79 @@
 [2026-03-15T16:39:33.146Z] INFO: ✓ LLY: Final Score 7.2/10 → BUY
 
 [2026-03-15T16:39:46.153Z] INFO: ✅ UPDATE COMPLETED.
+[2026-03-15T16:45:41.990Z] INFO: ╔════════════════════════════════════════════════════════════╗
+[2026-03-15T16:45:41.992Z] INFO: ║        PHASE 2 MULTI-FACTOR MODEL + EXCEL TRACKER          ║
+[2026-03-15T16:45:41.992Z] INFO: ╚════════════════════════════════════════════════════════════╝
+[2026-03-15T16:45:42.923Z] INFO: Analyzing SPMO...
+[2026-03-15T16:45:43.137Z] INFO:   📊 Breakdown: Fund(3.0) | Tech(6.6) | Analyst(5.0) | News(5.0) | Insider(5.0)
+[2026-03-15T16:45:43.794Z] INFO: ✓ SPMO: Final Score 4.7/10 → REDUCE
+
+[2026-03-15T16:45:56.799Z] INFO: Analyzing SMH...
+[2026-03-15T16:45:56.972Z] INFO:   📊 Breakdown: Fund(3.0) | Tech(9.5) | Analyst(5.0) | News(6.7) | Insider(5.0)
+[2026-03-15T16:45:57.847Z] INFO: ✓ SMH: Final Score 5.4/10 → REDUCE
+
+[2026-03-15T16:46:10.852Z] INFO: Analyzing TPL...
+[2026-03-15T16:46:11.024Z] INFO:   📊 Breakdown: Fund(10.0) | Tech(10.0) | Analyst(6.9) | News(5.0) | Insider(5.0)
+[2026-03-15T16:46:11.899Z] INFO: ✓ TPL: Final Score 7.6/10 → BUY
+
+[2026-03-15T16:46:24.905Z] INFO: Analyzing MELI...
+[2026-03-15T16:46:25.081Z] INFO:   📊 Breakdown: Fund(7.0) | Tech(4.0) | Analyst(9.4) | News(5.0) | Insider(5.0)
+[2026-03-15T16:46:25.956Z] INFO: ✓ MELI: Final Score 6.3/10 → HOLD
+
+[2026-03-15T16:46:38.963Z] INFO: Analyzing VRT...
+[2026-03-15T16:46:39.098Z] INFO:   📊 Breakdown: Fund(8.7) | Tech(10.0) | Analyst(8.3) | News(5.0) | Insider(5.0)
+[2026-03-15T16:46:39.973Z] INFO: ✓ VRT: Final Score 7.5/10 → BUY
+
+[2026-03-15T16:46:52.980Z] INFO: Analyzing MU...
+[2026-03-15T16:46:53.220Z] INFO:   📊 Breakdown: Fund(7.7) | Tech(10.0) | Analyst(8.9) | News(5.0) | Insider(5.0)
+[2026-03-15T16:46:54.096Z] INFO: ✓ MU: Final Score 7.3/10 → BUY
+
+[2026-03-15T16:47:07.102Z] INFO: Analyzing AVNV...
+[2026-03-15T16:47:07.284Z] INFO:   📊 Breakdown: Fund(3.0) | Tech(9.0) | Analyst(5.0) | News(5.0) | Insider(5.0)
+[2026-03-15T16:47:08.159Z] INFO: ✓ AVNV: Final Score 5.1/10 → REDUCE
+
+[2026-03-15T16:47:21.164Z] INFO: Analyzing BWXT...
+[2026-03-15T16:47:21.316Z] INFO:   📊 Breakdown: Fund(4.9) | Tech(10.0) | Analyst(6.7) | News(5.0) | Insider(5.0)
+[2026-03-15T16:47:22.191Z] INFO: ✓ BWXT: Final Score 6.1/10 → HOLD
+
+[2026-03-15T16:47:35.198Z] INFO: Analyzing GEV...
+[2026-03-15T16:47:35.386Z] INFO:   📊 Breakdown: Fund(9.3) | Tech(9.5) | Analyst(8.1) | News(5.0) | Insider(5.0)
+[2026-03-15T16:47:36.261Z] INFO: ✓ GEV: Final Score 7.6/10 → BUY
+
+[2026-03-15T16:47:49.268Z] INFO: Analyzing CRWD...
+[2026-03-15T16:47:49.427Z] INFO:   📊 Breakdown: Fund(2.7) | Tech(1.0) | Analyst(6.7) | News(5.0) | Insider(5.0)
+[2026-03-15T16:47:50.302Z] INFO: ✓ CRWD: Final Score 4.0/10 → REDUCE
+
+[2026-03-15T16:48:03.308Z] INFO: Analyzing SHLD...
+[2026-03-15T16:48:03.472Z] INFO:   📊 Breakdown: Fund(3.0) | Tech(10.0) | Analyst(5.0) | News(5.0) | Insider(5.0)
+[2026-03-15T16:48:04.346Z] INFO: ✓ SHLD: Final Score 5.2/10 → REDUCE
+
+[2026-03-15T16:48:17.353Z] INFO: Analyzing FTAI...
+[2026-03-15T16:48:17.502Z] INFO:   📊 Breakdown: Fund(5.2) | Tech(9.0) | Analyst(9.4) | News(5.0) | Insider(5.0)
+[2026-03-15T16:48:18.376Z] INFO: ✓ FTAI: Final Score 6.6/10 → HOLD
+
+[2026-03-15T16:48:31.382Z] INFO: Analyzing RKLB...
+[2026-03-15T16:48:31.537Z] INFO:   📊 Breakdown: Fund(2.9) | Tech(10.0) | Analyst(7.4) | News(5.0) | Insider(5.0)
+[2026-03-15T16:48:32.413Z] INFO: ✓ RKLB: Final Score 5.7/10 → HOLD
+
+[2026-03-15T16:48:45.414Z] INFO: Analyzing SCCO...
+[2026-03-15T16:48:45.529Z] INFO:   📊 Breakdown: Fund(9.1) | Tech(9.0) | Analyst(0.0) | News(5.0) | Insider(5.0)
+[2026-03-15T16:48:46.406Z] INFO: ✓ SCCO: Final Score 5.8/10 → HOLD
+
+[2026-03-15T16:48:59.412Z] INFO: Analyzing KTOS...
+[2026-03-15T16:48:59.528Z] INFO:   📊 Breakdown: Fund(4.1) | Tech(9.5) | Analyst(7.8) | News(5.0) | Insider(5.0)
+[2026-03-15T16:49:00.403Z] INFO: ✓ KTOS: Final Score 6.0/10 → HOLD
+
+[2026-03-15T16:49:13.406Z] INFO: Analyzing AGX...
+[2026-03-15T16:49:13.569Z] INFO:   📊 Breakdown: Fund(10.0) | Tech(10.0) | Analyst(5.6) | News(5.0) | Insider(2.0)
+[2026-03-15T16:49:14.444Z] INFO: ✓ AGX: Final Score 6.8/10 → HOLD
+
+[2026-03-15T16:49:27.449Z] INFO: Analyzing BNO...
+[2026-03-15T16:49:27.613Z] INFO:   📊 Breakdown: Fund(3.0) | Tech(6.0) | Analyst(5.0) | News(5.0) | Insider(5.0)
+[2026-03-15T16:49:28.488Z] INFO: ✓ BNO: Final Score 4.6/10 → REDUCE
+
+[2026-03-15T16:49:41.495Z] INFO: Analyzing LLY...
+[2026-03-15T16:49:41.730Z] INFO:   📊 Breakdown: Fund(7.7) | Tech(9.0) | Analyst(7.7) | News(5.0) | Insider(5.0)
+[2026-03-15T16:49:42.605Z] INFO: ✓ LLY: Final Score 7.0/10 → HOLD
+
+[2026-03-15T16:49:55.612Z] INFO: ✅ UPDATE AND CSV EXPORT COMPLETED.
