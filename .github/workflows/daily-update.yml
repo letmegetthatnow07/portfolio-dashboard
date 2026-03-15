@@ -31,7 +31,6 @@ jobs:
       - name: Initialize database
         run: |
           cd backend
-          npm run init-db || true
       
       - name: Fetch and update market data
         run: |
