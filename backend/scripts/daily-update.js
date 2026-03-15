@@ -240,3 +240,103 @@ async function updateMarketData() {
           await storage.updateStock(stock.symbol, {
             current_price: priceData.price,
             change_percent: priceData.changePercent,
+            priceSource: priceData.source
+          });
+          priceCount++;
+          logger.info(`  ✓ ${stock.symbol}: $${priceData.price.toFixed(2)}`);
+        }
+        await new Promise(r => setTimeout(r, 12000));
+      } catch (e) {
+        logger.warn(`  ⚠ ${stock.symbol}: ${e.message}`);
+      }
+    }
+    logger.info(`✓ Fetched prices for ${priceCount}/${stocks.length} stocks\n`);
+
+    logger.info('STEP 2: Fetching analyst ratings...');
+    let ratingCount = 0;
+
+    for (const stock of stocks) {
+      try {
+        const ratings = await analyzer.fetchRatings(stock.symbol);
+        if (ratings) {
+          ratingCount++;
+          logger.info(`  ✓ ${stock.symbol}: Ratings fetched`);
+        }
+      } catch (e) {
+        logger.warn(`  ⚠ ${stock.symbol}: ${e.message}`);
+      }
+    }
+    logger.info(`✓ Fetched ratings for ${ratingCount} stocks\n`);
+
+    logger.info('STEP 3: Fetching news...');
+    let newsCount = 0;
+
+    for (const stock of stocks) {
+      try {
+        const news = await analyzer.fetchNews(stock.symbol);
+        if (news && news.length > 0) {
+          newsCount += news.length;
+          logger.info(`  ✓ ${stock.symbol}: ${news.length} articles`);
+        }
+      } catch (e) {
+        logger.warn(`  ⚠ ${stock.symbol}: ${e.message}`);
+      }
+    }
+    logger.info(`✓ Fetched ${newsCount} news articles\n`);
+
+    logger.info('STEP 4: Calculating composite scores...');
+    let scoredCount = 0;
+
+    for (const stock of stocks) {
+      try {
+        const priceData = await analyzer.fetchPrice(stock.symbol);
+        const ratings = await analyzer.fetchRatings(stock.symbol);
+        const news = await analyzer.fetchNews(stock.symbol);
+
+        const score = analyzer.calculateScore(priceData, ratings, news);
+        const signal = analyzer.getSignal(score);
+
+        await storage.updateStock(stock.symbol, {
+          latest_score: Math.round(score * 10) / 10,
+          signal: signal,
+          confidence: ratings ? 85 : 60,
+          current_price: priceData ? priceData.price : stock.current_price || stock.average_price
+        });
+
+        scoredCount++;
+        logger.info(`  ✓ ${stock.symbol}: ${score.toFixed(1)}/10 → ${signal}`);
+      } catch (e) {
+        logger.error(`Score calculation error for ${stock.symbol}`, e);
+      }
+    }
+    logger.info(`✓ Calculated scores for ${scoredCount} stocks\n`);
+
+    logger.info('╔════════════════════════════════════════════════════════════╗');
+    logger.info('║           UPDATE SUMMARY                                    ║');
+    logger.info('╚════════════════════════════════════════════════════════════╝');
+    logger.info(`✓ Portfolio stocks: ${stocks.length}`);
+    logger.info(`✓ Prices updated: ${priceCount}`);
+    logger.info(`✓ Ratings fetched: ${ratingCount}`);
+    logger.info(`✓ News articles: ${newsCount}`);
+    logger.info(`✓ Scores calculated: ${scoredCount}`);
+    logger.info('');
+
+    const duration = (Date.now() - startTime) / 1000;
+    logger.info(`✅ UPDATE COMPLETED SUCCESSFULLY!`);
+    logger.info(`⏱️  Duration: ${duration.toFixed(2)}s`);
+    logger.info(`🕐 Finished: ${new Date().toISOString()}`);
+    logger.info('');
+
+    const client = await getRedisClient();
+    await client.quit();
+    process.exit(0);
+
+  } catch (error) {
+    logger.error('FATAL ERROR', error);
+    const client = await getRedisClient();
+    await client.quit();
+    process.exit(1);
+  }
+}
+
+updateMarketData();
