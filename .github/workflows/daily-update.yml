@@ -45,7 +45,7 @@ jobs:
         run: |
           HOUR=$(date -u +"%H")
           
-          # If triggered manually, use the dropdown choice
+          # Triggered manually via dropdown
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             if [ "${{ github.event.inputs.run_type }}" == "master" ]; then
               echo "SCRIPT_TO_RUN=npm run update" >> $GITHUB_ENV
@@ -54,7 +54,7 @@ jobs:
             else
               echo "SCRIPT_TO_RUN=npm run update:news" >> $GITHUB_ENV
             fi
-          # If triggered by schedule, determine by UTC hour (21 = 5PM ET)
+          # Triggered by schedule (21 UTC = 5PM ET Master Run)
           elif [ "$HOUR" == "21" ]; then
             echo "SCRIPT_TO_RUN=npm run update" >> $GITHUB_ENV
           else
@@ -70,6 +70,8 @@ jobs:
           FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
           POLYGON_API_KEY: ${{ secrets.POLYGON_API_KEY }}
           SEC_API_KEY: ${{ secrets.SEC_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: ${{ env.SCRIPT_TO_RUN }}
 
       - name: Configure git
@@ -77,8 +79,8 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
 
-      - name: Commit CSV History
+      - name: Commit CSV History & Code Updates
         run: |
           git add backend/data/score_history.csv || true
-          git commit -m "📊 Auto: EOD History Update $(date)" || true
+          git commit -m "📊 Auto: EOD History & Database Sync $(date)" || true
           git push || true
