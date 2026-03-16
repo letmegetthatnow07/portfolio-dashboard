@@ -1,15 +1,19 @@
 .correlation-container {
-  background: var(--bg-surface);
-  border-radius: 12px;
+  background: var(--bg-card);
+  border-radius: var(--r-lg);
   padding: 24px;
   margin-top: 32px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border-light);
   overflow-x: auto;
+  box-shadow: var(--shadow-sm);
 }
 
 .heatmap-header h2 {
-  margin: 0 0 8px 0;
+  margin: 0 0 4px 0;
+  font-family: var(--font-mono);
   font-size: 1.25rem;
+  font-weight: 500;
+  letter-spacing: -0.03em;
 }
 
 .heatmap-table {
@@ -20,9 +24,10 @@
 }
 
 .heatmap-table th, .row-header {
-  font-size: 0.85rem;
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
   font-weight: 600;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   text-align: center;
   padding: 8px;
 }
@@ -32,7 +37,8 @@
   height: 45px;
   text-align: center;
   vertical-align: middle;
-  font-size: 0.8rem;
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
   font-weight: 600;
   border-radius: 4px;
   transition: transform 0.2s;
@@ -40,10 +46,10 @@
 }
 
 .heatmap-table td:hover {
-  transform: scale(1.1);
+  transform: scale(1.15);
   z-index: 10;
   position: relative;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
 }
 
 .matrix-legend {
@@ -51,7 +57,7 @@
   gap: 16px;
   margin-top: 24px;
   font-size: 0.85rem;
-  color: var(--text-secondary);
+  color: var(--text-muted);
 }
 
 .legend-item {
@@ -64,4 +70,109 @@
   width: 16px;
   height: 16px;
   border-radius: 4px;
+}
+
+.heatmap-loading {
+  margin-top: 32px;
+  padding: 40px;
+  text-align: center;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--r-lg);
+}
+
+/* Capital Optimization Insights */
+.insights-container {
+  margin-top: 36px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border-light);
+}
+
+.insights-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-main);
+  margin-bottom: 4px;
+  font-family: var(--font-mono);
+}
+
+.insights-subtitle {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-bottom: 20px;
+}
+
+.insights-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.insight-card {
+  background: var(--bg-main);
+  border: 1px solid var(--border-light);
+  border-radius: var(--r-md);
+  padding: 16px;
+}
+
+.insight-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.insight-pair {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.badge-danger {
+  background: #fef2f2;
+  color: #ef4444;
+  border: 1px solid #fecaca;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.insight-verdict {
+  font-weight: 600;
+  color: var(--green);
+  font-size: 0.95rem;
+  margin-bottom: 12px;
+}
+
+.insight-stats {
+  display: flex;
+  gap: 24px;
+  background: var(--bg-card);
+  padding: 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border-light);
+  margin-bottom: 12px;
+}
+
+.stat-label-small {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.stat-value-small {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.insight-action {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.5;
 }
