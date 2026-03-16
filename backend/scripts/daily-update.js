@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+const quantEngine = require('../lib/quant-engine');
 const path = require('path');
 const fs = require('fs');
 require('dotenv').config({ path: path.resolve(__dirname, '../.env') }); 
