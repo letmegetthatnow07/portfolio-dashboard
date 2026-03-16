@@ -777,9 +777,12 @@ async function updateMarketData() {
           score_breakdown: scoreObj,
           regime:          noiseDecay,
           excess_return:   excessReturn,
+          beta:            beta,
           spring_days:     springDays,
+          w1_signal:       w1,
           w2_confirmed:    w2,
           w3_confirmed:    w3,
+          w4_confirmed:    w4,
           capex_exception: capexException,
           ...(rawNews.length > 0 && {
             recent_news: rawNews.map(n => ({
