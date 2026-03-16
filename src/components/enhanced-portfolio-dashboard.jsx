@@ -266,10 +266,6 @@ const EnhancedPortfolioDashboard = () => {
   const bullCount = portfolio.filter(s => ['ADD','SPRING_CONFIRMED','SPRING_CANDIDATE','STRONG_BUY','BUY'].includes(s.signal)).length;
   const bearCount = portfolio.filter(s => ['WATCH','TRIM_25','REDUCE','SELL','IDIOSYNCRATIC_DECAY'].includes(s.signal)).length;
 
-  // Kept for backward compat
-  const getSignalColor = (signal) => sig(signal).color;
-  const formatPrice    = (num) => fmtUSD(num);
-
   // ── Loading ──────────────────────────────────────────────────────────────────
   if (loading && portfolio.length === 0) {
     return (
