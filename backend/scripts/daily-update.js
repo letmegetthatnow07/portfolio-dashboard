@@ -829,5 +829,3 @@ async function updateMarketData() {
 }
 
 updateMarketData();
-
-This is the code.  What do you think? Also, will this work with Polygon API and not hit ratelimit? Just answer the questions I asked  and not anything else.
