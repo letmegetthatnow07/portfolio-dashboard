@@ -48,7 +48,7 @@ jobs:
           # Triggered manually via dropdown
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             if [ "${{ github.event.inputs.run_type }}" == "master" ]; then
-              echo "SCRIPT_TO_RUN=npm run update" >> $GITHUB_ENV
+              echo "SCRIPT_TO_RUN=npm run update && npm run calculate-matrix" >> $GITHUB_ENV
             elif [ "${{ github.event.inputs.run_type }}" == "matrix" ]; then
               echo "SCRIPT_TO_RUN=npm run calculate-matrix" >> $GITHUB_ENV
             else
