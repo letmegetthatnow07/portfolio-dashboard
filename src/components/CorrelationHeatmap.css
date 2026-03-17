@@ -1,6 +1,6 @@
 /* ─────────────────────────────────────────────────────────────────────────────
    CORRELATION HEATMAP — Styles
-   Matches EnhancedPortfolioDashboard dark theme (DM Mono + DM Sans)
+   Matches dashboard dark theme: DM Mono + DM Sans, var(--bg-*) variables
 ───────────────────────────────────────────────────────────────────────────── */
 
 /* ── Container ─────────────────────────────────────────────────────────────── */
@@ -22,7 +22,6 @@
   margin-bottom: 20px;
   gap: 16px;
 }
-
 .heatmap-header h2 {
   font-family: 'DM Mono', monospace;
   font-size: 15px;
@@ -31,47 +30,40 @@
   color: var(--text, #e8eaf0);
   margin: 0 0 4px;
 }
-
 .heatmap-subtitle {
   font-size: 11px;
   color: var(--text-3, #5a6070);
-  letter-spacing: 0.02em;
 }
-
 .window-range {
   font-family: 'DM Mono', monospace;
 }
-
 .heatmap-updated {
   font-family: 'DM Mono', monospace;
   font-size: 10px;
   color: var(--text-3, #5a6070);
   white-space: nowrap;
-  padding-top: 2px;
+  padding-top: 3px;
 }
 
-/* ── Scroll wrapper ─────────────────────────────────────────────────────────── */
+/* ── Scroll + table ─────────────────────────────────────────────────────────── */
 .heatmap-scroll {
   overflow-x: auto;
   padding-bottom: 4px;
 }
-
 .heatmap-scroll::-webkit-scrollbar { height: 4px; }
 .heatmap-scroll::-webkit-scrollbar-track { background: transparent; }
-.heatmap-scroll::-webkit-scrollbar-thumb { background: var(--border-mid, #2e3340); border-radius: 2px; }
+.heatmap-scroll::-webkit-scrollbar-thumb {
+  background: var(--border-mid, #2e3340);
+  border-radius: 2px;
+}
 
-/* ── Table ──────────────────────────────────────────────────────────────────── */
 .heatmap-table {
   border-collapse: separate;
   border-spacing: 3px;
   width: max-content;
   font-family: 'DM Mono', monospace;
 }
-
-.heatmap-corner {
-  width: 52px;
-}
-
+.heatmap-corner { width: 52px; }
 .heatmap-col-header {
   font-size: 10px;
   font-weight: 600;
@@ -81,7 +73,6 @@
   letter-spacing: 0.04em;
   white-space: nowrap;
 }
-
 .heatmap-row-header {
   font-size: 10px;
   font-weight: 600;
@@ -92,7 +83,6 @@
   white-space: nowrap;
   vertical-align: middle;
 }
-
 .heatmap-cell {
   width: 44px;
   height: 44px;
@@ -102,18 +92,17 @@
   font-weight: 600;
   border-radius: 5px;
   cursor: crosshair;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
-  position: relative;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
   letter-spacing: 0.02em;
+  position: relative;
 }
-
 .heatmap-cell:hover {
   transform: scale(1.18);
   z-index: 20;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.55);
 }
 
-/* ── Legend ──────────────────────────────────────────────────────────────────── */
+/* ── Legend ─────────────────────────────────────────────────────────────────── */
 .heatmap-legend {
   display: flex;
   align-items: center;
@@ -123,7 +112,6 @@
   padding-top: 16px;
   border-top: 1px solid var(--border, #252830);
 }
-
 .legend-item {
   display: flex;
   align-items: center;
@@ -131,14 +119,12 @@
   font-size: 11px;
   color: var(--text-3, #5a6070);
 }
-
 .legend-swatch {
   width: 12px;
   height: 12px;
   border-radius: 3px;
   flex-shrink: 0;
 }
-
 .legend-note {
   margin-left: auto;
   font-size: 10px;
@@ -146,7 +132,7 @@
   color: var(--text-3, #5a6070);
 }
 
-/* ── Loading state ───────────────────────────────────────────────────────────── */
+/* ── Loading ─────────────────────────────────────────────────────────────────── */
 .heatmap-loading {
   margin-top: 32px;
   padding: 40px;
@@ -162,7 +148,6 @@
   font-size: 12px;
   font-family: 'DM Mono', monospace;
 }
-
 .heatmap-loading-ring {
   width: 24px; height: 24px;
   border: 2px solid var(--border, #252830);
@@ -170,7 +155,6 @@
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
-
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ── Tooltip ─────────────────────────────────────────────────────────────────── */
@@ -192,7 +176,6 @@
   align-items: center;
   gap: 8px;
 }
-
 .tooltip-val {
   font-weight: 700;
   color: var(--accent, #3b82f6);
@@ -204,52 +187,78 @@
   padding-top: 24px;
   border-top: 1px solid var(--border, #252830);
 }
-
 .insights-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
   margin-bottom: 16px;
-  gap: 16px;
 }
-
 .insights-head h3 {
   font-family: 'DM Mono', monospace;
   font-size: 13px;
   font-weight: 500;
   color: var(--text, #e8eaf0);
   margin: 0 0 4px;
-  letter-spacing: -0.01em;
 }
-
 .insights-sub {
   font-size: 11px;
   color: var(--text-3, #5a6070);
   line-height: 1.5;
+  max-width: 600px;
 }
 
-.insights-toggle {
+/* ── Verdict tabs ────────────────────────────────────────────────────────────── */
+.verdict-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.vtab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   background: transparent;
   border: 1px solid var(--border-mid, #2e3340);
-  border-radius: 4px;
+  border-radius: 6px;
   color: var(--text-3, #5a6070);
-  font-size: 11px;
   font-family: 'DM Sans', sans-serif;
-  padding: 5px 10px;
+  font-size: 12px;
+  padding: 6px 12px;
   cursor: pointer;
-  white-space: nowrap;
-  transition: all 0.15s ease;
-  flex-shrink: 0;
+  transition: all 0.13s ease;
 }
-.insights-toggle:hover { color: var(--text, #e8eaf0); border-color: var(--text-3, #5a6070); }
+.vtab:hover { color: var(--text, #e8eaf0); border-color: var(--text-3, #5a6070); }
+.vtab-active.recommend { border-color: #10b981; color: #10b981; background: #10b98110; }
+.vtab-active.weak      { border-color: #f59e0b; color: #f59e0b; background: #f59e0b10; }
+.vtab-active.monitor   { border-color: #6b7280; color: var(--text, #e8eaf0); background: #6b728010; }
+.vtab-count {
+  background: var(--border-mid, #2e3340);
+  border-radius: 10px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-family: 'DM Mono', monospace;
+}
 
+.tab-desc {
+  font-size: 11px;
+  color: var(--text-3, #5a6070);
+  margin-bottom: 14px;
+  line-height: 1.55;
+  max-width: 640px;
+}
+
+.no-insights {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-3, #5a6070);
+  font-size: 12px;
+}
+
+/* ── Insights grid ───────────────────────────────────────────────────────────── */
 .insights-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 12px;
 }
 
-/* ── Insight Card ────────────────────────────────────────────────────────────── */
+/* ── Insight card base ───────────────────────────────────────────────────────── */
 .insight-card {
   background: var(--bg-raised, #1a1d22);
   border: 1px solid var(--border, #252830);
@@ -257,10 +266,13 @@
   padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  transition: border-color 0.15s ease;
+  gap: 12px;
+  transition: border-color 0.13s ease;
 }
-.insight-card:hover { border-color: var(--border-mid, #2e3340); }
+.insight-card:hover      { border-color: var(--border-mid, #2e3340); }
+.recommend-card          { border-left: 2px solid #10b98140; }
+.weak-card               { border-left: 2px solid #f59e0b40; }
+.monitor-card            { border-left: 2px solid #6b728040; }
 
 /* Card header */
 .insight-card-head {
@@ -268,101 +280,125 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  flex-wrap: wrap;
 }
-
 .insight-symbols {
   display: flex;
   align-items: center;
   gap: 6px;
 }
-
 .insight-sym {
   font-family: 'DM Mono', monospace;
   font-size: 13px;
   font-weight: 600;
   color: var(--text, #e8eaf0);
 }
-
 .insight-sep {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-3, #5a6070);
 }
-
 .insight-corr-badge {
   font-family: 'DM Mono', monospace;
   font-size: 10px;
   font-weight: 700;
+  padding: 3px 7px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.verdict-chip {
+  font-size: 11px;
+  font-weight: 600;
   padding: 3px 8px;
   border-radius: 4px;
   border: 1px solid transparent;
   white-space: nowrap;
-  letter-spacing: 0.02em;
 }
 
-/* Comparison layout */
+/* Evidence list */
+.evidence-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  background: var(--bg-surface, #141619);
+  border: 1px solid var(--border, #252830);
+  border-radius: 5px;
+  padding: 8px 10px;
+}
+.evidence-item {
+  font-size: 11px;
+  color: #10b981;
+  font-family: 'DM Mono', monospace;
+}
+
+/* Side-by-side comparison */
 .insight-compare {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: 1fr 56px 1fr;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   background: var(--bg-surface, #141619);
   border: 1px solid var(--border, #252830);
   border-radius: 6px;
-  padding: 12px;
+  padding: 12px 10px;
 }
-
 .insight-col {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
-
 .winner-col { align-items: flex-start; }
 .loser-col  { align-items: flex-end; }
 
-.insight-col-label {
+.col-role {
   font-size: 9px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--text-3, #5a6070);
+  font-weight: 600;
 }
+.col-role.retain { color: #10b981; }
+.col-role.review { color: var(--text-3, #5a6070); }
 
 .insight-sym-lg {
   font-family: 'DM Mono', monospace;
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 600;
   color: var(--text, #e8eaf0);
   line-height: 1.1;
 }
-
 .insight-action-tag {
   font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.03em;
 }
-
+.insight-cascade {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
 .insight-metrics {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  margin-top: 4px;
 }
-
 .metric-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
 }
-
+.metric-right {
+  flex-direction: row-reverse;
+}
 .metric-lbl {
   font-family: 'DM Mono', monospace;
   font-size: 9px;
   color: var(--text-3, #5a6070);
   text-transform: uppercase;
-  width: 10px;
+  min-width: 18px;
 }
-
 .metric-val {
   font-family: 'DM Mono', monospace;
   font-size: 11px;
@@ -370,21 +406,63 @@
   color: var(--text, #e8eaf0);
 }
 
-/* Divider between cols */
+/* Alpha edge divider */
 .insight-divider {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 0 4px;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 2px;
 }
-
-.insight-alpha-diff {
+.edge-label {
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3, #5a6070);
+}
+.edge-value {
   font-family: 'DM Mono', monospace;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 700;
   text-align: center;
-  writing-mode: horizontal-tb;
-  white-space: nowrap;
+}
+.edge-period {
+  font-size: 8px;
+  color: var(--text-3, #5a6070);
+  text-align: center;
+}
+
+/* Monitor card stats */
+.monitor-reason {
+  font-size: 12px;
+  color: var(--text-2, #9aa0b0);
+  line-height: 1.55;
+}
+.monitor-stats {
+  display: flex;
+  gap: 16px;
+  background: var(--bg-surface, #141619);
+  border: 1px solid var(--border, #252830);
+  border-radius: 5px;
+  padding: 10px 12px;
+}
+.monitor-stat-col {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.monitor-sym {
+  font-family: 'DM Mono', monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text, #e8eaf0);
+  margin-bottom: 3px;
+}
+.monitor-stat-row {
+  font-size: 11px;
+  color: var(--text-3, #5a6070);
+  font-family: 'DM Mono', monospace;
 }
 
 /* Action note */
@@ -393,4 +471,6 @@
   color: var(--text-3, #5a6070);
   line-height: 1.6;
   margin: 0;
+  padding-top: 4px;
+  border-top: 1px solid var(--border, #252830);
 }
