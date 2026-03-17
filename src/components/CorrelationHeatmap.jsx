@@ -226,8 +226,8 @@ const InsightCard = ({ insight }) => {
   const {
     pair, correlation, corrTier, verdict, verdictReason,
     winner, loser,
-    winnerAlpha21, winnerAlpha63, winnerQual63, winnerCascade, winnerAction, winnerRegime,
-    loserAlpha21,  loserAlpha63,  loserQual63,  loserCascade,  loserAction,  loserRegime,
+    winnerAlpha21, winnerAlpha63, winnerQual63, winnerCascade, winnerAction,
+    loserAlpha21,  loserAlpha63,  loserQual63,  loserCascade,  loserAction,
     winnerReasons = [],
     t1Stats, t2Stats,
   } = insight;
