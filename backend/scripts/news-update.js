@@ -107,8 +107,10 @@ function getArticleRecencyWeight(publishedAt) {
 
 // ── Score a batch of articles with recency weighting ─────────────────────────
 // Returns { newsScore, totalRecencyWeight, scoredArticles }
-// newsScore: 0–10
-// totalRecencyWeight: sum of weights (used by master to compare run quality)
+//
+// Uses sentiment.effective (already modulated by ageFactor × relevance)
+// rather than sentiment.score (raw) — this is the key improvement from v2
+// of the analyzer. A 20-hour-old macro article now barely moves the score.
 function scoreNewsWithRecency(rawNews, analyzedNews) {
   if (!analyzedNews?.length) {
     return { newsScore: 5, totalRecencyWeight: 0, scoredArticles: [] };
@@ -124,8 +126,11 @@ function scoreNewsWithRecency(rawNews, analyzedNews) {
     if (!raw) return;
 
     const recencyWeight = getArticleRecencyWeight(raw.published_at);
-    const sentiment     = item.sentiment?.score ?? 0;
-    const importance    = item.importance       ?? 5;
+
+    // Use effective sentiment (ageFactor × relevance already applied in analyzer)
+    // Fall back to raw score if effective is missing (backward compat)
+    const sentiment  = item.sentiment?.effective ?? item.sentiment?.score ?? 0;
+    const importance = item.importance ?? 5;
 
     weightedSentimentSum  += sentiment  * recencyWeight;
     weightedImportanceSum += importance * recencyWeight;
@@ -136,6 +141,7 @@ function scoreNewsWithRecency(rawNews, analyzedNews) {
       published_at:  raw.published_at,
       recencyWeight: parseFloat(recencyWeight.toFixed(3)),
       sentiment:     parseFloat(sentiment.toFixed(3)),
+      relevance:     parseFloat((item.relevance ?? 1).toFixed(3)),
     });
   });
 
