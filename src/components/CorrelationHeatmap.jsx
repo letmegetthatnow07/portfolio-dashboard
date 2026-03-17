@@ -2,21 +2,26 @@ import React, { useState, useEffect, useCallback } from 'react';
 import './CorrelationHeatmap.css';
 
 // ── Colour scale ─────────────────────────────────────────────────────────────
+// Mid-range cells use a visible slate so the grid reads as a coherent table.
+// Danger cells keep orange/red. Near-zero cells have a subtle bg so empty
+// cells don't disappear into the page background.
 function getCellStyle(value) {
-  if (value === 1)    return { background: '#1a1d22', color: 'transparent', cursor: 'default' };
-  if (value >= 0.85)  return { background: '#7f1d1d', color: '#fecaca' };
-  if (value >= 0.75)  return { background: '#b91c1c', color: '#fff'    };
-  if (value >= 0.65)  return { background: '#f97316', color: '#fff'    };
-  if (value >= 0.30)  return { background: '#1e2128', color: '#6b7280' };
-  if (value >= -0.30) return { background: '#14532d', color: '#86efac' };
-  return                     { background: '#052e16', color: '#4ade80' };
+  if (value === 1)     return { background: '#2a2d35', color: 'transparent', cursor: 'default' };
+  if (value >= 0.85)   return { background: '#7f1d1d', color: '#fecaca' }; // extreme
+  if (value >= 0.75)   return { background: '#b91c1c', color: '#fff'    }; // high
+  if (value >= 0.65)   return { background: '#ea580c', color: '#fff'    }; // flagged
+  if (value >= 0.30)   return { background: '#2e3340', color: '#9aa0b0' }; // mild — visible slate
+  if (value >= -0.30)  return { background: '#14532d', color: '#86efac' }; // uncorrelated
+  return                      { background: '#052e16', color: '#4ade80' }; // hedge
 }
 
-// Only show label when value is actually meaningful — kills the zero clutter
+// Show all non-self values. Use 2 decimal places but strip the leading zero
+// (e.g. ".46" not "0.46") — shorter, less visual noise, easier to scan.
 function corrLabel(v) {
-  if (v === 1)           return '—';
-  if (Math.abs(v) >= 0.30) return v.toFixed(2);
-  return '';
+  if (v === 1) return '—';
+  const s = v.toFixed(2);
+  // Strip leading zero: "0.46" → ".46", "-0.12" → "-.12"
+  return s.replace(/^(-?)0\./, '$1.');
 }
 
 // ── Formatting helpers ────────────────────────────────────────────────────────
