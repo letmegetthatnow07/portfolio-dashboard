@@ -1,29 +1,30 @@
 /* ─────────────────────────────────────────────────────────────────────────────
    ALPHA COMPOUNDER — Portfolio Dashboard
-   Theme  : Refined light · warm white surfaces · clean editorial
+   Theme  : Warm parchment · muted surfaces · editorial
    Fonts  : DM Mono (numbers/mono) + DM Sans (UI)
+   Background animation: slow-drifting candlestick / bull-bear market chart
 ───────────────────────────────────────────────────────────────────────────── */
 
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,400&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&display=swap');
 
 /* ── Variables ─────────────────────────────────────────────────────────────── */
 :root {
-  /* Backgrounds */
-  --bg-main:   #f5f5f3;   /* warm off-white page */
-  --bg-card:   #ffffff;   /* pure white cards */
-  --bg-raised: #fafaf8;   /* hover / subtle lift */
-  --bg-input:  #fafaf8;   /* form inputs */
+  /* Backgrounds — softened from pure white to ease eye strain */
+  --bg-main:   #f0efe9;   /* warm parchment page — noticeably less harsh than f5f5f3 */
+  --bg-card:   #faf9f6;   /* soft warm white card — not blinding pure white */
+  --bg-raised: #f5f4f0;   /* hover / subtle lift */
+  --bg-input:  #f5f4f0;
 
   /* Borders */
-  --border-light: #e8e8e4;
-  --border-mid:   #d4d4ce;
+  --border-light: #e4e3dd;
+  --border-mid:   #cecdc7;
 
   /* Text */
   --text-main:  #111110;
   --text-muted: #6b6b65;
   --text-dim:   #a0a09a;
 
-  /* Semantic — kept identical so old JSX referencing them still works */
+  /* Semantic */
   --color-strong-buy: #059669;
   --color-buy:        #2563eb;
   --color-hold:       #d97706;
@@ -41,16 +42,44 @@
   --r-md:  10px;
   --r-lg:  14px;
 
-  /* Shadows */
-  --shadow-sm: 0 1px 4px rgba(0,0,0,.06), 0 2px 12px rgba(0,0,0,.04);
-  --shadow-md: 0 4px 16px rgba(0,0,0,.08), 0 1px 4px rgba(0,0,0,.04);
-  --shadow-lg: 0 12px 40px rgba(0,0,0,.14);
+  /* Shadows — slightly warmer tint */
+  --shadow-sm: 0 1px 4px rgba(60,50,30,.06), 0 2px 12px rgba(60,50,30,.04);
+  --shadow-md: 0 4px 16px rgba(60,50,30,.08), 0 1px 4px rgba(60,50,30,.04);
+  --shadow-lg: 0 12px 40px rgba(60,50,30,.12);
 
   /* Fonts */
   --font-ui:   'DM Sans',  system-ui, sans-serif;
   --font-mono: 'DM Mono',  'Fira Code', monospace;
 
   --transition: 0.14s ease;
+}
+
+/* ── Market animation keyframes ──────────────────────────────────────────────
+   Background: slow-drifting bull/bear market chart with candlestick shapes.
+   Green (bull) candles rise on the left. Red (bear) candles fall on the right.
+   A slow sine-wave price line connects them — like a market chart in motion.
+   Very subtle: opacity 0.045 so it's atmospheric, not distracting.           */
+
+@keyframes mkt-rise {
+  0%   { transform: translateY(0)    scaleY(1);    }
+  40%  { transform: translateY(-8px) scaleY(1.15); }
+  70%  { transform: translateY(-4px) scaleY(0.95); }
+  100% { transform: translateY(0)    scaleY(1);    }
+}
+@keyframes mkt-fall {
+  0%   { transform: translateY(0)   scaleY(1);    }
+  35%  { transform: translateY(6px) scaleY(1.12); }
+  65%  { transform: translateY(3px) scaleY(0.92); }
+  100% { transform: translateY(0)   scaleY(1);    }
+}
+@keyframes line-drift {
+  0%   { transform: translateX(0); }
+  50%  { transform: translateX(12px); }
+  100% { transform: translateX(0); }
+}
+@keyframes candle-pulse {
+  0%, 100% { opacity: 0.045; }
+  50%       { opacity: 0.075; }
 }
 
 /* ── Reset ─────────────────────────────────────────────────────────────────── */
@@ -68,14 +97,57 @@ body {
 button { font-family: var(--font-ui); cursor: pointer; }
 input, select { font-family: var(--font-ui); }
 
-/* ── Layout ────────────────────────────────────────────────────────────────── */
+/* ── Layout ─────────────────────────────────────────────────────────────────── */
 .dashboard-container {
   max-width: 1280px;
   margin: 0 auto;
   padding: 36px 24px 80px;
+  position: relative;    /* needed for the absolute SVG background */
 }
 
-/* ── Header ────────────────────────────────────────────────────────────────── */
+/* ── Market background SVG ───────────────────────────────────────────────────
+   Fixed behind everything. Contains bull (green) and bear (red) candle groups
+   plus a slow sine-like price line. Extremely low opacity so it's never
+   distracting — just adds warmth and context to the space.                    */
+.market-bg {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100vw; height: 100vh;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+/* Bull cluster — left third of screen, green rising candles */
+.mkt-bull-group {
+  animation: mkt-rise 18s ease-in-out infinite;
+  transform-origin: 20% 60%;
+}
+/* Bear cluster — right third, red falling candles */
+.mkt-bear-group {
+  animation: mkt-fall 22s ease-in-out infinite;
+  transform-origin: 78% 40%;
+}
+/* Price trend line */
+.mkt-line-group {
+  animation: line-drift 28s ease-in-out infinite;
+}
+/* Individual candle opacity pulse */
+.mkt-candle {
+  animation: candle-pulse 6s ease-in-out infinite;
+}
+.mkt-candle:nth-child(2) { animation-delay: -2s; }
+.mkt-candle:nth-child(3) { animation-delay: -4s; }
+.mkt-candle:nth-child(4) { animation-delay: -1s; }
+.mkt-candle:nth-child(5) { animation-delay: -3s; }
+
+/* All dashboard content above the background */
+.dashboard-container > *:not(.market-bg) {
+  position: relative;
+  z-index: 1;
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────────── */
 .dashboard-header {
   display: flex;
   justify-content: space-between;
@@ -127,7 +199,7 @@ input, select { font-family: var(--font-ui); }
   50%       { opacity: 0.2; }
 }
 
-/* ── Buttons ───────────────────────────────────────────────────────────────── */
+/* ── Buttons ─────────────────────────────────────────────────────────────────── */
 .btn-primary {
   background: var(--text-main);
   color: #fff;
@@ -178,20 +250,20 @@ input, select { font-family: var(--font-ui); }
 .btn-icon:hover { color: var(--text-main); background: var(--bg-main); }
 .btn-icon-danger:hover { color: var(--red); }
 
-/* ── Stats Grid ────────────────────────────────────────────────────────────── */
+/* ── Stats Grid ──────────────────────────────────────────────────────────────── */
 .summary-section { margin-bottom: 28px; }
 
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
 }
 
 .stat-card {
   background: var(--bg-card);
   border: 1px solid var(--border-light);
   border-radius: var(--r-lg);
-  padding: 22px 24px;
+  padding: 20px 22px;
   box-shadow: var(--shadow-sm);
   transition: box-shadow var(--transition), transform var(--transition);
 }
@@ -200,10 +272,13 @@ input, select { font-family: var(--font-ui); }
   transform: translateY(-1px);
 }
 
-/* Accent bottom border on total value card — same concept as old code */
 .stat-card.accent-card {
   border-bottom: 3px solid var(--text-main);
 }
+
+/* Profit/loss card tint */
+.stat-card.profit-card { border-bottom: 3px solid var(--green); }
+.stat-card.loss-card   { border-bottom: 3px solid var(--red);   }
 
 .stat-label {
   font-size: 11px;
@@ -216,19 +291,33 @@ input, select { font-family: var(--font-ui); }
 
 .stat-value {
   font-family: var(--font-mono);
-  font-size: 28px;
+  font-size: 24px;
   font-weight: 400;
   color: var(--text-main);
   letter-spacing: -0.02em;
   line-height: 1.1;
 }
 
+/* Smaller value size for wider numbers (P&L, etc.) */
+.stat-value.stat-value-sm {
+  font-size: 18px;
+}
+
 .stat-unit {
-  font-size: 14px;
+  font-size: 13px;
   color: var(--text-dim);
 }
 
-/* ── Controls ──────────────────────────────────────────────────────────────── */
+/* Sub-value line below main stat (e.g. % change below $ P&L) */
+.stat-sub {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  margin-top: 4px;
+}
+.stat-sub.pos { color: var(--green); }
+.stat-sub.neg { color: var(--red); }
+
+/* ── Controls ────────────────────────────────────────────────────────────────── */
 .controls-section {
   display: flex;
   align-items: center;
@@ -237,11 +326,7 @@ input, select { font-family: var(--font-ui); }
   flex-wrap: wrap;
 }
 
-/* Filter pills */
-.filter-pills {
-  display: flex;
-  gap: 4px;
-}
+.filter-pills { display: flex; gap: 4px; }
 
 .pill {
   background: var(--bg-card);
@@ -262,7 +347,6 @@ input, select { font-family: var(--font-ui); }
 .pill-bullish.pill-active { background: var(--green); border-color: var(--green); }
 .pill-bearish.pill-active { background: var(--red);   border-color: var(--red);   }
 
-/* Sort select */
 .minimal-select {
   background: var(--bg-card);
   border: 1px solid var(--border-light);
@@ -285,11 +369,7 @@ input, select { font-family: var(--font-ui); }
   color: var(--text-dim);
 }
 
-/* ── Portfolio Table ───────────────────────────────────────────────────────── */
-.portfolio-section {
-  /* intentional — no wrapper needed, table-wrapper handles it */
-}
-
+/* ── Portfolio Table ─────────────────────────────────────────────────────────── */
 .table-wrapper {
   background: var(--bg-card);
   border: 1px solid var(--border-light);
@@ -301,7 +381,6 @@ input, select { font-family: var(--font-ui); }
 .portfolio-table {
   width: 100%;
   border-collapse: collapse;
-  overflow-x: auto;
 }
 
 .portfolio-table thead tr {
@@ -325,11 +404,10 @@ input, select { font-family: var(--font-ui); }
   transition: background var(--transition);
 }
 .portfolio-table tbody tr:last-child { border-bottom: none; }
-.portfolio-table tbody tr:hover { background: #fafaf8; }
+.portfolio-table tbody tr:hover { background: var(--bg-raised); }
 
-/* Tier tint — subtle left border per signal category */
-.row-bull { border-left: 3px solid #05966928; }
-.row-bear { border-left: 3px solid #dc262628; }
+.row-bull { border-left: 3px solid #05966920; }
+.row-bear { border-left: 3px solid #dc262620; }
 .row-flat { border-left: 3px solid transparent; }
 
 .portfolio-table td {
@@ -337,7 +415,7 @@ input, select { font-family: var(--font-ui); }
   vertical-align: middle;
 }
 
-/* ── Cell: Asset ───────────────────────────────────────────────────────────── */
+/* ── Cell types ──────────────────────────────────────────────────────────────── */
 .stock-symbol {
   font-family: var(--font-mono);
   font-size: 14px;
@@ -346,7 +424,6 @@ input, select { font-family: var(--font-ui); }
   letter-spacing: 0.01em;
   display: block;
 }
-
 .stock-name {
   font-size: 11px;
   color: var(--text-dim);
@@ -356,7 +433,6 @@ input, select { font-family: var(--font-ui); }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
 .sector-pill {
   display: inline-block;
   margin-top: 5px;
@@ -369,7 +445,6 @@ input, select { font-family: var(--font-ui); }
   white-space: nowrap;
 }
 
-/* ── Cell: Price & P&L ─────────────────────────────────────────────────────── */
 .price-value {
   font-family: var(--font-mono);
   font-size: 14px;
@@ -377,7 +452,6 @@ input, select { font-family: var(--font-ui); }
   color: var(--text-main);
 }
 
-/* Kept from old code — .change.positive / .change.negative */
 .change {
   font-family: var(--font-mono);
   font-size: 12px;
@@ -387,7 +461,7 @@ input, select { font-family: var(--font-ui); }
 .change.positive { color: var(--green); }
 .change.negative { color: var(--red);   }
 
-/* ── Cell: Score Ring ──────────────────────────────────────────────────────── */
+/* Score ring */
 .score-ring {
   position: relative;
   display: inline-flex;
@@ -404,35 +478,24 @@ input, select { font-family: var(--font-ui); }
   z-index: 1;
 }
 
-/* Old .score-badge / .score-number kept for any external reference */
+/* backward compat */
 .score-badge { display: inline-flex; align-items: center; }
-.score-number {
-  font-family: var(--font-mono);
-  font-size: 16px;
-  font-weight: 700;
-}
+.score-number { font-family: var(--font-mono); font-size: 16px; font-weight: 700; }
 
-.capex-flag {
-  font-size: 14px;
-  cursor: help;
-  margin-left: 3px;
-}
+.capex-flag { font-size: 14px; cursor: help; margin-left: 3px; }
 
-/* ── Cell: Regime & Alpha ──────────────────────────────────────────────────── */
 .regime-name {
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
-
 .alpha-val {
   font-family: var(--font-mono);
   font-size: 12px;
   font-weight: 600;
   margin-top: 3px;
 }
-
 .beta-val {
   font-family: var(--font-mono);
   font-size: 10px;
@@ -440,7 +503,6 @@ input, select { font-family: var(--font-ui); }
   margin-top: 2px;
 }
 
-/* ── Cell: Signal badge ────────────────────────────────────────────────────── */
 .signal-badge {
   display: inline-block;
   padding: 4px 10px;
@@ -453,39 +515,17 @@ input, select { font-family: var(--font-ui); }
   white-space: nowrap;
 }
 
-/* Spring progress bar */
-.spring-bar {
-  margin-top: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
+.spring-bar { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
 .spring-track {
   width: 72px; height: 3px;
   background: var(--border-light);
   border-radius: 2px;
   overflow: hidden;
 }
+.spring-fill { height: 100%; border-radius: 2px; transition: width .45s ease; }
+.spring-label { font-size: 10px; font-weight: 600; }
 
-.spring-fill {
-  height: 100%;
-  border-radius: 2px;
-  transition: width .45s ease;
-}
-
-.spring-label {
-  font-size: 10px;
-  font-weight: 600;
-}
-
-/* Cascade pips */
-.cascade-pips {
-  display: flex;
-  gap: 3px;
-  margin-top: 7px;
-}
-
+.cascade-pips { display: flex; gap: 3px; margin-top: 7px; }
 .pip {
   font-family: var(--font-mono);
   font-size: 9px;
@@ -493,12 +533,10 @@ input, select { font-family: var(--font-ui); }
   border-radius: 3px;
   border: 1px solid var(--border-light);
   font-weight: 500;
-  transition: all var(--transition);
 }
 .pip-off { color: var(--text-dim); background: transparent; }
 .pip-on  { color: #fff; font-weight: 700; }
 
-/* ── Cell: Value & Weight ──────────────────────────────────────────────────── */
 .weight-pct {
   font-family: var(--font-mono);
   font-size: 10px;
@@ -506,10 +544,9 @@ input, select { font-family: var(--font-ui); }
   margin-top: 3px;
 }
 
-/* ── Actions column ────────────────────────────────────────────────────────── */
 .col-actions { width: 90px; white-space: nowrap; }
 
-/* ── Empty / no results ────────────────────────────────────────────────────── */
+/* ── Empty state ─────────────────────────────────────────────────────────────── */
 .no-results {
   padding: 56px;
   text-align: center;
@@ -521,14 +558,10 @@ input, select { font-family: var(--font-ui); }
   box-shadow: var(--shadow-sm);
 }
 
-/* ── Loading ───────────────────────────────────────────────────────────────── */
+/* ── Loading ─────────────────────────────────────────────────────────────────── */
 .loading-wrap {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 60vh;
+  display: flex; align-items: center; justify-content: center; min-height: 60vh;
 }
-
 .loading-ring {
   width: 34px; height: 34px;
   border: 2px solid var(--border-light);
@@ -536,8 +569,7 @@ input, select { font-family: var(--font-ui); }
   border-radius: 50%;
   animation: spin .8s linear infinite;
 }
-
-/* Backward compat for old .loading-spinner / .spinner */
+/* backward compat */
 .loading-spinner { display: flex; justify-content: center; align-items: center; min-height: 50vh; }
 .spinner {
   border: 3px solid var(--border-light);
@@ -546,36 +578,30 @@ input, select { font-family: var(--font-ui); }
   width: 40px; height: 40px;
   animation: spin 1s linear infinite;
 }
-
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ── Modals ────────────────────────────────────────────────────────────────── */
+/* ── Modals ──────────────────────────────────────────────────────────────────── */
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,.32);
+  background: rgba(0,0,0,.28);
   backdrop-filter: blur(5px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: flex; align-items: center; justify-content: center;
   z-index: 50;
   padding: 20px;
   animation: fadeIn .15s ease;
 }
-
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
 .modal-content {
   background: var(--bg-card);
   border: 1px solid var(--border-light);
   border-radius: var(--r-lg);
-  width: 100%;
-  max-width: 520px;
+  width: 100%; max-width: 520px;
   box-shadow: var(--shadow-lg);
   animation: slideUp .18s ease;
   overflow: hidden;
 }
-
 .modal-content.news-modal { max-width: 640px; }
 
 @keyframes slideUp {
@@ -590,37 +616,22 @@ input, select { font-family: var(--font-ui); }
   padding: 22px 24px 18px;
   border-bottom: 1px solid var(--border-light);
 }
+.modal-header h2 { font-size: 17px; font-weight: 700; color: var(--text-main); }
+.modal-sub-label { font-size: 12px; color: var(--text-muted); margin-top: 3px; }
 
-.modal-header h2 {
-  font-size: 17px;
-  font-weight: 700;
-  color: var(--text-main);
-}
-
-.modal-sub-label {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-top: 3px;
-}
-
-/* ── Forms ─────────────────────────────────────────────────────────────────── */
+/* ── Forms ───────────────────────────────────────────────────────────────────── */
 .form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 16px;
   padding: 22px 24px;
 }
-
 .form-group { display: flex; flex-direction: column; gap: 6px; }
-
 .form-group label {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.06em;
   color: var(--text-muted);
 }
-
 .form-group input,
 .form-group select {
   background: var(--bg-input);
@@ -634,19 +645,17 @@ input, select { font-family: var(--font-ui); }
   width: 100%;
 }
 .form-group input:focus,
-.form-group select:focus  { border-color: var(--text-muted); }
+.form-group select:focus { border-color: var(--text-muted); }
 .form-group input:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .form-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
+  display: flex; justify-content: flex-end; gap: 8px;
   padding: 16px 24px 22px;
   border-top: 1px solid var(--border-light);
   background: var(--bg-main);
 }
 
-/* ── News / Intelligence ───────────────────────────────────────────────────── */
+/* ── News ────────────────────────────────────────────────────────────────────── */
 .news-container {
   padding: 0;
   max-height: 65vh;
@@ -654,10 +663,8 @@ input, select { font-family: var(--font-ui); }
   display: flex;
   flex-direction: column;
 }
-
 .news-card {
-  display: block;
-  text-decoration: none;
+  display: block; text-decoration: none;
   padding: 18px 24px;
   border-bottom: 1px solid var(--border-light);
   color: var(--text-main);
@@ -666,7 +673,6 @@ input, select { font-family: var(--font-ui); }
 }
 .news-card:last-child { border-bottom: none; }
 .news-card:hover { background: var(--bg-raised); }
-
 .news-date {
   font-family: var(--font-mono);
   font-size: 10px;
@@ -676,29 +682,15 @@ input, select { font-family: var(--font-ui); }
   margin-bottom: 5px;
   letter-spacing: 0.05em;
 }
-
 .news-headline {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 14px; font-weight: 600;
   color: var(--text-main);
-  line-height: 1.45;
-  margin-bottom: 6px;
+  line-height: 1.45; margin-bottom: 6px;
 }
+.news-desc { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+.no-news { text-align: center; color: var(--text-muted); padding: 44px 24px; font-size: 13px; }
 
-.news-desc {
-  font-size: 13px;
-  color: var(--text-muted);
-  line-height: 1.5;
-}
-
-.no-news {
-  text-align: center;
-  color: var(--text-muted);
-  padding: 44px 24px;
-  font-size: 13px;
-}
-
-/* ── Scrollbars ────────────────────────────────────────────────────────────── */
+/* ── Scrollbars ──────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border-mid); border-radius: 3px; }
