@@ -358,7 +358,6 @@ const EnhancedPortfolioDashboard = () => {
   // Each position contributes its 1-day dollar move: price × changePercent/100 × qty
   const totalDayChange = portfolio.reduce((s, x) => {
     if (x.current_price == null || x.change_percent == null || x.quantity == null) return s;
-    const positionValue = x.current_price * x.quantity;
     // change_percent is today's % move, so previous price = current / (1 + pct/100)
     const prevPrice = x.current_price / (1 + x.change_percent / 100);
     return s + (x.current_price - prevPrice) * x.quantity;
