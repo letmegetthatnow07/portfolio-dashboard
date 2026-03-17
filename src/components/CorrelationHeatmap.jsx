@@ -1,18 +1,19 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import './CorrelationHeatmap.css';
 
-// ── Colour scale ─────────────────────────────────────────────────────────────
-// Mid-range cells use a visible slate so the grid reads as a coherent table.
-// Danger cells keep orange/red. Near-zero cells have a subtle bg so empty
-// cells don't disappear into the page background.
+// ── Colour scale — tuned for light white card background ─────────────────────
+// Self-correlation diagonal: soft warm grey
+// Danger band (≥0.65): keeps the orange/red — pops clearly on white
+// Mid-range (0.30–0.65): muted blue-grey with dark text — readable on white
+// Uncorrelated/hedge: muted sage green so it doesn't shout
 function getCellStyle(value) {
-  if (value === 1)     return { background: '#2a2d35', color: 'transparent', cursor: 'default' };
-  if (value >= 0.85)   return { background: '#7f1d1d', color: '#fecaca' }; // extreme
-  if (value >= 0.75)   return { background: '#b91c1c', color: '#fff'    }; // high
-  if (value >= 0.65)   return { background: '#ea580c', color: '#fff'    }; // flagged
-  if (value >= 0.30)   return { background: '#2e3340', color: '#9aa0b0' }; // mild — visible slate
-  if (value >= -0.30)  return { background: '#14532d', color: '#86efac' }; // uncorrelated
-  return                      { background: '#052e16', color: '#4ade80' }; // hedge
+  if (value === 1)     return { background: '#f0efed', color: '#c4c4bc', cursor: 'default' }; // diagonal — warm neutral
+  if (value >= 0.85)   return { background: '#7f1d1d', color: '#fecaca' }; // extreme — dark red
+  if (value >= 0.75)   return { background: '#b91c1c', color: '#fff'    }; // high — red
+  if (value >= 0.65)   return { background: '#ea580c', color: '#fff'    }; // flagged — orange
+  if (value >= 0.30)   return { background: '#e2e4ea', color: '#374151' }; // mild — cool grey, dark text
+  if (value >= -0.30)  return { background: '#d1fae5', color: '#065f46' }; // uncorrelated — sage green
+  return                      { background: '#a7f3d0', color: '#064e3b' }; // hedge — stronger green
 }
 
 // Show all non-self values. Use 2 decimal places but strip the leading zero
@@ -88,6 +89,62 @@ const CorrelationHeatmap = () => {
   return (
     <div className="correlation-container">
 
+      {/* ── Neural network background animation ────────────────────────────── */}
+      <svg className="neural-bg" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <radialGradient id="ng1" cx="50%" cy="50%" r="50%">
+            <stop offset="0%"   stopColor="#059669" stopOpacity="0.12" />
+            <stop offset="100%" stopColor="#059669" stopOpacity="0" />
+          </radialGradient>
+          <radialGradient id="ng2" cx="50%" cy="50%" r="50%">
+            <stop offset="0%"   stopColor="#d97706" stopOpacity="0.08" />
+            <stop offset="100%" stopColor="#d97706" stopOpacity="0" />
+          </radialGradient>
+        </defs>
+
+        {/* Layer 1 — slow drift, green tones */}
+        <g className="layer1" style={{ transformOrigin: '30% 40%' }}>
+          <line x1="8%"  y1="12%" x2="22%" y2="28%" stroke="#059669" strokeWidth="0.6" strokeOpacity="0.15" />
+          <line x1="22%" y1="28%" x2="38%" y2="18%" stroke="#059669" strokeWidth="0.6" strokeOpacity="0.12" />
+          <line x1="38%" y1="18%" x2="52%" y2="35%" stroke="#059669" strokeWidth="0.6" strokeOpacity="0.10" />
+          <line x1="52%" y1="35%" x2="42%" y2="52%" stroke="#059669" strokeWidth="0.6" strokeOpacity="0.12" />
+          <line x1="8%"  y1="12%" x2="42%" y2="52%" stroke="#059669" strokeWidth="0.4" strokeOpacity="0.07" />
+          <circle className="node" cx="8%"  cy="12%" r="3"   fill="#059669" />
+          <circle className="node" cx="22%" cy="28%" r="2.5" fill="#059669" />
+          <circle className="node" cx="38%" cy="18%" r="3"   fill="#059669" />
+          <circle className="node" cx="52%" cy="35%" r="2"   fill="#059669" />
+          <circle className="node" cx="42%" cy="52%" r="2.5" fill="#059669" />
+        </g>
+
+        {/* Layer 2 — medium drift, amber tones, right side */}
+        <g className="layer2" style={{ transformOrigin: '72% 30%' }}>
+          <line x1="65%" y1="10%" x2="80%" y2="26%" stroke="#d97706" strokeWidth="0.6" strokeOpacity="0.10" />
+          <line x1="80%" y1="26%" x2="92%" y2="16%" stroke="#d97706" strokeWidth="0.6" strokeOpacity="0.10" />
+          <line x1="80%" y1="26%" x2="75%" y2="44%" stroke="#d97706" strokeWidth="0.6" strokeOpacity="0.08" />
+          <line x1="65%" y1="10%" x2="75%" y2="44%" stroke="#d97706" strokeWidth="0.4" strokeOpacity="0.06" />
+          <circle className="node-slow" cx="65%" cy="10%" r="3"   fill="#d97706" />
+          <circle className="node-slow" cx="80%" cy="26%" r="2.5" fill="#d97706" />
+          <circle className="node-slow" cx="92%" cy="16%" r="2"   fill="#d97706" />
+          <circle className="node-slow" cx="75%" cy="44%" r="3"   fill="#d97706" />
+        </g>
+
+        {/* Layer 3 — fast drift, bottom area, neutral grey */}
+        <g className="layer3" style={{ transformOrigin: '50% 75%' }}>
+          <line x1="15%" y1="72%" x2="32%" y2="85%" stroke="#6b6b65" strokeWidth="0.5" strokeOpacity="0.10" />
+          <line x1="32%" y1="85%" x2="55%" y2="78%" stroke="#6b6b65" strokeWidth="0.5" strokeOpacity="0.10" />
+          <line x1="55%" y1="78%" x2="70%" y2="88%" stroke="#6b6b65" strokeWidth="0.5" strokeOpacity="0.08" />
+          <line x1="15%" y1="72%" x2="55%" y2="78%" stroke="#6b6b65" strokeWidth="0.4" strokeOpacity="0.06" />
+          <circle className="node-slow" cx="15%" cy="72%" r="2.5" fill="#a0a09a" />
+          <circle className="node-slow" cx="32%" cy="85%" r="2"   fill="#a0a09a" />
+          <circle className="node-slow" cx="55%" cy="78%" r="3"   fill="#a0a09a" />
+          <circle className="node-slow" cx="70%" cy="88%" r="2"   fill="#a0a09a" />
+        </g>
+
+        {/* Soft ambient glow blobs */}
+        <ellipse cx="20%" cy="35%" rx="18%" ry="12%" fill="url(#ng1)" />
+        <ellipse cx="78%" cy="22%" rx="15%" ry="10%" fill="url(#ng2)" />
+      </svg>
+
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="heatmap-header">
         <div>
@@ -145,16 +202,18 @@ const CorrelationHeatmap = () => {
         {[
           { bg: '#7f1d1d', label: 'Extreme ≥0.85' },
           { bg: '#b91c1c', label: 'High ≥0.75'    },
-          { bg: '#f97316', label: 'Flagged ≥0.65' },
-          { bg: '#14532d', label: 'Uncorrelated'  },
-          { bg: '#052e16', label: 'Hedge'         },
-        ].map(({ bg, label }) => (
+          { bg: '#ea580c', label: 'Flagged ≥0.65' },
+          { bg: '#e2e4ea', label: 'Mild 0.30–0.65', border: '#c4c8d4' },
+          { bg: '#d1fae5', label: 'Uncorrelated',   border: '#a7f3d0' },
+          { bg: '#a7f3d0', label: 'Hedge',          border: '#6ee7b7' },
+        ].map(({ bg, label, border }) => (
           <div className="legend-item" key={label}>
-            <span className="legend-swatch" style={{ background: bg }} />
+            <span className="legend-swatch"
+              style={{ background: bg, border: border ? `1px solid ${border}` : 'none' }} />
             <span>{label}</span>
           </div>
         ))}
-        <span className="legend-note">Blank cells = near-zero correlation</span>
+        <span className="legend-note">Returns-based · 250d rolling</span>
       </div>
 
       {/* ── Capital Optimisation ───────────────────────────────────────────── */}
