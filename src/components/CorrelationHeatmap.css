@@ -62,6 +62,8 @@
   border-spacing: 3px;
   width: max-content;
   font-family: 'DM Mono', monospace;
+  /* Tabular numbers so digits align in columns */
+  font-variant-numeric: tabular-nums;
 }
 .heatmap-corner { width: 52px; }
 .heatmap-col-header {
@@ -88,12 +90,14 @@
   height: 44px;
   text-align: center;
   vertical-align: middle;
-  font-size: 10px;
-  font-weight: 600;
+  /* Slightly lighter weight so digits don't feel heavy in a grid */
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
   border-radius: 5px;
   cursor: crosshair;
   transition: transform 0.12s ease, box-shadow 0.12s ease;
-  letter-spacing: 0.02em;
   position: relative;
 }
 .heatmap-cell:hover {
@@ -161,24 +165,27 @@
 .heatmap-tooltip {
   position: fixed;
   transform: translate(-50%, -100%);
-  background: var(--bg-raised, #1a1d22);
-  border: 1px solid var(--border-mid, #2e3340);
+  background: #1f2329;
+  border: 1px solid #3a3f4a;
   border-radius: 6px;
-  padding: 6px 10px;
+  padding: 7px 12px;
   font-family: 'DM Mono', monospace;
-  font-size: 11px;
-  color: var(--text, #e8eaf0);
+  font-size: 12px;
+  /* Strong white so both ticker names and value are clearly readable */
+  color: #e8eaf0;
   pointer-events: none;
   z-index: 999;
   white-space: nowrap;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.6);
   display: flex;
   align-items: center;
   gap: 8px;
 }
 .tooltip-val {
   font-weight: 700;
-  color: var(--accent, #3b82f6);
+  color: #60a5fa;
+  padding-left: 4px;
+  border-left: 1px solid #3a3f4a;
 }
 
 /* ── Insights section ────────────────────────────────────────────────────────── */
