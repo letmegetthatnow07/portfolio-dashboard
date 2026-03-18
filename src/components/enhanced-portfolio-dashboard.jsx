@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import './enhanced-portfolio-dashboard.css';
 import CorrelationHeatmap from './CorrelationHeatmap';
 
@@ -74,23 +75,20 @@ const buildNodes = (W, H) => {
   const COUNT = 30;
   for (let i = 0; i < COUNT; i++) {
     const col = pick();
-    // Distribute evenly across full page height, random x
     const x = W * (0.04 + Math.random() * 0.92);
-    const y = H * (i / COUNT + Math.random() * (1 / COUNT)); // even vertical spread
+    const y = H * (i / COUNT + Math.random() * (1 / COUNT));
     _nodes.push({
       x, y,
-      // vy drives stock-like vertical motion; give each a starting direction
-      vx: (Math.random() - 0.5) * 0.3,
-      vy: (Math.random() < 0.5 ? 1 : -1) * (0.3 + Math.random() * 0.4),
-      // amplitude & period of vertical oscillation — each node unique
-      oAmp:   40 + Math.random() * 60,   // px amplitude
-      oPeriod: 4 + Math.random() * 8,    // seconds per cycle
-      oPhase: Math.random() * Math.PI * 2,
+      vx: (Math.random() - 0.5) * 0.15,   // slower start
+      vy: (Math.random() < 0.5 ? 1 : -1) * (0.12 + Math.random() * 0.18),
+      oAmp:    40 + Math.random() * 60,
+      oPeriod: 8 + Math.random() * 14,     // longer period = slower oscillation
+      oPhase:  Math.random() * Math.PI * 2,
       r: 2.5 + Math.random() * 2.5,
       color: col.c,
       alpha: col.a(),
       pulseOffset: Math.random() * Math.PI * 2,
-      pulseSpeed:  0.008 + Math.random() * 0.016,
+      pulseSpeed:  0.004 + Math.random() * 0.008, // slower pulse
     });
   }
   _nodesReady = true;
@@ -121,11 +119,11 @@ const NeuralBackground = () => {
 
     const EDGE_DIST   = 170;
     const REPEL_DIST  = 130;
-    const REPEL_FORCE = 2.0;
-    const H_DAMPING   = 0.94;  // stronger damping on horizontal
-    const V_DAMPING   = 0.985; // lighter damping on vertical — keeps momentum
-    const H_RESTORE   = 0.012; // pull vx back toward 0 (centre tendency)
-    const MAX_SPEED   = 2.8;
+    const REPEL_FORCE = 1.2;   // gentler repulsion
+    const H_DAMPING   = 0.92;
+    const V_DAMPING   = 0.988; // very light vertical damping keeps slow drift
+    const H_RESTORE   = 0.014;
+    const MAX_SPEED   = 1.4;   // hard cap — nodes never feel frantic
 
     const draw = (t) => {
       const W = canvas.width, H = canvas.height;
@@ -139,12 +137,12 @@ const NeuralBackground = () => {
       for (const n of nodes) {
         // ── Vertical oscillation force (stock-like sine wave) ──────────────
         // Each node has its own period and phase — they don't sync
-        const oscForce = Math.sin(now / n.oPeriod * Math.PI * 2 + n.oPhase) * 0.04;
+        const oscForce = Math.sin(now / n.oPeriod * Math.PI * 2 + n.oPhase) * 0.018;
         n.vy += oscForce;
 
-        // ── Tiny random nudge — makes motion feel organic ──────────────────
-        n.vx += (Math.random() - 0.5) * 0.04;
-        n.vy += (Math.random() - 0.5) * 0.04;
+        // ── Tiny random nudge ──────────────────────────────────────────────
+        n.vx += (Math.random() - 0.5) * 0.018;
+        n.vy += (Math.random() - 0.5) * 0.018;
 
         // ── Horizontal restore (drift back to centre-ish, very gently) ─────
         n.vx -= n.vx * H_RESTORE;
@@ -276,18 +274,21 @@ const SpringBar = ({ days }) => {
 };
 
 // ── Modal component ───────────────────────────────────────────────────────────
-// Always viewport-centred. Backdrop fades + blurs the page but content
-// remains partially visible. Clicking the backdrop closes the modal.
-const Modal = ({ onClose, children, wide = false }) => (
-  <div className="modal-overlay" onMouseDown={onClose}>
-    <div
-      className={`modal-box${wide ? ' modal-news' : ''}`}
-      onMouseDown={e => e.stopPropagation()}
-    >
-      {children}
-    </div>
-  </div>
-);
+// Rendered via React Portal directly into document.body — this guarantees
+// position:fixed is always relative to the viewport, never to a transformed
+// parent. Backdrop fades+blurs the page. Click backdrop to close.
+const Modal = ({ onClose, children, wide = false }) =>
+  createPortal(
+    <div className="modal-overlay" onMouseDown={onClose}>
+      <div
+        className={`modal-box${wide ? ' modal-news' : ''}`}
+        onMouseDown={e => e.stopPropagation()}
+      >
+        {children}
+      </div>
+    </div>,
+    document.body
+  );
 
 // ── Main component ────────────────────────────────────────────────────────────
 const EnhancedPortfolioDashboard = () => {
