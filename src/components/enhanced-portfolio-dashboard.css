@@ -242,6 +242,29 @@ input, select { font-family: var(--font-ui); }
   font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
   text-transform: uppercase; white-space: nowrap;
 }
+/* Bull signals — green */
+.signal-bull {
+  color: #047857 !important;
+  background-color: rgba(5,150,105,0.14) !important;
+  border-color: rgba(5,150,105,0.40) !important;
+}
+/* Bear signals — red/orange by severity */
+.signal-bear-hard {
+  color: #b91c1c !important;
+  background-color: rgba(185,28,28,0.13) !important;
+  border-color: rgba(185,28,28,0.38) !important;
+}
+.signal-bear-soft {
+  color: #d97706 !important;
+  background-color: rgba(217,119,6,0.13) !important;
+  border-color: rgba(217,119,6,0.38) !important;
+}
+/* Neutral / noise signals — grey */
+.signal-neutral {
+  color: #6b7280 !important;
+  background-color: rgba(107,114,128,0.10) !important;
+  border-color: rgba(107,114,128,0.28) !important;
+}
 .spring-bar { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
 .spring-track { width: 72px; height: 3px; background: var(--border-light); border-radius: 2px; overflow: hidden; }
 .spring-fill { height: 100%; border-radius: 2px; transition: width .45s ease; }
@@ -270,41 +293,38 @@ input, select { font-family: var(--font-ui); }
 }
 
 /* ── Modal overlay ───────────────────────────────────────────────────────────
-   position:fixed  → always viewport-centred regardless of scroll position
-   pointer-events on overlay dismisses on click-outside
-   The inner .modal-box uses transform: none — React manages centering via
-   flexbox on the overlay, NOT via transform on the box, so there's no
-   layout conflict that could freeze the page.                               */
+   Centred on viewport always. Backdrop fades page but elements still
+   partially visible — like the Physics Wallah streak modal.               */
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(26,25,23,.38);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background: rgba(26,25,23,.45);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 9999;
   padding: 24px;
-  animation: fadeIn .16s ease both;
+  animation: fadeIn .18s ease both;
 }
 
 .modal-box {
   background: var(--bg-card);
   border: 1px solid var(--border-mid);
-  border-radius: 16px;
+  border-radius: 18px;
   width: 100%;
-  max-width: 500px;
+  max-width: 480px;
   max-height: calc(100svh - 80px);
   overflow-y: auto;
-  box-shadow: var(--shadow-lg);
-  animation: slideUp .20s ease both;
+  box-shadow: 0 24px 60px rgba(26,25,23,.28), 0 4px 16px rgba(26,25,23,.10);
+  animation: slideUp .22s ease both;
   display: flex;
   flex-direction: column;
 }
 
 .modal-box.modal-news {
-  max-width: 600px;
+  max-width: 580px;
 }
 
 .modal-header {
