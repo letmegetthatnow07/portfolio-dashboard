@@ -70,47 +70,38 @@ const NeuralBackground = () => {
     };
 
     // ── Build node list ─────────────────────────────────────────────────────
-    // 28 nodes total: 11 green (left), 11 red (right), 6 neutral (centre)
+    // 28 nodes, ALL randomly scattered across the full viewport.
+    // Colours are assigned randomly — no fixed left/right zones.
+    // ~40% green, ~40% red, ~20% neutral, mixed like a live market.
     const initNodes = () => {
       const W = canvas.width, H = canvas.height;
-      const make = (x, y, color, alpha) => ({
-        x, y,
-        baseX: x, baseY: y,           // home position for gentle mean-reversion
-        vx: (Math.random() - 0.5) * 0.4,
-        vy: (Math.random() - 0.5) * 0.4,
-        r: 2.5 + Math.random() * 2.5, // radius 2.5–5
-        color, alpha,
-        pulseOffset: Math.random() * Math.PI * 2,
-        pulseSpeed:  0.012 + Math.random() * 0.018,
-      });
-
+      const COLORS = [
+        { c: '#059669', a: () => 0.42 + Math.random() * 0.25 },
+        { c: '#dc2626', a: () => 0.38 + Math.random() * 0.22 },
+        { c: '#a0a09a', a: () => 0.20 + Math.random() * 0.14 },
+      ];
+      const pickColor = () => {
+        const r = Math.random();
+        if (r < 0.40) return COLORS[0];
+        if (r < 0.80) return COLORS[1];
+        return COLORS[2];
+      };
       const nodes = [];
-      // Green — left third, spread vertically
-      for (let i = 0; i < 11; i++) {
-        nodes.push(make(
-          W * (0.04 + Math.random() * 0.36),
-          H * (0.08 + Math.random() * 0.84),
-          '#059669',
-          0.45 + Math.random() * 0.25,
-        ));
-      }
-      // Red — right third
-      for (let i = 0; i < 11; i++) {
-        nodes.push(make(
-          W * (0.60 + Math.random() * 0.36),
-          H * (0.08 + Math.random() * 0.84),
-          '#dc2626',
-          0.40 + Math.random() * 0.22,
-        ));
-      }
-      // Neutral — centre
-      for (let i = 0; i < 6; i++) {
-        nodes.push(make(
-          W * (0.38 + Math.random() * 0.24),
-          H * (0.15 + Math.random() * 0.70),
-          '#a0a09a',
-          0.22 + Math.random() * 0.14,
-        ));
+      for (let i = 0; i < 28; i++) {
+        const col = pickColor();
+        const x = W * (0.03 + Math.random() * 0.94);
+        const y = H * (0.03 + Math.random() * 0.94);
+        nodes.push({
+          x, y,
+          baseX: x, baseY: y,
+          vx: (Math.random() - 0.5) * 0.5,
+          vy: (Math.random() - 0.5) * 0.5,
+          r: 2.5 + Math.random() * 2.5,
+          color: col.c,
+          alpha: col.a(),
+          pulseOffset: Math.random() * Math.PI * 2,
+          pulseSpeed:  0.010 + Math.random() * 0.020,
+        });
       }
       nodesRef.current = nodes;
     };
@@ -284,19 +275,39 @@ const SpringBar = ({ days }) => {
 };
 
 // ── Modal component ───────────────────────────────────────────────────────────
-// Uses position:fixed overlay (CSS). Clicking the overlay backdrop closes it.
-// The inner box stopPropagation so clicks inside don't close.
-// NO body.overflow manipulation — that was causing the freeze.
-const Modal = ({ onClose, children, wide = false }) => (
-  <div className="modal-overlay" onMouseDown={onClose}>
-    <div
-      className={`modal-box${wide ? ' modal-news' : ''}`}
-      onMouseDown={e => e.stopPropagation()}
-    >
-      {children}
+// Backdrop fades the page. The modal box anchors near the click origin,
+// nudged inward so it never overflows the screen edges.
+const Modal = ({ onClose, children, wide = false, origin = null }) => {
+  const W = window.innerWidth;
+  const H = window.innerHeight;
+  const boxW = wide ? 600 : 500;
+  const boxH = 420; // approximate
+
+  let style = {};
+  if (origin) {
+    // Prefer below-right of click; flip if too close to edge
+    let left = origin.x - 20;
+    let top  = origin.y + 16;
+    if (left + boxW > W - 16) left = W - boxW - 16;
+    if (top  + boxH > H - 16) top  = origin.y - boxH - 8;
+    if (left < 16) left = 16;
+    if (top  < 16) top  = 16;
+    style = { position: 'fixed', left, top, transform: 'none', margin: 0 };
+  }
+
+  return (
+    <div className="modal-overlay" onMouseDown={onClose}
+         style={origin ? { alignItems: 'flex-start', justifyContent: 'flex-start' } : {}}>
+      <div
+        className={`modal-box${wide ? ' modal-news' : ''}`}
+        style={style}
+        onMouseDown={e => e.stopPropagation()}
+      >
+        {children}
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 // ── Main component ────────────────────────────────────────────────────────────
 const EnhancedPortfolioDashboard = () => {
@@ -313,6 +324,7 @@ const EnhancedPortfolioDashboard = () => {
   });
   const [editingId,      setEditingId]      = useState(null);
   const [newsModalStock, setNewsModalStock] = useState(null);
+  const [modalOrigin,    setModalOrigin]    = useState(null); // {x, y} click position
 
   const fetchPortfolio = useCallback(async () => {
     try {
@@ -370,7 +382,8 @@ const EnhancedPortfolioDashboard = () => {
     } catch (err) { console.error(err); }
   };
 
-  const openEditForm = stock => {
+  const openEditForm = (stock, e) => {
+    setModalOrigin(e ? { x: e.clientX, y: e.clientY } : null);
     setFormMode('edit'); setEditingId(stock.id);
     setFormData({
       symbol: stock.symbol, name: stock.name || '',
@@ -380,7 +393,8 @@ const EnhancedPortfolioDashboard = () => {
     setShowForm(true);
   };
 
-  const openAddForm = () => {
+  const openAddForm = (e) => {
+    setModalOrigin(e ? { x: e.clientX, y: e.clientY } : null);
     setFormMode('add'); setEditingId(null);
     setFormData({ symbol:'', name:'', quantity:'', average_price:'', type:'Stock', region:'Global', sector:'' });
     setShowForm(true);
@@ -456,7 +470,7 @@ const EnhancedPortfolioDashboard = () => {
               Auto-refreshes · Last: {lastUpdate.toLocaleTimeString()}
             </div>
           )}
-          <button onClick={openAddForm} className="btn-primary">+ Add Asset</button>
+          <button onClick={e => openAddForm(e)} className="btn-primary">+ Add Asset</button>
         </div>
       </div>
 
@@ -587,8 +601,9 @@ const EnhancedPortfolioDashboard = () => {
                       <td>
                         <span className="signal-badge" style={{
                           color: sCfg.color,
-                          backgroundColor: `${sCfg.color}14`,
-                          borderColor: `${sCfg.color}30`,
+                          backgroundColor: `${sCfg.color}22`,
+                          borderColor: `${sCfg.color}55`,
+                          fontWeight: 700,
                         }}>{sCfg.label}</span>
                         <SpringBar days={stock.spring_days}/>
                         <CascadePips w1={stock.w1_signal} w2={stock.w2_confirmed} w3={stock.w3_confirmed} w4={stock.w4_confirmed}/>
@@ -598,8 +613,8 @@ const EnhancedPortfolioDashboard = () => {
                         {totalVal > 0 && <div className="weight-pct">{((tv/totalVal)*100).toFixed(1)}%</div>}
                       </td>
                       <td className="col-actions">
-                        <button onClick={() => setNewsModalStock(stock)} className="btn-icon" title="View Intelligence">📰</button>
-                        <button onClick={() => openEditForm(stock)} className="btn-icon" title="Edit position">✏️</button>
+                        <button onClick={e => { e.stopPropagation(); setModalOrigin({x:e.clientX,y:e.clientY}); setNewsModalStock(stock); }} className="btn-icon" title="View Intelligence">📰</button>
+                        <button onClick={e => openEditForm(stock, e)} className="btn-icon" title="Edit position">✏️</button>
                         <button onClick={() => handleDeleteStock(stock.id)} className="btn-icon btn-icon-danger" title="Remove">✕</button>
                       </td>
                     </tr>
@@ -618,7 +633,7 @@ const EnhancedPortfolioDashboard = () => {
           onMouseDown on inner box stops propagation.
           form onSubmit handles submission — NO page freeze.               */}
       {showForm && (
-        <Modal onClose={() => setShowForm(false)}>
+        <Modal onClose={() => setShowForm(false)} origin={modalOrigin}>
           <div className="modal-header">
             <div className="modal-header-text">
               <h2>{formMode === 'add' ? 'Add Asset' : 'Edit Position'}</h2>
@@ -680,7 +695,7 @@ const EnhancedPortfolioDashboard = () => {
 
       {/* ── Intelligence Modal ── */}
       {newsModalStock && (
-        <Modal onClose={() => setNewsModalStock(null)} wide>
+        <Modal onClose={() => setNewsModalStock(null)} wide origin={modalOrigin}>
           <div className="modal-header">
             <div className="modal-header-text">
               <h2>Intelligence · {newsModalStock.symbol}</h2>
