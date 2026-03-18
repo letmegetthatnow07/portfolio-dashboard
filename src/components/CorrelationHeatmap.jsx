@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import './CorrelationHeatmap.css';
 
 // ── Colour scale ──────────────────────────────────────────────────────────────
@@ -45,21 +46,21 @@ const buildHmNodes = (W, H) => {
     const r = Math.random();
     return r < 0.38 ? COLORS[0] : r < 0.76 ? COLORS[1] : COLORS[2];
   };
-  const COUNT = 18;
+  const COUNT = 30; // same density as main dashboard
   for (let i = 0; i < COUNT; i++) {
     const col = pick();
     _hmNodes.push({
       x: W * (0.04 + Math.random() * 0.92),
-      y: H * (i / COUNT + Math.random() * (1 / COUNT)), // evenly spread
-      vx: (Math.random() - 0.5) * 0.28,
-      vy: (Math.random() < 0.5 ? 1 : -1) * (0.22 + Math.random() * 0.32),
-      oAmp: 28 + Math.random() * 45,
-      oPeriod: 4 + Math.random() * 8,
-      oPhase: Math.random() * Math.PI * 2,
+      y: H * (i / COUNT + Math.random() * (1 / COUNT)),
+      vx: (Math.random() - 0.5) * 0.14,
+      vy: (Math.random() < 0.5 ? 1 : -1) * (0.10 + Math.random() * 0.13),
+      oAmp:    28 + Math.random() * 45,
+      oPeriod: 8 + Math.random() * 14,   // slow calm oscillation
+      oPhase:  Math.random() * Math.PI * 2,
       r: 1.8 + Math.random() * 1.8,
       color: col.c, alpha: col.a(),
       pulseOffset: Math.random() * Math.PI * 2,
-      pulseSpeed: 0.008 + Math.random() * 0.014,
+      pulseSpeed: 0.004 + Math.random() * 0.007,
     });
   }
   _hmReady = true;
@@ -90,8 +91,8 @@ const NeuralBackground = () => {
     canvas.addEventListener('mousemove', onMouse);
     canvas.addEventListener('mouseleave', onLeave);
 
-    const EDGE_DIST = 120, REPEL_DIST = 90, REPEL_FORCE = 1.5;
-    const H_DAMP = 0.93, V_DAMP = 0.984, H_RESTORE = 0.014, MAX_SPD = 2.0;
+    const EDGE_DIST = 120, REPEL_DIST = 90, REPEL_FORCE = 1.0;
+    const H_DAMP = 0.92, V_DAMP = 0.988, H_RESTORE = 0.016, MAX_SPD = 1.2;
 
     const draw = (t) => {
       const W = canvas.width, H = canvas.height;
@@ -101,9 +102,9 @@ const NeuralBackground = () => {
       const now = t * 0.001;
 
       for (const n of nodes) {
-        n.vy += Math.sin(now / n.oPeriod * Math.PI * 2 + n.oPhase) * 0.032;
-        n.vx += (Math.random() - 0.5) * 0.025;
-        n.vy += (Math.random() - 0.5) * 0.025;
+        n.vy += Math.sin(now / n.oPeriod * Math.PI * 2 + n.oPhase) * 0.015;
+        n.vx += (Math.random() - 0.5) * 0.012;
+        n.vy += (Math.random() - 0.5) * 0.012;
         n.vx -= n.vx * H_RESTORE;
         const dx = n.x - mx, dy = n.y - my;
         const dist = Math.sqrt(dx * dx + dy * dy);
@@ -117,7 +118,7 @@ const NeuralBackground = () => {
         n.x += n.vx; n.y += n.vy;
         if (n.x < 0) { n.x = 0; n.vx = Math.abs(n.vx) * 0.6; }
         if (n.x > W) { n.x = W; n.vx = -Math.abs(n.vx) * 0.6; }
-        if (n.y < 0) n.y = H; // vertical wrap
+        if (n.y < 0) n.y = H;
         if (n.y > H) n.y = 0;
       }
 
@@ -191,12 +192,12 @@ const CorrelationHeatmap = () => {
 
   const onMouseLeave = useCallback(() => setHoverTip(null), []);
 
-  // Click: pin a card near the cell. Second click on same cell unpins.
+  // Click: pin a compact popup next to cursor. Second click on same cell unpins.
   const onCellClick = useCallback((e, t1, t2, val) => {
     if (val === 1) return;
     e.stopPropagation();
+    e.nativeEvent.stopImmediatePropagation();
     const style = getCellStyle(val);
-    // Toggle — clicking the same cell again clears the pin
     setPinnedTip(prev =>
       prev && prev.t1 === t1 && prev.t2 === t2
         ? null
@@ -204,11 +205,15 @@ const CorrelationHeatmap = () => {
     );
   }, []);
 
-  // Click anywhere outside the heatmap clears the pin
+  // Click anywhere outside clears the pin — use capture phase on document
   useEffect(() => {
-    const clear = () => setPinnedTip(null);
-    document.addEventListener('click', clear);
-    return () => document.removeEventListener('click', clear);
+    const clear = (e) => {
+      // Don't clear if the click was on the pin popup itself
+      if (e.target.closest && e.target.closest('.heatmap-pin-popup')) return;
+      setPinnedTip(null);
+    };
+    document.addEventListener('click', clear, true);
+    return () => document.removeEventListener('click', clear, true);
   }, []);
 
   if (loading) {
@@ -370,23 +375,23 @@ const CorrelationHeatmap = () => {
         </div>
       )}
 
-      {/* ── Pinned popup — compact single-line at exact click position ── */}
-      {pinnedTip && (
+      {/* ── Pinned popup — rendered as portal so position:fixed always works ── */}
+      {pinnedTip && createPortal(
         <div
           className="heatmap-pin-popup"
           style={{
-            left: Math.min(pinnedTip.x + 10, window.innerWidth - 220),
-            top:  pinnedTip.y - 38,
+            left: Math.min(pinnedTip.x + 14, window.innerWidth - 230),
+            top:  Math.max(pinnedTip.y - 44, 8),
           }}
-          onClick={e => e.stopPropagation()}
         >
           <span className="pin-pair">{pinnedTip.t1} vs {pinnedTip.t2}</span>
           <span className="pin-eq">=</span>
           <span className="pin-val" style={{ color: pinnedTip.style.bandColor || '#f0f0ee' }}>
             {pinnedTip.val.toFixed(2)}
           </span>
-          <button className="pin-close" onClick={() => setPinnedTip(null)}>✕</button>
-        </div>
+          <button className="pin-close" onClick={e => { e.stopPropagation(); setPinnedTip(null); }}>✕</button>
+        </div>,
+        document.body
       )}
     </div>
   );
