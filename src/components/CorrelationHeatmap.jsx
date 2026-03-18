@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import './CorrelationHeatmap.css';
 
 // ── Colour scale ──────────────────────────────────────────────────────────────
@@ -29,65 +29,151 @@ const CASCADE_COLOR = {
   HEALTHY: '#059669', WEAKENING: '#d97706', DECAYING: '#ea580c', CRITICAL: '#b91c1c',
 };
 
-// ── Neural Background — SVG with animated signal packets ──────────────────────
-// Green network left, red network right, subtle bottom connectors.
-// Uses CSS classes defined in CorrelationHeatmap.css for animations.
-const NeuralBackground = () => (
-  <svg className="neural-bg" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"
-       preserveAspectRatio="xMidYMid slice">
+// ── Canvas Neural Background — random drift, mouse repulsion ─────────────────
+// Nodes are randomly scattered with random colours (green/red/neutral).
+// No fixed colour zones — they drift freely like market signals.
+// Canvas sits behind the heatmap with pointer-events:none.
+const NeuralBackground = () => {
+  const canvasRef = useRef(null);
+  const mouseRef  = useRef({ x: -9999, y: -9999 });
+  const nodesRef  = useRef([]);
+  const rafRef    = useRef(null);
 
-    {/* GREEN BULL NETWORK — top-left */}
-    {/* Static edges */}
-    <line className="eg"  x1="5%"  y1="12%" x2="18%" y2="28%" stroke="#059669" strokeWidth="1.2"/>
-    <line className="eg"  x1="18%" y1="28%" x2="32%" y2="14%" stroke="#059669" strokeWidth="1.2"/>
-    <line className="eg2" x1="32%" y1="14%" x2="42%" y2="32%" stroke="#059669" strokeWidth="1.0"/>
-    <line className="eg2" x1="18%" y1="28%" x2="22%" y2="46%" stroke="#059669" strokeWidth="1.0"/>
-    <line className="eg"  x1="22%" y1="46%" x2="42%" y2="32%" stroke="#059669" strokeWidth="1.0"/>
-    <line className="eg2" x1="5%"  y1="12%" x2="32%" y2="14%" stroke="#059669" strokeWidth="0.6"/>
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const container = canvas.parentElement;
 
-    {/* Signal packets — green */}
-    <line className="sg1" x1="5%"  y1="12%" x2="18%" y2="28%" stroke="#059669" strokeWidth="2.5" strokeDasharray="16 220" strokeDashoffset="220"/>
-    <line className="sg2" x1="18%" y1="28%" x2="32%" y2="14%" stroke="#059669" strokeWidth="2.5" strokeDasharray="16 220" strokeDashoffset="220"/>
-    <line className="sg3" x1="32%" y1="14%" x2="42%" y2="32%" stroke="#059669" strokeWidth="2.5" strokeDasharray="16 220" strokeDashoffset="220"/>
-    <line className="sg4" x1="18%" y1="28%" x2="22%" y2="46%" stroke="#059669" strokeWidth="2.5" strokeDasharray="16 220" strokeDashoffset="220"/>
+    const resize = () => {
+      canvas.width  = container.offsetWidth;
+      canvas.height = container.offsetHeight;
+      initNodes();
+    };
 
-    {/* Green nodes */}
-    <circle className="ng"   cx="5%"  cy="12%" r="4.5" fill="#059669"/>
-    <circle className="ng-s" cx="18%" cy="28%" r="4"   fill="#059669"/>
-    <circle className="ng"   cx="32%" cy="14%" r="4.5" fill="#059669"/>
-    <circle className="ng-s" cx="22%" cy="46%" r="3.5" fill="#059669"/>
-    <circle className="ng"   cx="42%" cy="32%" r="4"   fill="#059669"/>
+    const COLORS = [
+      { c: '#059669', a: () => 0.40 + Math.random() * 0.22 },
+      { c: '#dc2626', a: () => 0.36 + Math.random() * 0.20 },
+      { c: '#a0a09a', a: () => 0.18 + Math.random() * 0.12 },
+    ];
+    const pickColor = () => {
+      const r = Math.random();
+      if (r < 0.40) return COLORS[0];
+      if (r < 0.80) return COLORS[1];
+      return COLORS[2];
+    };
 
-    {/* RED BEAR NETWORK — top-right
-        Kept well within the right 40% of the container so it doesn't overlap
-        the Capital Optimisation panel which sits to the right of the heatmap. */}
-    <line className="er"  x1="62%" y1="8%"  x2="74%" y2="22%" stroke="#dc2626" strokeWidth="1.2"/>
-    <line className="er"  x1="74%" y1="22%" x2="88%" y2="12%" stroke="#dc2626" strokeWidth="1.2"/>
-    <line className="er2" x1="74%" y1="22%" x2="78%" y2="38%" stroke="#dc2626" strokeWidth="1.0"/>
-    <line className="er2" x1="88%" y1="12%" x2="92%" y2="30%" stroke="#dc2626" strokeWidth="1.0"/>
-    <line className="er"  x1="78%" y1="38%" x2="92%" y2="30%" stroke="#dc2626" strokeWidth="1.0"/>
-    <line className="er2" x1="62%" y1="8%"  x2="88%" y2="12%" stroke="#dc2626" strokeWidth="0.6"/>
+    const initNodes = () => {
+      const W = canvas.width, H = canvas.height;
+      const nodes = [];
+      for (let i = 0; i < 22; i++) {
+        const col = pickColor();
+        const x = W * (0.03 + Math.random() * 0.94);
+        const y = H * (0.03 + Math.random() * 0.94);
+        nodes.push({
+          x, y,
+          baseX: x, baseY: y,
+          vx: (Math.random() - 0.5) * 0.5,
+          vy: (Math.random() - 0.5) * 0.5,
+          r: 2.0 + Math.random() * 2.2,
+          color: col.c, alpha: col.a(),
+          pulseOffset: Math.random() * Math.PI * 2,
+          pulseSpeed: 0.010 + Math.random() * 0.018,
+        });
+      }
+      nodesRef.current = nodes;
+    };
 
-    <line className="sr1" x1="62%" y1="8%"  x2="74%" y2="22%" stroke="#dc2626" strokeWidth="2.5" strokeDasharray="16 220" strokeDashoffset="220"/>
-    <line className="sr2" x1="74%" y1="22%" x2="88%" y2="12%" stroke="#dc2626" strokeWidth="2.5" strokeDasharray="16 220" strokeDashoffset="220"/>
-    <line className="sr3" x1="74%" y1="22%" x2="78%" y2="38%" stroke="#dc2626" strokeWidth="2.5" strokeDasharray="16 220" strokeDashoffset="220"/>
+    const onMouse = e => {
+      const rect = canvas.getBoundingClientRect();
+      mouseRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    };
+    const onLeave = () => { mouseRef.current = { x: -9999, y: -9999 }; };
+    canvas.addEventListener('mousemove', onMouse);
+    canvas.addEventListener('mouseleave', onLeave);
 
-    <circle className="nr"   cx="62%" cy="8%"  r="4.5" fill="#dc2626"/>
-    <circle className="nr-s" cx="74%" cy="22%" r="4"   fill="#dc2626"/>
-    <circle className="nr"   cx="88%" cy="12%" r="3.5" fill="#dc2626"/>
-    <circle className="nr-s" cx="78%" cy="38%" r="4"   fill="#dc2626"/>
-    <circle className="nr"   cx="92%" cy="30%" r="3"   fill="#dc2626"/>
+    const EDGE_DIST   = 140;
+    const REPEL_DIST  = 100;
+    const REPEL_FORCE = 1.4;
+    const DAMPING     = 0.96;
+    const REVERT      = 0.003;
 
-    {/* Neutral connectors — bottom, very dim */}
-    <line x1="10%" y1="72%" x2="30%" y2="84%" stroke="#a0a09a" strokeWidth="0.8" opacity="0.09"/>
-    <line x1="30%" y1="84%" x2="55%" y2="77%" stroke="#a0a09a" strokeWidth="0.8" opacity="0.07"/>
-    <line x1="55%" y1="77%" x2="70%" y2="86%" stroke="#a0a09a" strokeWidth="0.8" opacity="0.07"/>
-    <circle cx="10%" cy="72%" r="3"   fill="#a0a09a" opacity="0.16"/>
-    <circle cx="30%" cy="84%" r="2.5" fill="#a0a09a" opacity="0.13"/>
-    <circle cx="55%" cy="77%" r="3"   fill="#a0a09a" opacity="0.14"/>
-    <circle cx="70%" cy="86%" r="2.5" fill="#a0a09a" opacity="0.11"/>
-  </svg>
-);
+    const draw = (t) => {
+      const W = canvas.width, H = canvas.height;
+      ctx.clearRect(0, 0, W, H);
+      const nodes = nodesRef.current;
+      const mx = mouseRef.current.x, my = mouseRef.current.y;
+
+      for (const n of nodes) {
+        n.vx += (n.baseX - n.x) * REVERT;
+        n.vy += (n.baseY - n.y) * REVERT;
+        n.vx += (Math.random() - 0.5) * 0.06;
+        n.vy += (Math.random() - 0.5) * 0.06;
+        const dx = n.x - mx, dy = n.y - my;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist < REPEL_DIST && dist > 0) {
+          const f = (REPEL_DIST - dist) / REPEL_DIST * REPEL_FORCE;
+          n.vx += (dx/dist)*f; n.vy += (dy/dist)*f;
+        }
+        n.vx *= DAMPING; n.vy *= DAMPING;
+        const spd = Math.sqrt(n.vx*n.vx + n.vy*n.vy);
+        if (spd > 2.2) { n.vx = n.vx/spd*2.2; n.vy = n.vy/spd*2.2; }
+        n.x += n.vx; n.y += n.vy;
+        if (n.x < 0) { n.x = 0; n.vx *= -0.5; }
+        if (n.x > W) { n.x = W; n.vx *= -0.5; }
+        if (n.y < 0) { n.y = 0; n.vy *= -0.5; }
+        if (n.y > H) { n.y = H; n.vy *= -0.5; }
+      }
+
+      // Edges — connect any nodes within EDGE_DIST regardless of colour
+      for (let i = 0; i < nodes.length; i++) {
+        for (let j = i+1; j < nodes.length; j++) {
+          const a = nodes[i], b = nodes[j];
+          const dx = a.x-b.x, dy = a.y-b.y;
+          const d = Math.sqrt(dx*dx + dy*dy);
+          if (d > EDGE_DIST) continue;
+          const alpha = (1 - d/EDGE_DIST) * 0.16;
+          // colour edge by the brighter node
+          const edgeCol = a.color === '#a0a09a' ? b.color : a.color;
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+          ctx.strokeStyle = edgeCol === '#059669' ? `rgba(5,150,105,${alpha})`
+                          : edgeCol === '#dc2626' ? `rgba(220,38,38,${alpha})`
+                          : `rgba(160,160,154,${alpha})`;
+          ctx.lineWidth = 1; ctx.stroke();
+        }
+      }
+
+      // Nodes
+      const now = t * 0.001;
+      for (const n of nodes) {
+        const pulse = 0.82 + 0.18 * Math.sin(now * n.pulseSpeed * 60 + n.pulseOffset);
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, n.r * pulse, 0, Math.PI*2);
+        ctx.fillStyle = n.color === '#059669' ? `rgba(5,150,105,${n.alpha*pulse})`
+                      : n.color === '#dc2626' ? `rgba(220,38,38,${n.alpha*pulse})`
+                      : `rgba(160,160,154,${n.alpha*pulse})`;
+        ctx.fill();
+      }
+
+      rafRef.current = requestAnimationFrame(draw);
+    };
+
+    resize();
+    const ro = new ResizeObserver(resize);
+    ro.observe(container);
+    rafRef.current = requestAnimationFrame(draw);
+
+    return () => {
+      cancelAnimationFrame(rafRef.current);
+      ro.disconnect();
+      canvas.removeEventListener('mousemove', onMouse);
+      canvas.removeEventListener('mouseleave', onLeave);
+    };
+  }, []);
+
+  return <canvas ref={canvasRef} className="neural-bg-canvas" aria-hidden="true"/>;
+};
 
 // ── Main component ────────────────────────────────────────────────────────────
 const CorrelationHeatmap = () => {
@@ -293,28 +379,22 @@ const CorrelationHeatmap = () => {
         </div>
       )}
 
-      {/* ── Pinned card — appears on click, anchored near click position ── */}
+      {/* ── Pinned popup — compact single-line at exact click position ── */}
       {pinnedTip && (
         <div
-          className="heatmap-pinned"
+          className="heatmap-pin-popup"
           style={{
-            left: Math.min(pinnedTip.x + 16, window.innerWidth - 200),
-            top:  Math.min(pinnedTip.y - 20, window.innerHeight - 130),
+            left: Math.min(pinnedTip.x + 10, window.innerWidth - 220),
+            top:  pinnedTip.y - 38,
           }}
           onClick={e => e.stopPropagation()}
         >
-          <button className="pinned-close" onClick={() => setPinnedTip(null)}>✕</button>
-          <div className="pinned-pair">
-            <span>{pinnedTip.t1}</span>
-            <span className="pinned-pair-sep">vs</span>
-            <span>{pinnedTip.t2}</span>
-          </div>
-          <div className="pinned-value" style={{ color: pinnedTip.style.bandColor || '#f0f0ee' }}>
-            {pinnedTip.val.toFixed(3)}
-          </div>
-          <div className="pinned-label" style={{ color: pinnedTip.style.bandColor ? `${pinnedTip.style.bandColor}99` : '#6b6b65' }}>
-            {pinnedTip.style.bandLabel}
-          </div>
+          <span className="pin-pair">{pinnedTip.t1} vs {pinnedTip.t2}</span>
+          <span className="pin-eq">=</span>
+          <span className="pin-val" style={{ color: pinnedTip.style.bandColor || '#f0f0ee' }}>
+            {pinnedTip.val.toFixed(2)}
+          </span>
+          <button className="pin-close" onClick={() => setPinnedTip(null)}>✕</button>
         </div>
       )}
     </div>
