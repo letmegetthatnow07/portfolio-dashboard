@@ -172,8 +172,6 @@ const CorrelationHeatmap = () => {
   const [matrixData, setMatrixData] = useState(null);
   const [loading,    setLoading]    = useState(true);
   const [pinnedTip,  setPinnedTip]  = useState(null);
-  // scrollY tracks current scroll so pin popup stays at correct viewport pos
-  const [scrollY,    setScrollY]    = useState(0);
   const [tab,        setTab]        = useState('RECOMMEND');
 
   useEffect(() => {
@@ -184,15 +182,13 @@ const CorrelationHeatmap = () => {
       .finally(() => setLoading(false));
   }, []);
 
-  // Track scroll so we can keep the pin popup in correct viewport position
+  // Clear pin on scroll — simpler and cleaner than tracking position
   useEffect(() => {
-    const onScroll = () => setScrollY(window.scrollY);
+    const onScroll = () => setPinnedTip(null);
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
-  // Click: store pageY (scroll-absolute) so we can subtract current scrollY
-  // to get the correct clientY equivalent at any scroll position.
   const onCellClick = useCallback((e, t1, t2, val) => {
     if (val === 1) return;
     e.stopPropagation();
@@ -201,12 +197,7 @@ const CorrelationHeatmap = () => {
     setPinnedTip(prev =>
       prev && prev.t1 === t1 && prev.t2 === t2
         ? null
-        : {
-            t1, t2, val, style,
-            clientX: e.clientX,
-            // Store page-absolute Y so we can recalculate on scroll
-            pageY: e.clientY + window.scrollY,
-          }
+        : { t1, t2, val, style, x: e.clientX, y: e.clientY }
     );
   }, []);
 
@@ -364,15 +355,12 @@ const CorrelationHeatmap = () => {
         )}
       </div>
 
-      {/* ── Pinned popup — portal so position:fixed is always viewport-relative.
-          pageY - scrollY gives the correct viewport Y at current scroll position,
-          so the popup stays visually locked to where you clicked as you scroll. ── */}
       {pinnedTip && createPortal(
         <div
           className="heatmap-pin-popup"
           style={{
-            left: Math.min(pinnedTip.clientX + 14, window.innerWidth - 240),
-            top:  Math.max(pinnedTip.pageY - scrollY - 42, 8),
+            left: Math.min(pinnedTip.x + 14, window.innerWidth - 240),
+            top:  Math.max(pinnedTip.y - 42, 8),
           }}
         >
           <span className="pin-pair">{pinnedTip.t1} vs {pinnedTip.t2}</span>
