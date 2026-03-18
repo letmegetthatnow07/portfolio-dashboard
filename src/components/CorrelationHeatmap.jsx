@@ -378,7 +378,6 @@ const CorrelationHeatmap = () => {
           <span className="pin-val" style={{ color: pinnedTip.style.bandColor || '#6b6b65' }}>
             {pinnedTip.val.toFixed(2)}
           </span>
-          <button className="pin-close" onClick={e => { e.stopPropagation(); setPinnedTip(null); }}>✕</button>
         </div>,
         document.body
       )}
