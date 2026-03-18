@@ -210,10 +210,12 @@ const CorrelationHeatmap = () => {
     );
   }, []);
 
-  // Click anywhere outside clears the pin — capture phase
+  // Click anywhere outside clears the pin.
+  // BUT: if the click is on a heatmap cell, let onCellClick handle the toggle
+  // instead — otherwise capture-phase fires first and clears before toggle runs.
   useEffect(() => {
     const clear = (e) => {
-      if (e.target.closest && e.target.closest('.heatmap-pin-popup')) return;
+      if (e.target.closest && e.target.closest('.heatmap-cell')) return;
       setPinnedTip(null);
     };
     document.addEventListener('click', clear, true);
