@@ -119,11 +119,11 @@ const NeuralBackground = () => {
 
     const EDGE_DIST   = 170;
     const REPEL_DIST  = 130;
-    const REPEL_FORCE = 0.85;  // gentler push
+    const REPEL_FORCE = 0.77;
     const H_DAMPING   = 0.91;
-    const V_DAMPING   = 0.990; // very light — preserves slow vertical drift
+    const V_DAMPING   = 0.991;
     const H_RESTORE   = 0.016;
-    const MAX_SPEED   = 0.95;  // calmer cap
+    const MAX_SPEED   = 0.86;
 
     const draw = (t) => {
       const W = canvas.width, H = canvas.height;
@@ -137,12 +137,12 @@ const NeuralBackground = () => {
       for (const n of nodes) {
         // ── Vertical oscillation force (stock-like sine wave) ──────────────
         // Each node has its own period and phase — they don't sync
-        const oscForce = Math.sin(now / n.oPeriod * Math.PI * 2 + n.oPhase) * 0.012;
+        const oscForce = Math.sin(now / n.oPeriod * Math.PI * 2 + n.oPhase) * 0.011;
         n.vy += oscForce;
 
         // ── Tiny random nudge ──────────────────────────────────────────────
-        n.vx += (Math.random() - 0.5) * 0.012;
-        n.vy += (Math.random() - 0.5) * 0.012;
+        n.vx += (Math.random() - 0.5) * 0.011;
+        n.vy += (Math.random() - 0.5) * 0.011;
 
         // ── Horizontal restore (drift back to centre-ish, very gently) ─────
         n.vx -= n.vx * H_RESTORE;
