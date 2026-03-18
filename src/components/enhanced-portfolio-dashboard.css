@@ -15,11 +15,6 @@
   --text-main:    #1a1917;
   --text-muted:   #6b6b65;
   --text-dim:     #a0a09a;
-  --color-strong-buy: #059669;
-  --color-buy:        #2563eb;
-  --color-hold:       #d97706;
-  --color-reduce:     #dc2626;
-  --color-sell:       #7f1d1d;
   --green:  #059669;
   --blue:   #2563eb;
   --amber:  #d97706;
@@ -27,88 +22,19 @@
   --r-sm:  6px; --r-md: 10px; --r-lg: 14px;
   --shadow-sm: 0 1px 3px rgba(50,45,30,.07), 0 2px 10px rgba(50,45,30,.05);
   --shadow-md: 0 4px 16px rgba(50,45,30,.09), 0 1px 4px rgba(50,45,30,.05);
-  --shadow-lg: 0 12px 40px rgba(50,45,30,.14);
+  --shadow-lg: 0 20px 60px rgba(26,25,23,.22), 0 4px 20px rgba(26,25,23,.10);
   --font-ui:   'DM Sans',  system-ui, sans-serif;
   --font-mono: 'DM Mono',  'Fira Code', monospace;
   --transition: 0.14s ease;
 }
 
-/* ── Neural network background animations ────────────────────────────────────
-   Nodes pulse/breathe. Signal packets travel along edges (dashoffset).
-   Opacity range 0.15–0.30 on edges, nodes at 0.30–0.60 — present but never
-   competing with the actual dashboard data.
-   Green = bull signals (left), Red = bear signals (right).              */
+/* ── Utility animations ──────────────────────────────────────────────────── */
+@keyframes blink    { 0%,100%{opacity:1} 50%{opacity:.2} }
+@keyframes spin     { to{transform:rotate(360deg)} }
+@keyframes fadeIn   { from{opacity:0} to{opacity:1} }
+@keyframes slideUp  { from{transform:translateY(20px);opacity:0} to{transform:translateY(0);opacity:1} }
 
-/* Node pulse */
-@keyframes mkt-node-g {
-  0%,100% { r: 4;   opacity: 0.38; }
-  50%     { r: 6;   opacity: 0.65; }
-}
-@keyframes mkt-node-g-s {
-  0%,100% { r: 3.5; opacity: 0.28; }
-  50%     { r: 5.5; opacity: 0.52; }
-}
-@keyframes mkt-node-r {
-  0%,100% { r: 4;   opacity: 0.35; }
-  50%     { r: 6;   opacity: 0.62; }
-}
-@keyframes mkt-node-r-s {
-  0%,100% { r: 3.5; opacity: 0.25; }
-  50%     { r: 5.5; opacity: 0.48; }
-}
-
-/* Edge glow — base lines */
-@keyframes mkt-edge-g {
-  0%,100% { opacity: 0.15; }
-  50%     { opacity: 0.30; }
-}
-@keyframes mkt-edge-r {
-  0%,100% { opacity: 0.13; }
-  50%     { opacity: 0.26; }
-}
-
-/* Signal packets along edges */
-@keyframes mkt-sig-g {
-  0%   { stroke-dashoffset: 260; opacity: 0; }
-  8%   { opacity: 0.70; }
-  92%  { opacity: 0.70; }
-  100% { stroke-dashoffset: 0;   opacity: 0; }
-}
-@keyframes mkt-sig-r {
-  0%   { stroke-dashoffset: 260; opacity: 0; }
-  8%   { opacity: 0.60; }
-  92%  { opacity: 0.60; }
-  100% { stroke-dashoffset: 0;   opacity: 0; }
-}
-
-/* Utility */
-@keyframes blink  { 0%,100%{opacity:1} 50%{opacity:.2} }
-@keyframes spin   { to{transform:rotate(360deg)} }
-@keyframes fadeIn { from{opacity:0} to{opacity:1} }
-@keyframes slideUp { from{transform:translateY(12px);opacity:0} to{transform:translateY(0);opacity:1} }
-
-/* Classes applied to SVG elements in MarketBackground */
-.mkt-ng    { animation: mkt-node-g   3.8s ease-in-out infinite; }
-.mkt-ng-s  { animation: mkt-node-g-s 5.2s ease-in-out infinite; animation-delay: -1.6s; }
-.mkt-nr    { animation: mkt-node-r   4.2s ease-in-out infinite; animation-delay: -0.9s; }
-.mkt-nr-s  { animation: mkt-node-r-s 6.0s ease-in-out infinite; animation-delay: -2.3s; }
-.mkt-eg    { animation: mkt-edge-g   4.0s ease-in-out infinite; }
-.mkt-eg2   { animation: mkt-edge-g   5.5s ease-in-out infinite; animation-delay: -2.0s; }
-.mkt-er    { animation: mkt-edge-r   4.5s ease-in-out infinite; animation-delay: -1.0s; }
-.mkt-er2   { animation: mkt-edge-r   6.2s ease-in-out infinite; animation-delay: -2.8s; }
-
-/* Signal packets */
-.mkt-sg1 { animation: mkt-sig-g 3.4s ease-in-out infinite; animation-delay:  0.0s; }
-.mkt-sg2 { animation: mkt-sig-g 4.2s ease-in-out infinite; animation-delay: -1.4s; }
-.mkt-sg3 { animation: mkt-sig-g 3.8s ease-in-out infinite; animation-delay: -2.6s; }
-.mkt-sg4 { animation: mkt-sig-g 4.8s ease-in-out infinite; animation-delay: -0.8s; }
-.mkt-sg5 { animation: mkt-sig-g 3.2s ease-in-out infinite; animation-delay: -3.5s; }
-.mkt-sr1 { animation: mkt-sig-r 3.6s ease-in-out infinite; animation-delay: -0.6s; }
-.mkt-sr2 { animation: mkt-sig-r 4.4s ease-in-out infinite; animation-delay: -2.1s; }
-.mkt-sr3 { animation: mkt-sig-r 3.1s ease-in-out infinite; animation-delay: -3.3s; }
-.mkt-sr4 { animation: mkt-sig-r 4.9s ease-in-out infinite; animation-delay: -1.7s; }
-
-/* ── Reset ───────────────────────────────────────────────────────────────────── */
+/* ── Reset ───────────────────────────────────────────────────────────────── */
 *,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
@@ -122,7 +48,7 @@ body {
 button { font-family: var(--font-ui); cursor: pointer; }
 input, select { font-family: var(--font-ui); }
 
-/* ── Layout ──────────────────────────────────────────────────────────────────── */
+/* ── Layout ──────────────────────────────────────────────────────────────── */
 .dashboard-container {
   max-width: 1280px;
   margin: 0 auto;
@@ -130,20 +56,18 @@ input, select { font-family: var(--font-ui); }
   position: relative;
 }
 
-/* Market background — fixed, behind everything */
-.market-bg {
+/* Neural canvas — fixed behind everything, pointer-events:none so it never interferes */
+.neural-canvas {
   position: fixed;
   top: 0; left: 0;
   width: 100vw; height: 100vh;
   pointer-events: none;
   z-index: 0;
-  overflow: hidden;
 }
 
-/* All page content above the background */
-.dashboard-container > *:not(.market-bg) { position: relative; z-index: 1; }
+.dashboard-container > *:not(.neural-canvas) { position: relative; z-index: 1; }
 
-/* ── Header ──────────────────────────────────────────────────────────────────── */
+/* ── Header ──────────────────────────────────────────────────────────────── */
 .dashboard-header {
   display: flex; justify-content: space-between; align-items: flex-end;
   margin-bottom: 32px;
@@ -166,7 +90,7 @@ input, select { font-family: var(--font-ui); }
   background: var(--green); animation: blink 2.4s infinite; flex-shrink: 0;
 }
 
-/* ── Buttons ──────────────────────────────────────────────────────────────────── */
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
 .btn-primary {
   background: var(--text-main); color: #fff; border: none;
   border-radius: var(--r-sm); padding: 9px 18px;
@@ -186,22 +110,21 @@ input, select { font-family: var(--font-ui); }
 .btn-close {
   background: transparent; border: 1px solid var(--border-light);
   border-radius: var(--r-sm); color: var(--text-muted);
-  width: 30px; height: 30px; font-size: 14px;
+  width: 32px; height: 32px; font-size: 16px;
   display: flex; align-items: center; justify-content: center;
-  transition: all var(--transition); flex-shrink: 0;
+  transition: all var(--transition); flex-shrink: 0; cursor: pointer;
 }
-.btn-close:hover { color: var(--text-main); border-color: var(--border-mid); }
+.btn-close:hover { color: var(--text-main); border-color: var(--border-mid); background: var(--bg-raised); }
 
 .btn-icon {
   background: none; border: none; font-size: 15px;
-  padding: 5px 7px; border-radius: var(--r-sm);
-  color: var(--text-dim);
+  padding: 5px 7px; border-radius: var(--r-sm); color: var(--text-dim);
   transition: color var(--transition), background var(--transition);
 }
 .btn-icon:hover { color: var(--text-main); background: var(--bg-raised); }
 .btn-icon-danger:hover { color: var(--red); }
 
-/* ── Stats ───────────────────────────────────────────────────────────────────── */
+/* ── Stats ───────────────────────────────────────────────────────────────── */
 .summary-section { margin-bottom: 28px; }
 .stats-grid {
   display: grid;
@@ -231,7 +154,7 @@ input, select { font-family: var(--font-ui); }
 .stat-sub.pos { color: var(--green); }
 .stat-sub.neg { color: var(--red); }
 
-/* ── Controls ────────────────────────────────────────────────────────────────── */
+/* ── Controls ────────────────────────────────────────────────────────────── */
 .controls-section {
   display: flex; align-items: center; gap: 10px;
   margin-bottom: 16px; flex-wrap: wrap;
@@ -257,7 +180,7 @@ input, select { font-family: var(--font-ui); }
 .minimal-select:focus { border-color: var(--text-muted); }
 .results-count { margin-left: auto; font-family: var(--font-mono); font-size: 12px; color: var(--text-dim); }
 
-/* ── Table ───────────────────────────────────────────────────────────────────── */
+/* ── Table ───────────────────────────────────────────────────────────────── */
 .table-wrapper {
   background: var(--bg-card); border: 1px solid var(--border-light);
   border-radius: var(--r-lg); box-shadow: var(--shadow-sm); overflow: hidden;
@@ -280,7 +203,7 @@ input, select { font-family: var(--font-ui); }
 .row-flat { border-left: 3px solid transparent; }
 .portfolio-table td { padding: 16px 20px; vertical-align: middle; }
 
-/* ── Cell types ─────────────────────────────────────────────────────────────── */
+/* ── Cell types ──────────────────────────────────────────────────────────── */
 .stock-symbol {
   font-family: var(--font-mono); font-size: 14px; font-weight: 500;
   color: var(--text-main); letter-spacing: 0.01em; display: block;
@@ -333,7 +256,7 @@ input, select { font-family: var(--font-ui); }
 .weight-pct { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); margin-top: 3px; }
 .col-actions { width: 90px; white-space: nowrap; }
 
-/* ── Empty / Loading ─────────────────────────────────────────────────────────── */
+/* ── Empty / Loading ─────────────────────────────────────────────────────── */
 .no-results {
   padding: 56px; text-align: center; color: var(--text-muted); font-size: 14px;
   background: var(--bg-card); border: 1px solid var(--border-light);
@@ -346,56 +269,73 @@ input, select { font-family: var(--font-ui); }
   border-radius: 50%; animation: spin .8s linear infinite;
 }
 
-/* ── Modals ───────────────────────────────────────────────────────────────────
-   CRITICAL: position:fixed + transform centering ensures modal is ALWAYS
-   centred on the visible viewport, regardless of scroll position.
-   z-index:9999 keeps it above sticky headers, tooltips, everything.         */
+/* ── Modal overlay ───────────────────────────────────────────────────────────
+   position:fixed  → always viewport-centred regardless of scroll position
+   pointer-events on overlay dismisses on click-outside
+   The inner .modal-box uses transform: none — React manages centering via
+   flexbox on the overlay, NOT via transform on the box, so there's no
+   layout conflict that could freeze the page.                               */
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(26,25,23,.40);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: rgba(26,25,23,.38);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 9999;
   padding: 24px;
-  animation: fadeIn .18s ease;
+  animation: fadeIn .16s ease both;
 }
 
-.modal-content {
+.modal-box {
   background: var(--bg-card);
-  border: 1px solid var(--border-light);
-  border-radius: var(--r-lg);
+  border: 1px solid var(--border-mid);
+  border-radius: 16px;
   width: 100%;
-  max-width: 520px;
-  /* Hard max-height so tall modals don't overflow viewport */
-  max-height: calc(100vh - 80px);
+  max-width: 500px;
+  max-height: calc(100svh - 80px);
   overflow-y: auto;
-  box-shadow: 0 24px 60px rgba(26,25,23,.22), 0 4px 16px rgba(26,25,23,.10);
-  animation: slideUp .20s ease;
-  /* Prevent the modal itself from stretching to fill the overlay */
-  margin: auto;
+  box-shadow: var(--shadow-lg);
+  animation: slideUp .20s ease both;
+  display: flex;
+  flex-direction: column;
 }
 
-.modal-content.news-modal {
-  max-width: 620px;
+.modal-box.modal-news {
+  max-width: 600px;
 }
 
 .modal-header {
-  display: flex; justify-content: space-between; align-items: flex-start;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
   padding: 22px 24px 18px;
   border-bottom: 1px solid var(--border-light);
-  /* Sticky header so close button is always visible when scrolling inside */
-  position: sticky; top: 0;
-  background: var(--bg-card);
-  z-index: 1;
+  flex-shrink: 0;
 }
-.modal-header h2 { font-size: 17px; font-weight: 700; color: var(--text-main); }
+.modal-header-text h2 { font-size: 16px; font-weight: 700; color: var(--text-main); line-height: 1.3; }
 .modal-sub-label { font-size: 12px; color: var(--text-muted); margin-top: 3px; }
 
-/* ── Forms ───────────────────────────────────────────────────────────────────── */
+.modal-body {
+  overflow-y: auto;
+  flex: 1;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 16px 24px;
+  border-top: 1px solid var(--border-light);
+  flex-shrink: 0;
+  background: var(--bg-main);
+  border-radius: 0 0 16px 16px;
+}
+
+/* ── Forms ───────────────────────────────────────────────────────────────── */
 .form-grid {
   display: grid; grid-template-columns: 1fr 1fr;
   gap: 16px; padding: 22px 24px;
@@ -413,18 +353,8 @@ input, select { font-family: var(--font-ui); }
 }
 .form-group input:focus, .form-group select:focus { border-color: var(--text-muted); }
 .form-group input:disabled { opacity: 0.45; cursor: not-allowed; }
-.form-actions {
-  display: flex; justify-content: flex-end; gap: 8px;
-  padding: 16px 24px 22px; border-top: 1px solid var(--border-light);
-  background: var(--bg-main);
-  position: sticky; bottom: 0;
-}
 
-/* ── News ────────────────────────────────────────────────────────────────────── */
-.news-container {
-  padding: 0;
-  display: flex; flex-direction: column;
-}
+/* ── News ────────────────────────────────────────────────────────────────── */
 .news-card {
   display: block; text-decoration: none; padding: 18px 24px;
   border-bottom: 1px solid var(--border-light); color: var(--text-main);
@@ -440,7 +370,7 @@ input, select { font-family: var(--font-ui); }
 .news-desc { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
 .no-news { text-align: center; color: var(--text-muted); padding: 44px 24px; font-size: 13px; }
 
-/* ── Scrollbars ─────────────────────────────────────────────────────────────── */
+/* ── Scrollbars ──────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border-mid); border-radius: 3px; }
