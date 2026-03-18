@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import './enhanced-portfolio-dashboard.css';
 import CorrelationHeatmap from './CorrelationHeatmap';
 
@@ -30,8 +30,8 @@ const reg = r => REGIME_CFG[r] || { color: '#6b7280', label: r  || 'Normal' };
 
 const fmtUSD = (n, compact = false) => {
   if (n == null || isNaN(n)) return 'N/A';
-  if (compact && Math.abs(n) >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
-  if (compact && Math.abs(n) >= 1_000)     return `$${(n / 1_000).toFixed(1)}K`;
+  if (compact && Math.abs(n) >= 1_000_000) return `$${(n/1_000_000).toFixed(2)}M`;
+  if (compact && Math.abs(n) >= 1_000)     return `$${(n/1_000).toFixed(1)}K`;
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
 };
 const fmtPct = (n, dp = 2) => {
@@ -40,122 +40,200 @@ const fmtPct = (n, dp = 2) => {
 };
 const scoreCol = s => {
   if (s == null) return '#9ca3af';
-  if (s >= 8)    return '#059669';
-  if (s >= 6.5)  return '#2563eb';
-  if (s >= 5)    return '#d97706';
+  if (s >= 8)   return '#059669';
+  if (s >= 6.5) return '#2563eb';
+  if (s >= 5)   return '#d97706';
   return '#dc2626';
 };
 
-// ── Neural Network Market Background ──────────────────────────────────────────
-// Two networks: green bull (left side) + red bear (right side).
-// Each has static edge lines (low opacity glow) + animated signal packets
-// (stroke-dashoffset) travelling along edges + pulsing nodes.
-// Uses SVG percentage coordinates — scales to any viewport.
-// All elements are subtle (opacity 0.15–0.30 edges, 0.30–0.65 nodes).
-const MarketBackground = () => (
-  <svg className="market-bg" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"
-       viewBox="0 0 1200 800" preserveAspectRatio="xMidYMid slice">
+// ── Canvas Neural Network Background ─────────────────────────────────────────
+// Nodes drift randomly, repel from mouse cursor.
+// Green nodes occupy left 45% of screen, red nodes right 45%, a few neutral
+// nodes in the centre. Edges drawn between nearby nodes.
+// All rendered on a <canvas> with pointer-events:none so it never blocks clicks.
+const NeuralBackground = () => {
+  const canvasRef = useRef(null);
+  const mouseRef  = useRef({ x: -9999, y: -9999 });
+  const nodesRef  = useRef([]);
+  const rafRef    = useRef(null);
 
-    {/* ── GREEN BULL NETWORK — left third ────────────────────────────────────
-        Nodes: A(80,640), B(160,490), C(260,580), D(200,370), E(340,450), F(120,280)
-        Arranged in a graph topology — larger vertical spread for visual depth.
-    ───────────────────────────────────────────────────────────────────────── */}
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
 
-    {/* Static edges */}
-    <line className="mkt-eg"  x1="80"  y1="640" x2="160" y2="490" stroke="#059669" strokeWidth="1.3"/>
-    <line className="mkt-eg"  x1="160" y1="490" x2="260" y2="580" stroke="#059669" strokeWidth="1.3"/>
-    <line className="mkt-eg2" x1="160" y1="490" x2="200" y2="370" stroke="#059669" strokeWidth="1.1"/>
-    <line className="mkt-eg2" x1="200" y1="370" x2="340" y2="450" stroke="#059669" strokeWidth="1.1"/>
-    <line className="mkt-eg"  x1="200" y1="370" x2="120" y2="280" stroke="#059669" strokeWidth="1.1"/>
-    <line className="mkt-eg2" x1="120" y1="280" x2="340" y2="450" stroke="#059669" strokeWidth="0.7"/>
-    <line className="mkt-eg2" x1="80"  y1="640" x2="260" y2="580" stroke="#059669" strokeWidth="0.7"/>
+    // ── Resize handler ──────────────────────────────────────────────────────
+    const resize = () => {
+      canvas.width  = window.innerWidth;
+      canvas.height = window.innerHeight;
+      initNodes();
+    };
 
-    {/* Signal packets — green (18px dash travelling along each edge) */}
-    <line className="mkt-sg1"
-      x1="80" y1="640" x2="160" y2="490"
-      stroke="#059669" strokeWidth="3"
-      strokeDasharray="18 260" strokeDashoffset="260"/>
-    <line className="mkt-sg2"
-      x1="160" y1="490" x2="200" y2="370"
-      stroke="#059669" strokeWidth="3"
-      strokeDasharray="18 260" strokeDashoffset="260"/>
-    <line className="mkt-sg3"
-      x1="200" y1="370" x2="340" y2="450"
-      stroke="#059669" strokeWidth="3"
-      strokeDasharray="18 260" strokeDashoffset="260"/>
-    <line className="mkt-sg4"
-      x1="200" y1="370" x2="120" y2="280"
-      stroke="#059669" strokeWidth="3"
-      strokeDasharray="18 260" strokeDashoffset="260"/>
-    <line className="mkt-sg5"
-      x1="160" y1="490" x2="260" y2="580"
-      stroke="#059669" strokeWidth="3"
-      strokeDasharray="18 260" strokeDashoffset="260"/>
+    // ── Build node list ─────────────────────────────────────────────────────
+    // 28 nodes total: 11 green (left), 11 red (right), 6 neutral (centre)
+    const initNodes = () => {
+      const W = canvas.width, H = canvas.height;
+      const make = (x, y, color, alpha) => ({
+        x, y,
+        baseX: x, baseY: y,           // home position for gentle mean-reversion
+        vx: (Math.random() - 0.5) * 0.4,
+        vy: (Math.random() - 0.5) * 0.4,
+        r: 2.5 + Math.random() * 2.5, // radius 2.5–5
+        color, alpha,
+        pulseOffset: Math.random() * Math.PI * 2,
+        pulseSpeed:  0.012 + Math.random() * 0.018,
+      });
 
-    {/* Green nodes */}
-    <circle className="mkt-ng"   cx="80"  cy="640" r="5"   fill="#059669"/>
-    <circle className="mkt-ng-s" cx="160" cy="490" r="5.5" fill="#059669"/>
-    <circle className="mkt-ng"   cx="260" cy="580" r="4.5" fill="#059669"/>
-    <circle className="mkt-ng-s" cx="200" cy="370" r="5"   fill="#059669"/>
-    <circle className="mkt-ng"   cx="340" cy="450" r="4.5" fill="#059669"/>
-    <circle className="mkt-ng-s" cx="120" cy="280" r="4"   fill="#059669"/>
+      const nodes = [];
+      // Green — left third, spread vertically
+      for (let i = 0; i < 11; i++) {
+        nodes.push(make(
+          W * (0.04 + Math.random() * 0.36),
+          H * (0.08 + Math.random() * 0.84),
+          '#059669',
+          0.45 + Math.random() * 0.25,
+        ));
+      }
+      // Red — right third
+      for (let i = 0; i < 11; i++) {
+        nodes.push(make(
+          W * (0.60 + Math.random() * 0.36),
+          H * (0.08 + Math.random() * 0.84),
+          '#dc2626',
+          0.40 + Math.random() * 0.22,
+        ));
+      }
+      // Neutral — centre
+      for (let i = 0; i < 6; i++) {
+        nodes.push(make(
+          W * (0.38 + Math.random() * 0.24),
+          H * (0.15 + Math.random() * 0.70),
+          '#a0a09a',
+          0.22 + Math.random() * 0.14,
+        ));
+      }
+      nodesRef.current = nodes;
+    };
 
-    {/* ── RED BEAR NETWORK — right third ─────────────────────────────────────
-        Nodes: P(900,200), Q(1000,340), R(1100,220), S(960,480), T(1080,400), U(860,360)
-    ───────────────────────────────────────────────────────────────────────── */}
+    // ── Mouse tracking ──────────────────────────────────────────────────────
+    const onMouse = e => { mouseRef.current = { x: e.clientX, y: e.clientY }; };
+    const onLeave = () => { mouseRef.current = { x: -9999, y: -9999 }; };
+    window.addEventListener('mousemove', onMouse);
+    window.addEventListener('mouseleave', onLeave);
 
-    {/* Static edges */}
-    <line className="mkt-er"  x1="900"  y1="200" x2="1000" y2="340" stroke="#dc2626" strokeWidth="1.3"/>
-    <line className="mkt-er"  x1="1000" y1="340" x2="1100" y2="220" stroke="#dc2626" strokeWidth="1.3"/>
-    <line className="mkt-er2" x1="1000" y1="340" x2="960"  y2="480" stroke="#dc2626" strokeWidth="1.1"/>
-    <line className="mkt-er2" x1="960"  y1="480" x2="1080" y2="400" stroke="#dc2626" strokeWidth="1.1"/>
-    <line className="mkt-er"  x1="1100" y1="220" x2="1080" y2="400" stroke="#dc2626" strokeWidth="1.1"/>
-    <line className="mkt-er2" x1="900"  y1="200" x2="860"  y2="360" stroke="#dc2626" strokeWidth="0.7"/>
-    <line className="mkt-er2" x1="860"  y1="360" x2="1000" y2="340" stroke="#dc2626" strokeWidth="0.7"/>
+    // ── Draw loop ───────────────────────────────────────────────────────────
+    const EDGE_DIST    = 180; // max px to draw an edge
+    const REPEL_DIST   = 120; // mouse repulsion radius
+    const REPEL_FORCE  = 1.8;
+    const DAMPING      = 0.96;
+    const REVERT_FORCE = 0.004; // gentle pull back to home position
 
-    {/* Signal packets — red */}
-    <line className="mkt-sr1"
-      x1="900" y1="200" x2="1000" y2="340"
-      stroke="#dc2626" strokeWidth="3"
-      strokeDasharray="18 260" strokeDashoffset="260"/>
-    <line className="mkt-sr2"
-      x1="1000" y1="340" x2="1100" y2="220"
-      stroke="#dc2626" strokeWidth="3"
-      strokeDasharray="18 260" strokeDashoffset="260"/>
-    <line className="mkt-sr3"
-      x1="1000" y1="340" x2="960" y2="480"
-      stroke="#dc2626" strokeWidth="3"
-      strokeDasharray="18 260" strokeDashoffset="260"/>
-    <line className="mkt-sr4"
-      x1="960" y1="480" x2="1080" y2="400"
-      stroke="#dc2626" strokeWidth="3"
-      strokeDasharray="18 260" strokeDashoffset="260"/>
+    const draw = (t) => {
+      const W = canvas.width, H = canvas.height;
+      ctx.clearRect(0, 0, W, H);
 
-    {/* Red nodes */}
-    <circle className="mkt-nr"   cx="900"  cy="200" r="5"   fill="#dc2626"/>
-    <circle className="mkt-nr-s" cx="1000" cy="340" r="5.5" fill="#dc2626"/>
-    <circle className="mkt-nr"   cx="1100" cy="220" r="4.5" fill="#dc2626"/>
-    <circle className="mkt-nr-s" cx="960"  cy="480" r="5"   fill="#dc2626"/>
-    <circle className="mkt-nr"   cx="1080" cy="400" r="4.5" fill="#dc2626"/>
-    <circle className="mkt-nr-s" cx="860"  cy="360" r="4"   fill="#dc2626"/>
+      const nodes = nodesRef.current;
+      const mx = mouseRef.current.x;
+      const my = mouseRef.current.y;
 
-    {/* ── NEUTRAL CONNECTORS — centre + bottom ────────────────────────────────
-        Very dim grey — just enough to fill the middle ground.
-    ───────────────────────────────────────────────────────────────────────── */}
-    <line x1="340" y1="450" x2="560" y2="520" stroke="#a0a09a" strokeWidth="0.8" opacity="0.10"/>
-    <line x1="560" y1="520" x2="720" y2="460" stroke="#a0a09a" strokeWidth="0.8" opacity="0.08"/>
-    <line x1="720" y1="460" x2="860" y2="360" stroke="#a0a09a" strokeWidth="0.8" opacity="0.08"/>
-    <circle cx="560" cy="520" r="3.5" fill="#a0a09a" opacity="0.18"/>
-    <circle cx="720" cy="460" r="3"   fill="#a0a09a" opacity="0.14"/>
+      // Update positions
+      for (const n of nodes) {
+        // Gentle mean-reversion toward home
+        n.vx += (n.baseX - n.x) * REVERT_FORCE;
+        n.vy += (n.baseY - n.y) * REVERT_FORCE;
 
-    {/* Faint horizontal grid reference lines — very subtle */}
-    <line x1="40" y1="300" x2="1160" y2="300" stroke="#a0a09a" strokeWidth="0.5" opacity="0.05" strokeDasharray="4 12"/>
-    <line x1="40" y1="500" x2="1160" y2="500" stroke="#a0a09a" strokeWidth="0.5" opacity="0.05" strokeDasharray="4 12"/>
-    <line x1="40" y1="680" x2="1160" y2="680" stroke="#a0a09a" strokeWidth="0.5" opacity="0.04" strokeDasharray="4 12"/>
-  </svg>
-);
+        // Random drift nudge (small, applied every frame)
+        n.vx += (Math.random() - 0.5) * 0.06;
+        n.vy += (Math.random() - 0.5) * 0.06;
 
-// ── Sub-components ─────────────────────────────────────────────────────────────
+        // Mouse repulsion
+        const dx = n.x - mx, dy = n.y - my;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist < REPEL_DIST && dist > 0) {
+          const force = (REPEL_DIST - dist) / REPEL_DIST * REPEL_FORCE;
+          n.vx += (dx / dist) * force;
+          n.vy += (dy / dist) * force;
+        }
+
+        n.vx *= DAMPING;
+        n.vy *= DAMPING;
+
+        // Clamp velocity
+        const speed = Math.sqrt(n.vx*n.vx + n.vy*n.vy);
+        if (speed > 2.5) { n.vx = n.vx/speed*2.5; n.vy = n.vy/speed*2.5; }
+
+        n.x += n.vx;
+        n.y += n.vy;
+
+        // Soft boundary bounce
+        if (n.x < 0)   { n.x = 0;  n.vx *= -0.5; }
+        if (n.x > W)   { n.x = W;  n.vx *= -0.5; }
+        if (n.y < 0)   { n.y = 0;  n.vy *= -0.5; }
+        if (n.y > H)   { n.y = H;  n.vy *= -0.5; }
+      }
+
+      // Draw edges between nearby nodes of same or adjacent colour families
+      for (let i = 0; i < nodes.length; i++) {
+        for (let j = i + 1; j < nodes.length; j++) {
+          const a = nodes[i], b = nodes[j];
+          const dx = a.x - b.x, dy = a.y - b.y;
+          const d  = Math.sqrt(dx*dx + dy*dy);
+          if (d > EDGE_DIST) continue;
+
+          // Only connect same-colour or neutral to any
+          const sameFamily = a.color === b.color
+            || a.color === '#a0a09a'
+            || b.color === '#a0a09a';
+          if (!sameFamily) continue;
+
+          const alpha = (1 - d / EDGE_DIST) * 0.18; // max edge opacity 0.18
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
+          ctx.strokeStyle = a.color === '#a0a09a' ? `rgba(160,160,154,${alpha})` :
+                            a.color === '#059669' ? `rgba(5,150,105,${alpha})` :
+                                                    `rgba(220,38,38,${alpha})`;
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        }
+      }
+
+      // Draw nodes
+      const now = t * 0.001;
+      for (const n of nodes) {
+        const pulse = 0.85 + 0.15 * Math.sin(now * n.pulseSpeed * 60 + n.pulseOffset);
+        const r     = n.r * pulse;
+        const alpha = n.alpha * pulse;
+
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+
+        if (n.color === '#059669') ctx.fillStyle = `rgba(5,150,105,${alpha})`;
+        else if (n.color === '#dc2626') ctx.fillStyle = `rgba(220,38,38,${alpha})`;
+        else ctx.fillStyle = `rgba(160,160,154,${alpha})`;
+
+        ctx.fill();
+      }
+
+      rafRef.current = requestAnimationFrame(draw);
+    };
+
+    resize();
+    window.addEventListener('resize', resize);
+    rafRef.current = requestAnimationFrame(draw);
+
+    return () => {
+      cancelAnimationFrame(rafRef.current);
+      window.removeEventListener('resize', resize);
+      window.removeEventListener('mousemove', onMouse);
+      window.removeEventListener('mouseleave', onLeave);
+    };
+  }, []);
+
+  return <canvas ref={canvasRef} className="neural-canvas" aria-hidden="true"/>;
+};
+
+// ── Sub-components ────────────────────────────────────────────────────────────
 const ScoreRing = ({ score }) => {
   const r = 17, circ = 2 * Math.PI * r;
   const col = scoreCol(score);
@@ -164,7 +242,7 @@ const ScoreRing = ({ score }) => {
       <svg width="44" height="44" viewBox="0 0 44 44">
         <circle cx="22" cy="22" r={r} fill="none" stroke="#e6e5df" strokeWidth="2.5"/>
         <circle cx="22" cy="22" r={r} fill="none" stroke={col} strokeWidth="2.5"
-          strokeDasharray={`${Math.max(0, Math.min(10, score||0))/10 * circ} ${circ}`}
+          strokeDasharray={`${Math.max(0, Math.min(10, score||0))/10*circ} ${circ}`}
           strokeLinecap="round" transform="rotate(-90 22 22)"
           style={{ transition: 'stroke-dasharray .5s ease' }}/>
       </svg>
@@ -205,30 +283,45 @@ const SpringBar = ({ days }) => {
   );
 };
 
-// ── Main component ─────────────────────────────────────────────────────────────
+// ── Modal component ───────────────────────────────────────────────────────────
+// Uses position:fixed overlay (CSS). Clicking the overlay backdrop closes it.
+// The inner box stopPropagation so clicks inside don't close.
+// NO body.overflow manipulation — that was causing the freeze.
+const Modal = ({ onClose, children, wide = false }) => (
+  <div className="modal-overlay" onMouseDown={onClose}>
+    <div
+      className={`modal-box${wide ? ' modal-news' : ''}`}
+      onMouseDown={e => e.stopPropagation()}
+    >
+      {children}
+    </div>
+  </div>
+);
+
+// ── Main component ────────────────────────────────────────────────────────────
 const EnhancedPortfolioDashboard = () => {
-  const [portfolio,    setPortfolio]    = useState([]);
-  const [stats,        setStats]        = useState(null);
-  const [loading,      setLoading]      = useState(true);
-  const [lastUpdate,   setLastUpdate]   = useState(null);
-  const [sortBy,       setSortBy]       = useState('score');
-  const [filterSignal, setFilterSignal] = useState('ALL');
-  const [showForm,     setShowForm]     = useState(false);
-  const [formMode,     setFormMode]     = useState('add');
-  const [formData,     setFormData]     = useState({
+  const [portfolio,      setPortfolio]      = useState([]);
+  const [stats,          setStats]          = useState(null);
+  const [loading,        setLoading]        = useState(true);
+  const [lastUpdate,     setLastUpdate]     = useState(null);
+  const [sortBy,         setSortBy]         = useState('score');
+  const [filterSignal,   setFilterSignal]   = useState('ALL');
+  const [showForm,       setShowForm]       = useState(false);
+  const [formMode,       setFormMode]       = useState('add');
+  const [formData,       setFormData]       = useState({
     symbol:'', name:'', quantity:'', average_price:'', type:'Stock', region:'Global', sector:''
   });
   const [editingId,      setEditingId]      = useState(null);
   const [newsModalStock, setNewsModalStock] = useState(null);
 
-  const fetchPortfolio = async () => {
+  const fetchPortfolio = useCallback(async () => {
     try {
       setLoading(true);
       const response = await fetch('/api/portfolio');
       if (!response.ok) throw new Error(`API error: ${response.status}`);
       const data = await response.json();
       if (data.status === 'success') {
-        const sorted = [...data.portfolio].sort((a, b) => (b.latest_score||0) - (a.latest_score||0));
+        const sorted = [...data.portfolio].sort((a,b) => (b.latest_score||0)-(a.latest_score||0));
         setPortfolio(sorted);
         setStats(data.stats);
         setLastUpdate(new Date(data.timestamp));
@@ -238,45 +331,38 @@ const EnhancedPortfolioDashboard = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchPortfolio();
     const interval = setInterval(fetchPortfolio, 5 * 60 * 1000);
     return () => clearInterval(interval);
-  }, []);
+  }, [fetchPortfolio]);
 
-  // Lock body scroll when a modal is open so the page doesn't scroll behind it
-  useEffect(() => {
-    const open = showForm || !!newsModalStock;
-    document.body.style.overflow = open ? 'hidden' : '';
-    return () => { document.body.style.overflow = ''; };
-  }, [showForm, newsModalStock]);
-
-  const handleAddStock = async (e) => {
+  const handleAddStock = async e => {
     e.preventDefault();
     if (!formData.symbol || !formData.quantity || !formData.average_price) return;
     try {
       const res = await fetch('/api/portfolio/add', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
+        body: JSON.stringify(formData),
       });
       if (res.ok) { setShowForm(false); fetchPortfolio(); }
     } catch (err) { console.error(err); }
   };
 
-  const handleEditStock = async (e) => {
+  const handleEditStock = async e => {
     e.preventDefault();
     try {
       const res = await fetch(`/api/portfolio/edit/${editingId}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
+        body: JSON.stringify(formData),
       });
       if (res.ok) { setShowForm(false); setEditingId(null); fetchPortfolio(); }
     } catch (err) { console.error(err); }
   };
 
-  const handleDeleteStock = async (id) => {
+  const handleDeleteStock = async id => {
     if (!window.confirm('Remove this asset from the portfolio?')) return;
     try {
       const res = await fetch(`/api/portfolio/delete/${id}`, { method: 'DELETE' });
@@ -284,13 +370,12 @@ const EnhancedPortfolioDashboard = () => {
     } catch (err) { console.error(err); }
   };
 
-  const openEditForm = (stock) => {
+  const openEditForm = stock => {
     setFormMode('edit'); setEditingId(stock.id);
     setFormData({
       symbol: stock.symbol, name: stock.name || '',
-      quantity: stock.quantity.toString(),
-      average_price: stock.average_price.toString(),
-      type: stock.type || 'Stock', region: stock.region || 'Global', sector: stock.sector || ''
+      quantity: stock.quantity.toString(), average_price: stock.average_price.toString(),
+      type: stock.type || 'Stock', region: stock.region || 'Global', sector: stock.sector || '',
     });
     setShowForm(true);
   };
@@ -302,7 +387,7 @@ const EnhancedPortfolioDashboard = () => {
   };
 
   const getFilteredPortfolio = () => {
-    let filtered = portfolio;
+    let filtered = [...portfolio];
     if (filterSignal === 'BULLISH')
       filtered = filtered.filter(s => ['ADD','SPRING_CONFIRMED','SPRING_CANDIDATE','STRONG_BUY','BUY'].includes(s.signal));
     else if (filterSignal === 'NOISE')
@@ -325,32 +410,30 @@ const EnhancedPortfolioDashboard = () => {
   };
 
   const filteredPortfolio = getFilteredPortfolio();
-
   const totalVal  = portfolio.reduce((s,x) => s + ((x.current_price||0)*(x.quantity||0)), 0);
   const totalCost = portfolio.reduce((s,x) => s + ((x.average_price||0)*(x.quantity||0)), 0);
   const totalPnL  = totalVal - totalCost;
-  const totalPnLPct = totalCost > 0 ? (totalPnL / totalCost) * 100 : 0;
+  const totalPnLPct  = totalCost > 0 ? (totalPnL/totalCost)*100 : 0;
   const totalDayChange = portfolio.reduce((s,x) => {
     if (!x.current_price || x.change_percent == null || !x.quantity) return s;
-    const prev = x.current_price / (1 + x.change_percent / 100);
+    const prev = x.current_price / (1 + x.change_percent/100);
     return s + (x.current_price - prev) * x.quantity;
   }, 0);
   const totalDayPct = totalVal > 0
     ? portfolio.reduce((s,x) => {
         if (!x.current_price || x.change_percent == null || !x.quantity) return s;
-        return s + x.change_percent * ((x.current_price * x.quantity) / totalVal);
+        return s + x.change_percent * ((x.current_price*x.quantity)/totalVal);
       }, 0)
     : 0;
-
   const avgScore  = portfolio.length
-    ? (portfolio.reduce((s,x) => s + (x.latest_score||0), 0) / portfolio.length).toFixed(1) : '—';
+    ? (portfolio.reduce((s,x) => s+(x.latest_score||0), 0)/portfolio.length).toFixed(1) : '—';
   const bullCount = portfolio.filter(s => ['ADD','SPRING_CONFIRMED','SPRING_CANDIDATE','STRONG_BUY','BUY'].includes(s.signal)).length;
   const bearCount = portfolio.filter(s => ['WATCH','TRIM_25','REDUCE','SELL','IDIOSYNCRATIC_DECAY'].includes(s.signal)).length;
 
   if (loading && portfolio.length === 0) {
     return (
       <div className="dashboard-container">
-        <MarketBackground />
+        <NeuralBackground/>
         <div className="loading-wrap"><div className="loading-ring"/></div>
       </div>
     );
@@ -358,7 +441,7 @@ const EnhancedPortfolioDashboard = () => {
 
   return (
     <div className="dashboard-container">
-      <MarketBackground />
+      <NeuralBackground/>
 
       {/* ── Header ── */}
       <div className="dashboard-header">
@@ -424,7 +507,8 @@ const EnhancedPortfolioDashboard = () => {
         <div className="filter-pills">
           {[{v:'ALL',l:'All'},{v:'BULLISH',l:'▲ Bullish'},{v:'NOISE',l:'— Noise'},{v:'BEARISH',l:'▼ Decay'}]
             .map(({v,l}) => (
-              <button key={v} className={`pill ${filterSignal===v?'pill-active':''} pill-${v.toLowerCase()}`}
+              <button key={v}
+                className={`pill ${filterSignal===v?'pill-active':''} pill-${v.toLowerCase()}`}
                 onClick={() => setFilterSignal(v)}>{l}</button>
             ))}
         </div>
@@ -442,9 +526,8 @@ const EnhancedPortfolioDashboard = () => {
         {filteredPortfolio.length === 0 ? (
           <div className="no-results">
             No assets match this filter.&nbsp;
-            <button className="btn-secondary" style={{padding:'6px 14px'}} onClick={() => setFilterSignal('ALL')}>
-              Clear filter
-            </button>
+            <button className="btn-secondary" style={{padding:'6px 14px'}}
+              onClick={() => setFilterSignal('ALL')}>Clear filter</button>
           </div>
         ) : (
           <div className="table-wrapper">
@@ -457,10 +540,10 @@ const EnhancedPortfolioDashboard = () => {
               </thead>
               <tbody>
                 {filteredPortfolio.map(stock => {
-                  const tv  = (parseFloat(stock.current_price)||0) * (parseFloat(stock.quantity)||0);
-                  const pd  = ((stock.current_price||0)-(stock.average_price||0)) * (stock.quantity||0);
-                  const pp  = stock.average_price > 0
-                    ? ((stock.current_price - stock.average_price) / stock.average_price) * 100 : null;
+                  const tv   = (parseFloat(stock.current_price)||0)*(parseFloat(stock.quantity)||0);
+                  const pd   = ((stock.current_price||0)-(stock.average_price||0))*(stock.quantity||0);
+                  const pp   = stock.average_price > 0
+                    ? ((stock.current_price-stock.average_price)/stock.average_price)*100 : null;
                   const sCfg = sig(stock.signal);
                   const rCfg = reg(stock.regime);
                   return (
@@ -516,7 +599,7 @@ const EnhancedPortfolioDashboard = () => {
                       </td>
                       <td className="col-actions">
                         <button onClick={() => setNewsModalStock(stock)} className="btn-icon" title="View Intelligence">📰</button>
-                        <button onClick={() => openEditForm(stock)}      className="btn-icon" title="Edit position">✏️</button>
+                        <button onClick={() => openEditForm(stock)} className="btn-icon" title="Edit position">✏️</button>
                         <button onClick={() => handleDeleteStock(stock.id)} className="btn-icon btn-icon-danger" title="Remove">✕</button>
                       </td>
                     </tr>
@@ -530,99 +613,100 @@ const EnhancedPortfolioDashboard = () => {
 
       <CorrelationHeatmap/>
 
-      {/* ── Add / Edit Modal ─────────────────────────────────────────────────────
-          position:fixed on .modal-overlay (in CSS) ensures this always appears
-          centred on the visible viewport regardless of scroll position.        */}
+      {/* ── Add / Edit Modal ──────────────────────────────────────────────────
+          Modal component uses onMouseDown on overlay to close.
+          onMouseDown on inner box stops propagation.
+          form onSubmit handles submission — NO page freeze.               */}
       {showForm && (
-        <div className="modal-overlay" onClick={() => setShowForm(false)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <div>
-                <h2>{formMode === 'add' ? 'Add Asset' : 'Edit Position'}</h2>
-                <p className="modal-sub-label">
-                  {formMode === 'add' ? 'Enter ticker details to begin tracking.' : `Editing ${formData.symbol}`}
-                </p>
-              </div>
-              <button onClick={() => setShowForm(false)} className="btn-close">✕</button>
+        <Modal onClose={() => setShowForm(false)}>
+          <div className="modal-header">
+            <div className="modal-header-text">
+              <h2>{formMode === 'add' ? 'Add Asset' : 'Edit Position'}</h2>
+              <p className="modal-sub-label">
+                {formMode === 'add' ? 'Enter ticker details to begin tracking.' : `Editing ${formData.symbol}`}
+              </p>
             </div>
-            <form onSubmit={formMode === 'add' ? handleAddStock : handleEditStock}>
-              <div className="form-grid">
-                <div className="form-group">
-                  <label>Symbol</label>
-                  <input type="text" placeholder="e.g. CRWD" value={formData.symbol}
-                    onChange={e => setFormData({...formData, symbol: e.target.value.toUpperCase()})}
-                    disabled={formMode === 'edit'}/>
-                </div>
-                <div className="form-group">
-                  <label>Name</label>
-                  <input type="text" placeholder="Company name" value={formData.name}
-                    onChange={e => setFormData({...formData, name: e.target.value})}/>
-                </div>
-                <div className="form-group">
-                  <label>Quantity</label>
-                  <input type="number" step="0.01" value={formData.quantity}
-                    onChange={e => setFormData({...formData, quantity: e.target.value})}/>
-                </div>
-                <div className="form-group">
-                  <label>Avg Cost</label>
-                  <input type="number" step="0.01" value={formData.average_price}
-                    onChange={e => setFormData({...formData, average_price: e.target.value})}/>
-                </div>
-                <div className="form-group">
-                  <label>Sector</label>
-                  <input type="text" placeholder="e.g. Technology" value={formData.sector}
-                    onChange={e => setFormData({...formData, sector: e.target.value})}/>
-                </div>
-                <div className="form-group">
-                  <label>Region</label>
-                  <select value={formData.region} onChange={e => setFormData({...formData, region: e.target.value})}>
-                    <option>Global</option><option>US</option><option>Europe</option>
-                    <option>Asia</option><option>EM</option>
-                  </select>
-                </div>
-              </div>
-              <div className="form-actions">
-                <button type="button" onClick={() => setShowForm(false)} className="btn-secondary">Cancel</button>
-                <button type="submit" className="btn-primary">
-                  {formMode === 'add' ? 'Add to Portfolio' : 'Save Changes'}
-                </button>
-              </div>
-            </form>
+            <button className="btn-close" onClick={() => setShowForm(false)}>✕</button>
           </div>
-        </div>
+          <div className="modal-body">
+            <div className="form-grid">
+              <div className="form-group">
+                <label>Symbol</label>
+                <input type="text" placeholder="e.g. CRWD" value={formData.symbol}
+                  onChange={e => setFormData({...formData, symbol: e.target.value.toUpperCase()})}
+                  disabled={formMode === 'edit'}/>
+              </div>
+              <div className="form-group">
+                <label>Name</label>
+                <input type="text" placeholder="Company name" value={formData.name}
+                  onChange={e => setFormData({...formData, name: e.target.value})}/>
+              </div>
+              <div className="form-group">
+                <label>Quantity</label>
+                <input type="number" step="0.01" value={formData.quantity}
+                  onChange={e => setFormData({...formData, quantity: e.target.value})}/>
+              </div>
+              <div className="form-group">
+                <label>Avg Cost</label>
+                <input type="number" step="0.01" value={formData.average_price}
+                  onChange={e => setFormData({...formData, average_price: e.target.value})}/>
+              </div>
+              <div className="form-group">
+                <label>Sector</label>
+                <input type="text" placeholder="e.g. Technology" value={formData.sector}
+                  onChange={e => setFormData({...formData, sector: e.target.value})}/>
+              </div>
+              <div className="form-group">
+                <label>Region</label>
+                <select value={formData.region} onChange={e => setFormData({...formData, region: e.target.value})}>
+                  <option>Global</option><option>US</option><option>Europe</option>
+                  <option>Asia</option><option>EM</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          <div className="modal-footer">
+            <button type="button" onClick={() => setShowForm(false)} className="btn-secondary">Cancel</button>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={formMode === 'add' ? handleAddStock : handleEditStock}
+            >
+              {formMode === 'add' ? 'Add to Portfolio' : 'Save Changes'}
+            </button>
+          </div>
+        </Modal>
       )}
 
-      {/* ── Intelligence Modal ─────────────────────────────────────────────────── */}
+      {/* ── Intelligence Modal ── */}
       {newsModalStock && (
-        <div className="modal-overlay" onClick={() => setNewsModalStock(null)}>
-          <div className="modal-content news-modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <div>
-                <h2>Intelligence · {newsModalStock.symbol}</h2>
-                <p className="modal-sub-label">
-                  {sig(newsModalStock.signal).label}
-                  {newsModalStock.excess_return != null && ` · α ${fmtPct(newsModalStock.excess_return)}`}
-                </p>
-              </div>
-              <button onClick={() => setNewsModalStock(null)} className="btn-close">✕</button>
+        <Modal onClose={() => setNewsModalStock(null)} wide>
+          <div className="modal-header">
+            <div className="modal-header-text">
+              <h2>Intelligence · {newsModalStock.symbol}</h2>
+              <p className="modal-sub-label">
+                {sig(newsModalStock.signal).label}
+                {newsModalStock.excess_return != null && ` · α ${fmtPct(newsModalStock.excess_return)}`}
+              </p>
             </div>
-            <div className="news-container">
-              {newsModalStock.recent_news?.length > 0 ? (
-                newsModalStock.recent_news.map((n, i) => (
-                  <a href={n.url} target="_blank" rel="noopener noreferrer" key={i} className="news-card">
-                    <span className="news-date">
-                      {new Date(n.published_at).toLocaleDateString('en-US',{month:'short',day:'numeric'})}
-                    </span>
-                    <h3 className="news-headline">{n.headline}</h3>
-                    {n.description && <p className="news-desc">{n.description.substring(0,150)}…</p>}
-                  </a>
-                ))
-              ) : (
-                <p className="no-news">No actionable intelligence found for this cycle.</p>
-              )}
-            </div>
+            <button className="btn-close" onClick={() => setNewsModalStock(null)}>✕</button>
           </div>
-        </div>
+          <div className="modal-body">
+            {newsModalStock.recent_news?.length > 0 ? (
+              newsModalStock.recent_news.map((n, i) => (
+                <a href={n.url} target="_blank" rel="noopener noreferrer" key={i} className="news-card">
+                  <span className="news-date">
+                    {new Date(n.published_at).toLocaleDateString('en-US',{month:'short',day:'numeric'})}
+                  </span>
+                  <h3 className="news-headline">{n.headline}</h3>
+                  {n.description && <p className="news-desc">{n.description.substring(0,150)}…</p>}
+                </a>
+              ))
+            ) : (
+              <p className="no-news">No actionable intelligence found for this cycle.</p>
+            )}
+          </div>
+        </Modal>
       )}
     </div>
   );
