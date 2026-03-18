@@ -1,14 +1,13 @@
 /* ─────────────────────────────────────────────────────────────────────────────
    ALPHA COMPOUNDER — Dashboard Styles
-   Theme: warm neutral #f2f1eb page, #fdfcf9 cards — neither blue-tinted nor
-   stark white. Easy on the eyes at any time of day.
+   Theme: warm neutral #f2f1eb page, #fdfcf9 cards
 ───────────────────────────────────────────────────────────────────────────── */
 
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,400&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&display=swap');
 
 :root {
-  --bg-main:      #f2f1eb;   /* warm parchment — softer than f5f5f3, not blue */
-  --bg-card:      #fdfcf9;   /* warm off-white card — not pure white, not cream */
+  --bg-main:      #f2f1eb;
+  --bg-card:      #fdfcf9;
   --bg-raised:    #f7f6f2;
   --bg-input:     #f7f6f2;
   --border-light: #e6e5df;
@@ -34,55 +33,80 @@
   --transition: 0.14s ease;
 }
 
-/* ── Market background animation ─────────────────────────────────────────────
-   Bull candles bob upward (green), bear candles drop downward (red).
-   Price lines drift. Each element has independent timing so nothing syncs.
-   Opacity range 0.14–0.22 — clearly visible but never the main focus.       */
+/* ── Neural network background animations ────────────────────────────────────
+   Nodes pulse/breathe. Signal packets travel along edges (dashoffset).
+   Opacity range 0.15–0.30 on edges, nodes at 0.30–0.60 — present but never
+   competing with the actual dashboard data.
+   Green = bull signals (left), Red = bear signals (right).              */
 
-@keyframes candle-bob-1 {
-  0%,100% { transform: translateY(0)    scaleY(1);    }
-  35%     { transform: translateY(-16px) scaleY(1.15); }
-  65%     { transform: translateY(-7px)  scaleY(0.95); }
+/* Node pulse */
+@keyframes mkt-node-g {
+  0%,100% { r: 4;   opacity: 0.38; }
+  50%     { r: 6;   opacity: 0.65; }
 }
-@keyframes candle-bob-2 {
-  0%,100% { transform: translateY(0)    scaleY(1);    }
-  28%     { transform: translateY(-20px) scaleY(1.20); }
-  60%     { transform: translateY(-9px)  scaleY(0.93); }
+@keyframes mkt-node-g-s {
+  0%,100% { r: 3.5; opacity: 0.28; }
+  50%     { r: 5.5; opacity: 0.52; }
 }
-@keyframes candle-bob-3 {
-  0%,100% { transform: translateY(0)    scaleY(1);    }
-  45%     { transform: translateY(-12px) scaleY(1.12); }
+@keyframes mkt-node-r {
+  0%,100% { r: 4;   opacity: 0.35; }
+  50%     { r: 6;   opacity: 0.62; }
 }
-@keyframes candle-drop-1 {
-  0%,100% { transform: translateY(0)   scaleY(1);    }
-  38%     { transform: translateY(16px) scaleY(1.15); }
-  68%     { transform: translateY(7px)  scaleY(0.94); }
+@keyframes mkt-node-r-s {
+  0%,100% { r: 3.5; opacity: 0.25; }
+  50%     { r: 5.5; opacity: 0.48; }
 }
-@keyframes candle-drop-2 {
-  0%,100% { transform: translateY(0)   scaleY(1);    }
-  32%     { transform: translateY(20px) scaleY(1.18); }
-  62%     { transform: translateY(9px)  scaleY(0.92); }
+
+/* Edge glow — base lines */
+@keyframes mkt-edge-g {
+  0%,100% { opacity: 0.15; }
+  50%     { opacity: 0.30; }
 }
-@keyframes candle-drop-3 {
-  0%,100% { transform: translateY(0)   scaleY(1);    }
-  50%     { transform: translateY(11px) scaleY(1.10); }
+@keyframes mkt-edge-r {
+  0%,100% { opacity: 0.13; }
+  50%     { opacity: 0.26; }
 }
-@keyframes line-rise {
-  0%,100% { transform: translateX(0)   translateY(0);    }
-  50%     { transform: translateX(14px) translateY(-18px); }
+
+/* Signal packets along edges */
+@keyframes mkt-sig-g {
+  0%   { stroke-dashoffset: 260; opacity: 0; }
+  8%   { opacity: 0.70; }
+  92%  { opacity: 0.70; }
+  100% { stroke-dashoffset: 0;   opacity: 0; }
 }
-@keyframes line-fall {
-  0%,100% { transform: translateX(0)   translateY(0);   }
-  50%     { transform: translateX(14px) translateY(14px); }
+@keyframes mkt-sig-r {
+  0%   { stroke-dashoffset: 260; opacity: 0; }
+  8%   { opacity: 0.60; }
+  92%  { opacity: 0.60; }
+  100% { stroke-dashoffset: 0;   opacity: 0; }
 }
-@keyframes candle-glow {
-  0%,100% { opacity: 0.14; }
-  50%     { opacity: 0.22; }
-}
-@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
-@keyframes spin  { to{transform:rotate(360deg)} }
-@keyframes fadeIn  { from{opacity:0} to{opacity:1} }
+
+/* Utility */
+@keyframes blink  { 0%,100%{opacity:1} 50%{opacity:.2} }
+@keyframes spin   { to{transform:rotate(360deg)} }
+@keyframes fadeIn { from{opacity:0} to{opacity:1} }
 @keyframes slideUp { from{transform:translateY(12px);opacity:0} to{transform:translateY(0);opacity:1} }
+
+/* Classes applied to SVG elements in MarketBackground */
+.mkt-ng    { animation: mkt-node-g   3.8s ease-in-out infinite; }
+.mkt-ng-s  { animation: mkt-node-g-s 5.2s ease-in-out infinite; animation-delay: -1.6s; }
+.mkt-nr    { animation: mkt-node-r   4.2s ease-in-out infinite; animation-delay: -0.9s; }
+.mkt-nr-s  { animation: mkt-node-r-s 6.0s ease-in-out infinite; animation-delay: -2.3s; }
+.mkt-eg    { animation: mkt-edge-g   4.0s ease-in-out infinite; }
+.mkt-eg2   { animation: mkt-edge-g   5.5s ease-in-out infinite; animation-delay: -2.0s; }
+.mkt-er    { animation: mkt-edge-r   4.5s ease-in-out infinite; animation-delay: -1.0s; }
+.mkt-er2   { animation: mkt-edge-r   6.2s ease-in-out infinite; animation-delay: -2.8s; }
+
+/* Signal packets */
+.mkt-sg1 { animation: mkt-sig-g 3.4s ease-in-out infinite; animation-delay:  0.0s; }
+.mkt-sg2 { animation: mkt-sig-g 4.2s ease-in-out infinite; animation-delay: -1.4s; }
+.mkt-sg3 { animation: mkt-sig-g 3.8s ease-in-out infinite; animation-delay: -2.6s; }
+.mkt-sg4 { animation: mkt-sig-g 4.8s ease-in-out infinite; animation-delay: -0.8s; }
+.mkt-sg5 { animation: mkt-sig-g 3.2s ease-in-out infinite; animation-delay: -3.5s; }
+.mkt-sr1 { animation: mkt-sig-r 3.6s ease-in-out infinite; animation-delay: -0.6s; }
+.mkt-sr2 { animation: mkt-sig-r 4.4s ease-in-out infinite; animation-delay: -2.1s; }
+.mkt-sr3 { animation: mkt-sig-r 3.1s ease-in-out infinite; animation-delay: -3.3s; }
+.mkt-sr4 { animation: mkt-sig-r 4.9s ease-in-out infinite; animation-delay: -1.7s; }
 
 /* ── Reset ───────────────────────────────────────────────────────────────────── */
 *,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -115,20 +139,6 @@ input, select { font-family: var(--font-ui); }
   z-index: 0;
   overflow: hidden;
 }
-
-/* Each animated group gets independent class + delay */
-.mkt-c1 { animation: candle-bob-1  16s ease-in-out infinite; transform-origin: 50% 100%; }
-.mkt-c2 { animation: candle-bob-2  20s ease-in-out infinite; transform-origin: 50% 100%; animation-delay: -4s; }
-.mkt-c3 { animation: candle-bob-3  13s ease-in-out infinite; transform-origin: 50% 100%; animation-delay: -8s; }
-.mkt-c4 { animation: candle-bob-1  18s ease-in-out infinite; transform-origin: 50% 100%; animation-delay: -6s; }
-.mkt-c5 { animation: candle-bob-2  15s ease-in-out infinite; transform-origin: 50% 100%; animation-delay: -2s; }
-.mkt-d1 { animation: candle-drop-1 17s ease-in-out infinite; transform-origin: 50% 0%; }
-.mkt-d2 { animation: candle-drop-2 21s ease-in-out infinite; transform-origin: 50% 0%; animation-delay: -5s; }
-.mkt-d3 { animation: candle-drop-3 14s ease-in-out infinite; transform-origin: 50% 0%; animation-delay: -9s; }
-.mkt-d4 { animation: candle-drop-1 19s ease-in-out infinite; transform-origin: 50% 0%; animation-delay: -3s; }
-.mkt-ln { animation: line-rise 25s ease-in-out infinite; }
-.mkt-lf { animation: line-fall 22s ease-in-out infinite; }
-.mkt-gl { animation: candle-glow  5s ease-in-out infinite; }
 
 /* All page content above the background */
 .dashboard-container > *:not(.market-bg) { position: relative; z-index: 1; }
@@ -337,32 +347,50 @@ input, select { font-family: var(--font-ui); }
 }
 
 /* ── Modals ───────────────────────────────────────────────────────────────────
-   CRITICAL: position:fixed + z-index:9999 ensures modal always centres on
-   viewport regardless of page scroll position. Without fixed, it anchors
-   to the document and appears at the bottom when scrolled down.              */
+   CRITICAL: position:fixed + transform centering ensures modal is ALWAYS
+   centred on the visible viewport, regardless of scroll position.
+   z-index:9999 keeps it above sticky headers, tooltips, everything.         */
 .modal-overlay {
-  position: fixed;      /* ← must be fixed, not absolute */
+  position: fixed;
   inset: 0;
-  background: rgba(26,25,23,.35);
-  backdrop-filter: blur(6px);
+  background: rgba(26,25,23,.40);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 9999;        /* ← above everything including sticky headers */
-  padding: 20px;
-  animation: fadeIn .15s ease;
+  z-index: 9999;
+  padding: 24px;
+  animation: fadeIn .18s ease;
 }
+
 .modal-content {
-  background: var(--bg-card); border: 1px solid var(--border-light);
-  border-radius: var(--r-lg); width: 100%; max-width: 540px;
-  box-shadow: var(--shadow-lg); animation: slideUp .18s ease; overflow: hidden;
-  /* Ensure modal doesn't scroll with page — it sits in viewport centre */
-  max-height: 90vh; overflow-y: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--r-lg);
+  width: 100%;
+  max-width: 520px;
+  /* Hard max-height so tall modals don't overflow viewport */
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+  box-shadow: 0 24px 60px rgba(26,25,23,.22), 0 4px 16px rgba(26,25,23,.10);
+  animation: slideUp .20s ease;
+  /* Prevent the modal itself from stretching to fill the overlay */
+  margin: auto;
 }
-.modal-content.news-modal { max-width: 640px; }
+
+.modal-content.news-modal {
+  max-width: 620px;
+}
+
 .modal-header {
   display: flex; justify-content: space-between; align-items: flex-start;
-  padding: 22px 24px 18px; border-bottom: 1px solid var(--border-light);
+  padding: 22px 24px 18px;
+  border-bottom: 1px solid var(--border-light);
+  /* Sticky header so close button is always visible when scrolling inside */
+  position: sticky; top: 0;
+  background: var(--bg-card);
+  z-index: 1;
 }
 .modal-header h2 { font-size: 17px; font-weight: 700; color: var(--text-main); }
 .modal-sub-label { font-size: 12px; color: var(--text-muted); margin-top: 3px; }
@@ -389,11 +417,12 @@ input, select { font-family: var(--font-ui); }
   display: flex; justify-content: flex-end; gap: 8px;
   padding: 16px 24px 22px; border-top: 1px solid var(--border-light);
   background: var(--bg-main);
+  position: sticky; bottom: 0;
 }
 
 /* ── News ────────────────────────────────────────────────────────────────────── */
 .news-container {
-  padding: 0; max-height: 65vh; overflow-y: auto;
+  padding: 0;
   display: flex; flex-direction: column;
 }
 .news-card {
