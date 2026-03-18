@@ -52,8 +52,8 @@ const buildHmNodes = (W, H) => {
     _hmNodes.push({
       x: W * (0.04 + Math.random() * 0.92),
       y: H * (i / COUNT + Math.random() * (1 / COUNT)),
-      vx: (Math.random() - 0.5) * 0.14,
-      vy: (Math.random() < 0.5 ? 1 : -1) * (0.10 + Math.random() * 0.13),
+      vx: (Math.random() - 0.5) * 0.10,
+      vy: (Math.random() < 0.5 ? 1 : -1) * (0.07 + Math.random() * 0.09),
       oAmp:    28 + Math.random() * 45,
       oPeriod: 8 + Math.random() * 14,   // slow calm oscillation
       oPhase:  Math.random() * Math.PI * 2,
@@ -91,8 +91,8 @@ const NeuralBackground = () => {
     canvas.addEventListener('mousemove', onMouse);
     canvas.addEventListener('mouseleave', onLeave);
 
-    const EDGE_DIST = 120, REPEL_DIST = 90, REPEL_FORCE = 1.0;
-    const H_DAMP = 0.92, V_DAMP = 0.988, H_RESTORE = 0.016, MAX_SPD = 1.2;
+    const EDGE_DIST = 120, REPEL_DIST = 90, REPEL_FORCE = 0.7;
+    const H_DAMP = 0.91, V_DAMP = 0.990, H_RESTORE = 0.018, MAX_SPD = 0.85;
 
     const draw = (t) => {
       const W = canvas.width, H = canvas.height;
@@ -102,9 +102,9 @@ const NeuralBackground = () => {
       const now = t * 0.001;
 
       for (const n of nodes) {
-        n.vy += Math.sin(now / n.oPeriod * Math.PI * 2 + n.oPhase) * 0.015;
-        n.vx += (Math.random() - 0.5) * 0.012;
-        n.vy += (Math.random() - 0.5) * 0.012;
+        n.vy += Math.sin(now / n.oPeriod * Math.PI * 2 + n.oPhase) * 0.010;
+        n.vx += (Math.random() - 0.5) * 0.008;
+        n.vy += (Math.random() - 0.5) * 0.008;
         n.vx -= n.vx * H_RESTORE;
         const dx = n.x - mx, dy = n.y - my;
         const dist = Math.sqrt(dx * dx + dy * dy);
@@ -171,8 +171,9 @@ const NeuralBackground = () => {
 const CorrelationHeatmap = () => {
   const [matrixData, setMatrixData] = useState(null);
   const [loading,    setLoading]    = useState(true);
-  const [hoverTip,   setHoverTip]   = useState(null);   // follows mouse
-  const [pinnedTip,  setPinnedTip]  = useState(null);   // click-to-lock
+  const [pinnedTip,  setPinnedTip]  = useState(null);
+  // scrollY tracks current scroll so pin popup stays at correct viewport pos
+  const [scrollY,    setScrollY]    = useState(0);
   const [tab,        setTab]        = useState('RECOMMEND');
 
   useEffect(() => {
@@ -183,16 +184,15 @@ const CorrelationHeatmap = () => {
       .finally(() => setLoading(false));
   }, []);
 
-  // Hover: show floating tooltip following the mouse
-  const onMouseMove = useCallback((e, t1, t2, val) => {
-    if (val === 1) return;
-    const style = getCellStyle(val);
-    setHoverTip({ t1, t2, val, style, x: e.clientX, y: e.clientY });
+  // Track scroll so we can keep the pin popup in correct viewport position
+  useEffect(() => {
+    const onScroll = () => setScrollY(window.scrollY);
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
-  const onMouseLeave = useCallback(() => setHoverTip(null), []);
-
-  // Click: pin a compact popup next to cursor. Second click on same cell unpins.
+  // Click: store pageY (scroll-absolute) so we can subtract current scrollY
+  // to get the correct clientY equivalent at any scroll position.
   const onCellClick = useCallback((e, t1, t2, val) => {
     if (val === 1) return;
     e.stopPropagation();
@@ -201,14 +201,18 @@ const CorrelationHeatmap = () => {
     setPinnedTip(prev =>
       prev && prev.t1 === t1 && prev.t2 === t2
         ? null
-        : { t1, t2, val, style, x: e.clientX, y: e.clientY }
+        : {
+            t1, t2, val, style,
+            clientX: e.clientX,
+            // Store page-absolute Y so we can recalculate on scroll
+            pageY: e.clientY + window.scrollY,
+          }
     );
   }, []);
 
-  // Click anywhere outside clears the pin — use capture phase on document
+  // Click anywhere outside clears the pin — capture phase
   useEffect(() => {
     const clear = (e) => {
-      // Don't clear if the click was on the pin popup itself
       if (e.target.closest && e.target.closest('.heatmap-pin-popup')) return;
       setPinnedTip(null);
     };
@@ -283,8 +287,6 @@ const CorrelationHeatmap = () => {
                             color: style.color,
                             cursor: val === 1 ? 'default' : 'crosshair',
                           }}
-                          onMouseMove={e => onMouseMove(e, row, col, val)}
-                          onMouseLeave={onMouseLeave}
                           onClick={e => onCellClick(e, row, col, val)}
                         >
                           {corrLabel(val)}
@@ -360,33 +362,20 @@ const CorrelationHeatmap = () => {
         )}
       </div>
 
-      {/* ── Hover tooltip — follows mouse ── */}
-      {hoverTip && !pinnedTip && (
-        <div
-          className="heatmap-tooltip"
-          style={{ left: hoverTip.x, top: hoverTip.y, pointerEvents: 'none' }}
-        >
-          <span className="tooltip-tickers">
-            {hoverTip.t1} <span className="tooltip-sep">vs</span> {hoverTip.t2}
-          </span>
-          <span className="tooltip-val" style={{ color: hoverTip.style.bandColor || '#f0f0ee' }}>
-            {hoverTip.val.toFixed(3)}
-          </span>
-        </div>
-      )}
-
-      {/* ── Pinned popup — rendered as portal so position:fixed always works ── */}
+      {/* ── Pinned popup — portal so position:fixed is always viewport-relative.
+          pageY - scrollY gives the correct viewport Y at current scroll position,
+          so the popup stays visually locked to where you clicked as you scroll. ── */}
       {pinnedTip && createPortal(
         <div
           className="heatmap-pin-popup"
           style={{
-            left: Math.min(pinnedTip.x + 14, window.innerWidth - 230),
-            top:  Math.max(pinnedTip.y - 44, 8),
+            left: Math.min(pinnedTip.clientX + 14, window.innerWidth - 240),
+            top:  Math.max(pinnedTip.pageY - scrollY - 42, 8),
           }}
         >
           <span className="pin-pair">{pinnedTip.t1} vs {pinnedTip.t2}</span>
           <span className="pin-eq">=</span>
-          <span className="pin-val" style={{ color: pinnedTip.style.bandColor || '#f0f0ee' }}>
+          <span className="pin-val" style={{ color: pinnedTip.style.bandColor || '#6b6b65' }}>
             {pinnedTip.val.toFixed(2)}
           </span>
           <button className="pin-close" onClick={e => { e.stopPropagation(); setPinnedTip(null); }}>✕</button>
