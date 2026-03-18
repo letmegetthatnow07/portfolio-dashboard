@@ -47,14 +47,58 @@ const scoreCol = s => {
 };
 
 // ── Canvas Neural Network Background ─────────────────────────────────────────
-// Nodes drift randomly, repel from mouse cursor.
-// Green nodes occupy left 45% of screen, red nodes right 45%, a few neutral
-// nodes in the centre. Edges drawn between nearby nodes.
-// All rendered on a <canvas> with pointer-events:none so it never blocks clicks.
+// Key design rules:
+// 1. Nodes move primarily UP/DOWN like a stock price chart
+// 2. Small horizontal wobble but vertical is dominant
+// 3. Mouse pushes nodes away; the push adds to velocity so they drift in
+//    the pushed direction, but vertical oscillation reasserts over time
+// 4. Nodes + colours are random (no fixed zones), evenly spread vertically
+// 5. State lives in refs outside React lifecycle — never resets on re-render
+// 6. canvas is pointer-events:none so it never interferes with any UI action
+
+// Persistent node state — created once, survives re-renders
+const _nodes = [];
+let _nodesReady = false;
+
+const buildNodes = (W, H) => {
+  _nodes.length = 0;
+  const COLORS = [
+    { c: '#059669', a: () => 0.40 + Math.random() * 0.22 },
+    { c: '#dc2626', a: () => 0.36 + Math.random() * 0.20 },
+    { c: '#a0a09a', a: () => 0.18 + Math.random() * 0.12 },
+  ];
+  const pick = () => {
+    const r = Math.random();
+    return r < 0.38 ? COLORS[0] : r < 0.76 ? COLORS[1] : COLORS[2];
+  };
+  const COUNT = 30;
+  for (let i = 0; i < COUNT; i++) {
+    const col = pick();
+    // Distribute evenly across full page height, random x
+    const x = W * (0.04 + Math.random() * 0.92);
+    const y = H * (i / COUNT + Math.random() * (1 / COUNT)); // even vertical spread
+    _nodes.push({
+      x, y,
+      // vy drives stock-like vertical motion; give each a starting direction
+      vx: (Math.random() - 0.5) * 0.3,
+      vy: (Math.random() < 0.5 ? 1 : -1) * (0.3 + Math.random() * 0.4),
+      // amplitude & period of vertical oscillation — each node unique
+      oAmp:   40 + Math.random() * 60,   // px amplitude
+      oPeriod: 4 + Math.random() * 8,    // seconds per cycle
+      oPhase: Math.random() * Math.PI * 2,
+      r: 2.5 + Math.random() * 2.5,
+      color: col.c,
+      alpha: col.a(),
+      pulseOffset: Math.random() * Math.PI * 2,
+      pulseSpeed:  0.008 + Math.random() * 0.016,
+    });
+  }
+  _nodesReady = true;
+};
+
 const NeuralBackground = () => {
   const canvasRef = useRef(null);
   const mouseRef  = useRef({ x: -9999, y: -9999 });
-  const nodesRef  = useRef([]);
   const rafRef    = useRef(null);
 
   useEffect(() => {
@@ -62,147 +106,104 @@ const NeuralBackground = () => {
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
 
-    // ── Resize handler ──────────────────────────────────────────────────────
     const resize = () => {
       canvas.width  = window.innerWidth;
-      canvas.height = window.innerHeight;
-      initNodes();
+      // Use document height so nodes cover the full scrollable page
+      canvas.height = Math.max(window.innerHeight, document.documentElement.scrollHeight);
+      // Only rebuild if first time; otherwise just let nodes drift to new bounds
+      if (!_nodesReady) buildNodes(canvas.width, canvas.height);
     };
 
-    // ── Build node list ─────────────────────────────────────────────────────
-    // 28 nodes, ALL randomly scattered across the full viewport.
-    // Colours are assigned randomly — no fixed left/right zones.
-    // ~40% green, ~40% red, ~20% neutral, mixed like a live market.
-    const initNodes = () => {
-      const W = canvas.width, H = canvas.height;
-      const COLORS = [
-        { c: '#059669', a: () => 0.42 + Math.random() * 0.25 },
-        { c: '#dc2626', a: () => 0.38 + Math.random() * 0.22 },
-        { c: '#a0a09a', a: () => 0.20 + Math.random() * 0.14 },
-      ];
-      const pickColor = () => {
-        const r = Math.random();
-        if (r < 0.40) return COLORS[0];
-        if (r < 0.80) return COLORS[1];
-        return COLORS[2];
-      };
-      const nodes = [];
-      for (let i = 0; i < 28; i++) {
-        const col = pickColor();
-        const x = W * (0.03 + Math.random() * 0.94);
-        const y = H * (0.03 + Math.random() * 0.94);
-        nodes.push({
-          x, y,
-          baseX: x, baseY: y,
-          vx: (Math.random() - 0.5) * 0.5,
-          vy: (Math.random() - 0.5) * 0.5,
-          r: 2.5 + Math.random() * 2.5,
-          color: col.c,
-          alpha: col.a(),
-          pulseOffset: Math.random() * Math.PI * 2,
-          pulseSpeed:  0.010 + Math.random() * 0.020,
-        });
-      }
-      nodesRef.current = nodes;
-    };
-
-    // ── Mouse tracking ──────────────────────────────────────────────────────
-    const onMouse = e => { mouseRef.current = { x: e.clientX, y: e.clientY }; };
+    const onMouse = e => { mouseRef.current = { x: e.clientX + window.scrollX, y: e.clientY + window.scrollY }; };
     const onLeave = () => { mouseRef.current = { x: -9999, y: -9999 }; };
     window.addEventListener('mousemove', onMouse);
     window.addEventListener('mouseleave', onLeave);
 
-    // ── Draw loop ───────────────────────────────────────────────────────────
-    const EDGE_DIST    = 180; // max px to draw an edge
-    const REPEL_DIST   = 120; // mouse repulsion radius
-    const REPEL_FORCE  = 1.8;
-    const DAMPING      = 0.96;
-    const REVERT_FORCE = 0.004; // gentle pull back to home position
+    const EDGE_DIST   = 170;
+    const REPEL_DIST  = 130;
+    const REPEL_FORCE = 2.0;
+    const H_DAMPING   = 0.94;  // stronger damping on horizontal
+    const V_DAMPING   = 0.985; // lighter damping on vertical — keeps momentum
+    const H_RESTORE   = 0.012; // pull vx back toward 0 (centre tendency)
+    const MAX_SPEED   = 2.8;
 
     const draw = (t) => {
       const W = canvas.width, H = canvas.height;
       ctx.clearRect(0, 0, W, H);
 
-      const nodes = nodesRef.current;
+      const nodes = _nodes;
       const mx = mouseRef.current.x;
       const my = mouseRef.current.y;
+      const now = t * 0.001;
 
-      // Update positions
       for (const n of nodes) {
-        // Gentle mean-reversion toward home
-        n.vx += (n.baseX - n.x) * REVERT_FORCE;
-        n.vy += (n.baseY - n.y) * REVERT_FORCE;
+        // ── Vertical oscillation force (stock-like sine wave) ──────────────
+        // Each node has its own period and phase — they don't sync
+        const oscForce = Math.sin(now / n.oPeriod * Math.PI * 2 + n.oPhase) * 0.04;
+        n.vy += oscForce;
 
-        // Random drift nudge (small, applied every frame)
-        n.vx += (Math.random() - 0.5) * 0.06;
-        n.vy += (Math.random() - 0.5) * 0.06;
+        // ── Tiny random nudge — makes motion feel organic ──────────────────
+        n.vx += (Math.random() - 0.5) * 0.04;
+        n.vy += (Math.random() - 0.5) * 0.04;
 
-        // Mouse repulsion
+        // ── Horizontal restore (drift back to centre-ish, very gently) ─────
+        n.vx -= n.vx * H_RESTORE;
+
+        // ── Mouse repulsion ────────────────────────────────────────────────
         const dx = n.x - mx, dy = n.y - my;
-        const dist = Math.sqrt(dx*dx + dy*dy);
+        const dist = Math.sqrt(dx * dx + dy * dy);
         if (dist < REPEL_DIST && dist > 0) {
           const force = (REPEL_DIST - dist) / REPEL_DIST * REPEL_FORCE;
+          // Push adds directly to velocity — so direction of push is retained
           n.vx += (dx / dist) * force;
           n.vy += (dy / dist) * force;
         }
 
-        n.vx *= DAMPING;
-        n.vy *= DAMPING;
+        // ── Damping ────────────────────────────────────────────────────────
+        n.vx *= H_DAMPING;
+        n.vy *= V_DAMPING;
 
-        // Clamp velocity
-        const speed = Math.sqrt(n.vx*n.vx + n.vy*n.vy);
-        if (speed > 2.5) { n.vx = n.vx/speed*2.5; n.vy = n.vy/speed*2.5; }
+        // ── Speed cap ─────────────────────────────────────────────────────
+        const spd = Math.sqrt(n.vx * n.vx + n.vy * n.vy);
+        if (spd > MAX_SPEED) { n.vx = n.vx / spd * MAX_SPEED; n.vy = n.vy / spd * MAX_SPEED; }
 
         n.x += n.vx;
         n.y += n.vy;
 
-        // Soft boundary bounce
-        if (n.x < 0)   { n.x = 0;  n.vx *= -0.5; }
-        if (n.x > W)   { n.x = W;  n.vx *= -0.5; }
-        if (n.y < 0)   { n.y = 0;  n.vy *= -0.5; }
-        if (n.y > H)   { n.y = H;  n.vy *= -0.5; }
+        // ── Boundary — wrap vertically (stock scrolls forever), bounce horizontal
+        if (n.x < 0)  { n.x = 0;  n.vx =  Math.abs(n.vx) * 0.6; }
+        if (n.x > W)  { n.x = W;  n.vx = -Math.abs(n.vx) * 0.6; }
+        if (n.y < 0)  { n.y = H;  } // wrap top→bottom
+        if (n.y > H)  { n.y = 0;  } // wrap bottom→top
       }
 
-      // Draw edges between nearby nodes of same or adjacent colour families
+      // ── Draw edges ─────────────────────────────────────────────────────────
       for (let i = 0; i < nodes.length; i++) {
         for (let j = i + 1; j < nodes.length; j++) {
           const a = nodes[i], b = nodes[j];
           const dx = a.x - b.x, dy = a.y - b.y;
-          const d  = Math.sqrt(dx*dx + dy*dy);
+          const d = Math.sqrt(dx * dx + dy * dy);
           if (d > EDGE_DIST) continue;
-
-          // Only connect same-colour or neutral to any
-          const sameFamily = a.color === b.color
-            || a.color === '#a0a09a'
-            || b.color === '#a0a09a';
-          if (!sameFamily) continue;
-
-          const alpha = (1 - d / EDGE_DIST) * 0.18; // max edge opacity 0.18
+          const edgeAlpha = (1 - d / EDGE_DIST) * 0.16;
+          const col = a.color === '#a0a09a' ? b.color : a.color;
           ctx.beginPath();
-          ctx.moveTo(a.x, a.y);
-          ctx.lineTo(b.x, b.y);
-          ctx.strokeStyle = a.color === '#a0a09a' ? `rgba(160,160,154,${alpha})` :
-                            a.color === '#059669' ? `rgba(5,150,105,${alpha})` :
-                                                    `rgba(220,38,38,${alpha})`;
+          ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+          ctx.strokeStyle = col === '#059669' ? `rgba(5,150,105,${edgeAlpha})`
+                          : col === '#dc2626' ? `rgba(220,38,38,${edgeAlpha})`
+                          : `rgba(160,160,154,${edgeAlpha})`;
           ctx.lineWidth = 1;
           ctx.stroke();
         }
       }
 
-      // Draw nodes
-      const now = t * 0.001;
+      // ── Draw nodes ─────────────────────────────────────────────────────────
       for (const n of nodes) {
-        const pulse = 0.85 + 0.15 * Math.sin(now * n.pulseSpeed * 60 + n.pulseOffset);
-        const r     = n.r * pulse;
-        const alpha = n.alpha * pulse;
-
+        const pulse = 0.82 + 0.18 * Math.sin(now * n.pulseSpeed * 60 + n.pulseOffset);
         ctx.beginPath();
-        ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
-
-        if (n.color === '#059669') ctx.fillStyle = `rgba(5,150,105,${alpha})`;
-        else if (n.color === '#dc2626') ctx.fillStyle = `rgba(220,38,38,${alpha})`;
-        else ctx.fillStyle = `rgba(160,160,154,${alpha})`;
-
+        ctx.arc(n.x, n.y, n.r * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = n.color === '#059669' ? `rgba(5,150,105,${n.alpha * pulse})`
+                      : n.color === '#dc2626' ? `rgba(220,38,38,${n.alpha * pulse})`
+                      : `rgba(160,160,154,${n.alpha * pulse})`;
         ctx.fill();
       }
 
@@ -219,7 +220,7 @@ const NeuralBackground = () => {
       window.removeEventListener('mousemove', onMouse);
       window.removeEventListener('mouseleave', onLeave);
     };
-  }, []);
+  }, []); // empty dep array — effect runs once, never re-runs on state change
 
   return <canvas ref={canvasRef} className="neural-canvas" aria-hidden="true"/>;
 };
@@ -275,39 +276,18 @@ const SpringBar = ({ days }) => {
 };
 
 // ── Modal component ───────────────────────────────────────────────────────────
-// Backdrop fades the page. The modal box anchors near the click origin,
-// nudged inward so it never overflows the screen edges.
-const Modal = ({ onClose, children, wide = false, origin = null }) => {
-  const W = window.innerWidth;
-  const H = window.innerHeight;
-  const boxW = wide ? 600 : 500;
-  const boxH = 420; // approximate
-
-  let style = {};
-  if (origin) {
-    // Prefer below-right of click; flip if too close to edge
-    let left = origin.x - 20;
-    let top  = origin.y + 16;
-    if (left + boxW > W - 16) left = W - boxW - 16;
-    if (top  + boxH > H - 16) top  = origin.y - boxH - 8;
-    if (left < 16) left = 16;
-    if (top  < 16) top  = 16;
-    style = { position: 'fixed', left, top, transform: 'none', margin: 0 };
-  }
-
-  return (
-    <div className="modal-overlay" onMouseDown={onClose}
-         style={origin ? { alignItems: 'flex-start', justifyContent: 'flex-start' } : {}}>
-      <div
-        className={`modal-box${wide ? ' modal-news' : ''}`}
-        style={style}
-        onMouseDown={e => e.stopPropagation()}
-      >
-        {children}
-      </div>
+// Always viewport-centred. Backdrop fades + blurs the page but content
+// remains partially visible. Clicking the backdrop closes the modal.
+const Modal = ({ onClose, children, wide = false }) => (
+  <div className="modal-overlay" onMouseDown={onClose}>
+    <div
+      className={`modal-box${wide ? ' modal-news' : ''}`}
+      onMouseDown={e => e.stopPropagation()}
+    >
+      {children}
     </div>
-  );
-};
+  </div>
+);
 
 // ── Main component ────────────────────────────────────────────────────────────
 const EnhancedPortfolioDashboard = () => {
@@ -324,7 +304,6 @@ const EnhancedPortfolioDashboard = () => {
   });
   const [editingId,      setEditingId]      = useState(null);
   const [newsModalStock, setNewsModalStock] = useState(null);
-  const [modalOrigin,    setModalOrigin]    = useState(null); // {x, y} click position
 
   const fetchPortfolio = useCallback(async () => {
     try {
@@ -382,8 +361,7 @@ const EnhancedPortfolioDashboard = () => {
     } catch (err) { console.error(err); }
   };
 
-  const openEditForm = (stock, e) => {
-    setModalOrigin(e ? { x: e.clientX, y: e.clientY } : null);
+  const openEditForm = (stock) => {
     setFormMode('edit'); setEditingId(stock.id);
     setFormData({
       symbol: stock.symbol, name: stock.name || '',
@@ -393,8 +371,7 @@ const EnhancedPortfolioDashboard = () => {
     setShowForm(true);
   };
 
-  const openAddForm = (e) => {
-    setModalOrigin(e ? { x: e.clientX, y: e.clientY } : null);
+  const openAddForm = () => {
     setFormMode('add'); setEditingId(null);
     setFormData({ symbol:'', name:'', quantity:'', average_price:'', type:'Stock', region:'Global', sector:'' });
     setShowForm(true);
@@ -470,7 +447,7 @@ const EnhancedPortfolioDashboard = () => {
               Auto-refreshes · Last: {lastUpdate.toLocaleTimeString()}
             </div>
           )}
-          <button onClick={e => openAddForm(e)} className="btn-primary">+ Add Asset</button>
+          <button onClick={openAddForm} className="btn-primary">+ Add Asset</button>
         </div>
       </div>
 
@@ -599,12 +576,12 @@ const EnhancedPortfolioDashboard = () => {
                         {stock.beta != null && <div className="beta-val">β {Number(stock.beta).toFixed(2)}</div>}
                       </td>
                       <td>
-                        <span className="signal-badge" style={{
-                          color: sCfg.color,
-                          backgroundColor: `${sCfg.color}22`,
-                          borderColor: `${sCfg.color}55`,
-                          fontWeight: 700,
-                        }}>{sCfg.label}</span>
+                        <span className={`signal-badge ${
+                          sCfg.tier === 'bull' ? 'signal-bull' :
+                          sCfg.tier === 'bear' && ['WATCH','TRIM_25'].includes(stock.signal) ? 'signal-bear-soft' :
+                          sCfg.tier === 'bear' ? 'signal-bear-hard' :
+                          'signal-neutral'
+                        }`}>{sCfg.label}</span>
                         <SpringBar days={stock.spring_days}/>
                         <CascadePips w1={stock.w1_signal} w2={stock.w2_confirmed} w3={stock.w3_confirmed} w4={stock.w4_confirmed}/>
                       </td>
@@ -613,8 +590,8 @@ const EnhancedPortfolioDashboard = () => {
                         {totalVal > 0 && <div className="weight-pct">{((tv/totalVal)*100).toFixed(1)}%</div>}
                       </td>
                       <td className="col-actions">
-                        <button onClick={e => { e.stopPropagation(); setModalOrigin({x:e.clientX,y:e.clientY}); setNewsModalStock(stock); }} className="btn-icon" title="View Intelligence">📰</button>
-                        <button onClick={e => openEditForm(stock, e)} className="btn-icon" title="Edit position">✏️</button>
+                        <button onClick={() => setNewsModalStock(stock)} className="btn-icon" title="View Intelligence">📰</button>
+                        <button onClick={() => openEditForm(stock)} className="btn-icon" title="Edit position">✏️</button>
                         <button onClick={() => handleDeleteStock(stock.id)} className="btn-icon btn-icon-danger" title="Remove">✕</button>
                       </td>
                     </tr>
@@ -633,7 +610,7 @@ const EnhancedPortfolioDashboard = () => {
           onMouseDown on inner box stops propagation.
           form onSubmit handles submission — NO page freeze.               */}
       {showForm && (
-        <Modal onClose={() => setShowForm(false)} origin={modalOrigin}>
+        <Modal onClose={() => setShowForm(false)}>
           <div className="modal-header">
             <div className="modal-header-text">
               <h2>{formMode === 'add' ? 'Add Asset' : 'Edit Position'}</h2>
@@ -695,7 +672,7 @@ const EnhancedPortfolioDashboard = () => {
 
       {/* ── Intelligence Modal ── */}
       {newsModalStock && (
-        <Modal onClose={() => setNewsModalStock(null)} wide origin={modalOrigin}>
+        <Modal onClose={() => setNewsModalStock(null)} wide>
           <div className="modal-header">
             <div className="modal-header-text">
               <h2>Intelligence · {newsModalStock.symbol}</h2>
