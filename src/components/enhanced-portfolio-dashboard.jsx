@@ -79,8 +79,8 @@ const buildNodes = (W, H) => {
     const y = H * (i / COUNT + Math.random() * (1 / COUNT));
     _nodes.push({
       x, y,
-      vx: (Math.random() - 0.5) * 0.15,   // slower start
-      vy: (Math.random() < 0.5 ? 1 : -1) * (0.12 + Math.random() * 0.18),
+      vx: (Math.random() - 0.5) * 0.10,   // slower start
+      vy: (Math.random() < 0.5 ? 1 : -1) * (0.08 + Math.random() * 0.12),
       oAmp:    40 + Math.random() * 60,
       oPeriod: 8 + Math.random() * 14,     // longer period = slower oscillation
       oPhase:  Math.random() * Math.PI * 2,
@@ -119,11 +119,11 @@ const NeuralBackground = () => {
 
     const EDGE_DIST   = 170;
     const REPEL_DIST  = 130;
-    const REPEL_FORCE = 1.2;   // gentler repulsion
-    const H_DAMPING   = 0.92;
-    const V_DAMPING   = 0.988; // very light vertical damping keeps slow drift
-    const H_RESTORE   = 0.014;
-    const MAX_SPEED   = 1.4;   // hard cap — nodes never feel frantic
+    const REPEL_FORCE = 0.85;  // gentler push
+    const H_DAMPING   = 0.91;
+    const V_DAMPING   = 0.990; // very light — preserves slow vertical drift
+    const H_RESTORE   = 0.016;
+    const MAX_SPEED   = 0.95;  // calmer cap
 
     const draw = (t) => {
       const W = canvas.width, H = canvas.height;
@@ -137,12 +137,12 @@ const NeuralBackground = () => {
       for (const n of nodes) {
         // ── Vertical oscillation force (stock-like sine wave) ──────────────
         // Each node has its own period and phase — they don't sync
-        const oscForce = Math.sin(now / n.oPeriod * Math.PI * 2 + n.oPhase) * 0.018;
+        const oscForce = Math.sin(now / n.oPeriod * Math.PI * 2 + n.oPhase) * 0.012;
         n.vy += oscForce;
 
         // ── Tiny random nudge ──────────────────────────────────────────────
-        n.vx += (Math.random() - 0.5) * 0.018;
-        n.vy += (Math.random() - 0.5) * 0.018;
+        n.vx += (Math.random() - 0.5) * 0.012;
+        n.vy += (Math.random() - 0.5) * 0.012;
 
         // ── Horizontal restore (drift back to centre-ish, very gently) ─────
         n.vx -= n.vx * H_RESTORE;
