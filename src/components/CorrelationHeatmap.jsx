@@ -1,15 +1,15 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import './CorrelationHeatmap.css';
 
-// ── Colour scale ───────────────────────────────────────────────────────────────
+// ── Colour scale ──────────────────────────────────────────────────────────────
 function getCellStyle(value) {
-  if (value === 1)    return { background: '#ebe9e3', color: 'transparent', cursor: 'default', bandColor: null };
-  if (value >= 0.85)  return { background: '#7f1d1d', color: '#fecaca', bandColor: '#fca5a5' };
-  if (value >= 0.75)  return { background: '#b91c1c', color: '#fff',    bandColor: '#fca5a5' };
-  if (value >= 0.65)  return { background: '#ea580c', color: '#fff',    bandColor: '#fdba74' };
-  if (value >= 0.30)  return { background: '#dddbd3', color: '#374151', bandColor: '#6b7280' };
-  if (value >= -0.30) return { background: '#d1fae5', color: '#065f46', bandColor: '#059669' };
-  return                     { background: '#a7f3d0', color: '#064e3b', bandColor: '#047857' };
+  if (value === 1)    return { background: '#ebe9e3', color: 'transparent', cursor: 'default', bandColor: null, bandLabel: 'diagonal' };
+  if (value >= 0.85)  return { background: '#7f1d1d', color: '#fecaca', bandColor: '#fca5a5', bandLabel: 'Extreme' };
+  if (value >= 0.75)  return { background: '#b91c1c', color: '#fff',    bandColor: '#f87171', bandLabel: 'High' };
+  if (value >= 0.65)  return { background: '#ea580c', color: '#fff',    bandColor: '#fb923c', bandLabel: 'Flagged' };
+  if (value >= 0.30)  return { background: '#dddbd3', color: '#374151', bandColor: '#9ca3af', bandLabel: 'Mild' };
+  if (value >= -0.30) return { background: '#d1fae5', color: '#065f46', bandColor: '#34d399', bandLabel: 'Uncorrelated' };
+  return                     { background: '#a7f3d0', color: '#064e3b', bandColor: '#059669', bandLabel: 'Hedge' };
 }
 
 function corrLabel(v) {
@@ -29,40 +29,15 @@ const CASCADE_COLOR = {
   HEALTHY: '#059669', WEAKENING: '#d97706', DECAYING: '#ea580c', CRITICAL: '#b91c1c',
 };
 
-// ── Neural Network Background ──────────────────────────────────────────────────
-// Nodes connected by edges. Signal packets (animated dashes) travel along edges.
-// Green = bull network (top-left region), Red = bear network (right region).
-// All elements are subtle — visible but never competing with the heatmap data.
-//
-// SVG uses percentage coordinates so it scales with the container.
-// Edge base lines are rendered at low opacity with slow glow animation.
-// On top of each edge, a "signal" line with stroke-dasharray + dashoffset
-// animation makes a packet appear to travel from one node to the other.
+// ── Neural Background — SVG with animated signal packets ──────────────────────
+// Green network left, red network right, subtle bottom connectors.
+// Uses CSS classes defined in CorrelationHeatmap.css for animations.
 const NeuralBackground = () => (
   <svg className="neural-bg" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"
        preserveAspectRatio="xMidYMid slice">
 
-    <defs>
-      {/* Signal packet gradient — green */}
-      <linearGradient id="sig-grad-g" x1="0%" y1="0%" x2="100%" y2="0%">
-        <stop offset="0%"   stopColor="#059669" stopOpacity="0"/>
-        <stop offset="50%"  stopColor="#059669" stopOpacity="1"/>
-        <stop offset="100%" stopColor="#059669" stopOpacity="0"/>
-      </linearGradient>
-      {/* Signal packet gradient — red */}
-      <linearGradient id="sig-grad-r" x1="0%" y1="0%" x2="100%" y2="0%">
-        <stop offset="0%"   stopColor="#dc2626" stopOpacity="0"/>
-        <stop offset="50%"  stopColor="#dc2626" stopOpacity="1"/>
-        <stop offset="100%" stopColor="#dc2626" stopOpacity="0"/>
-      </linearGradient>
-    </defs>
-
-    {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        GREEN BULL NETWORK — top-left quadrant
-        Nodes: A(5%,12%), B(18%,28%), C(32%,14%), D(22%,46%), E(42%,32%)
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
-
-    {/* Static edges — green */}
+    {/* GREEN BULL NETWORK — top-left */}
+    {/* Static edges */}
     <line className="eg"  x1="5%"  y1="12%" x2="18%" y2="28%" stroke="#059669" strokeWidth="1.2"/>
     <line className="eg"  x1="18%" y1="28%" x2="32%" y2="14%" stroke="#059669" strokeWidth="1.2"/>
     <line className="eg2" x1="32%" y1="14%" x2="42%" y2="32%" stroke="#059669" strokeWidth="1.0"/>
@@ -70,27 +45,11 @@ const NeuralBackground = () => (
     <line className="eg"  x1="22%" y1="46%" x2="42%" y2="32%" stroke="#059669" strokeWidth="1.0"/>
     <line className="eg2" x1="5%"  y1="12%" x2="32%" y2="14%" stroke="#059669" strokeWidth="0.6"/>
 
-    {/* Signal packets — green (dasharray = packet length, dashoffset animates) */}
-    {/* Edge A→B */}
-    <line className="sg1"
-      x1="5%" y1="12%" x2="18%" y2="28%"
-      stroke="#059669" strokeWidth="2.5"
-      strokeDasharray="18 220" strokeDashoffset="220"/>
-    {/* Edge B→C */}
-    <line className="sg2"
-      x1="18%" y1="28%" x2="32%" y2="14%"
-      stroke="#059669" strokeWidth="2.5"
-      strokeDasharray="18 220" strokeDashoffset="220"/>
-    {/* Edge C→E */}
-    <line className="sg3"
-      x1="32%" y1="14%" x2="42%" y2="32%"
-      stroke="#059669" strokeWidth="2.5"
-      strokeDasharray="18 220" strokeDashoffset="220"/>
-    {/* Edge B→D */}
-    <line className="sg4"
-      x1="18%" y1="28%" x2="22%" y2="46%"
-      stroke="#059669" strokeWidth="2.5"
-      strokeDasharray="18 220" strokeDashoffset="220"/>
+    {/* Signal packets — green */}
+    <line className="sg1" x1="5%"  y1="12%" x2="18%" y2="28%" stroke="#059669" strokeWidth="2.5" strokeDasharray="16 220" strokeDashoffset="220"/>
+    <line className="sg2" x1="18%" y1="28%" x2="32%" y2="14%" stroke="#059669" strokeWidth="2.5" strokeDasharray="16 220" strokeDashoffset="220"/>
+    <line className="sg3" x1="32%" y1="14%" x2="42%" y2="32%" stroke="#059669" strokeWidth="2.5" strokeDasharray="16 220" strokeDashoffset="220"/>
+    <line className="sg4" x1="18%" y1="28%" x2="22%" y2="46%" stroke="#059669" strokeWidth="2.5" strokeDasharray="16 220" strokeDashoffset="220"/>
 
     {/* Green nodes */}
     <circle className="ng"   cx="5%"  cy="12%" r="4.5" fill="#059669"/>
@@ -99,62 +58,43 @@ const NeuralBackground = () => (
     <circle className="ng-s" cx="22%" cy="46%" r="3.5" fill="#059669"/>
     <circle className="ng"   cx="42%" cy="32%" r="4"   fill="#059669"/>
 
-    {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        RED BEAR NETWORK — right side
-        Nodes: P(62%,8%), Q(76%,22%), R(92%,12%), S(80%,40%), T(96%,34%)
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
+    {/* RED BEAR NETWORK — top-right
+        Kept well within the right 40% of the container so it doesn't overlap
+        the Capital Optimisation panel which sits to the right of the heatmap. */}
+    <line className="er"  x1="62%" y1="8%"  x2="74%" y2="22%" stroke="#dc2626" strokeWidth="1.2"/>
+    <line className="er"  x1="74%" y1="22%" x2="88%" y2="12%" stroke="#dc2626" strokeWidth="1.2"/>
+    <line className="er2" x1="74%" y1="22%" x2="78%" y2="38%" stroke="#dc2626" strokeWidth="1.0"/>
+    <line className="er2" x1="88%" y1="12%" x2="92%" y2="30%" stroke="#dc2626" strokeWidth="1.0"/>
+    <line className="er"  x1="78%" y1="38%" x2="92%" y2="30%" stroke="#dc2626" strokeWidth="1.0"/>
+    <line className="er2" x1="62%" y1="8%"  x2="88%" y2="12%" stroke="#dc2626" strokeWidth="0.6"/>
 
-    {/* Static edges — red */}
-    <line className="er"  x1="62%" y1="8%"  x2="76%" y2="22%" stroke="#dc2626" strokeWidth="1.2"/>
-    <line className="er"  x1="76%" y1="22%" x2="92%" y2="12%" stroke="#dc2626" strokeWidth="1.2"/>
-    <line className="er2" x1="76%" y1="22%" x2="80%" y2="40%" stroke="#dc2626" strokeWidth="1.0"/>
-    <line className="er2" x1="92%" y1="12%" x2="96%" y2="34%" stroke="#dc2626" strokeWidth="1.0"/>
-    <line className="er"  x1="80%" y1="40%" x2="96%" y2="34%" stroke="#dc2626" strokeWidth="1.0"/>
-    <line className="er2" x1="62%" y1="8%"  x2="92%" y2="12%" stroke="#dc2626" strokeWidth="0.6"/>
+    <line className="sr1" x1="62%" y1="8%"  x2="74%" y2="22%" stroke="#dc2626" strokeWidth="2.5" strokeDasharray="16 220" strokeDashoffset="220"/>
+    <line className="sr2" x1="74%" y1="22%" x2="88%" y2="12%" stroke="#dc2626" strokeWidth="2.5" strokeDasharray="16 220" strokeDashoffset="220"/>
+    <line className="sr3" x1="74%" y1="22%" x2="78%" y2="38%" stroke="#dc2626" strokeWidth="2.5" strokeDasharray="16 220" strokeDashoffset="220"/>
 
-    {/* Signal packets — red */}
-    {/* Edge P→Q */}
-    <line className="sr1"
-      x1="62%" y1="8%"  x2="76%" y2="22%"
-      stroke="#dc2626" strokeWidth="2.5"
-      strokeDasharray="18 220" strokeDashoffset="220"/>
-    {/* Edge Q→R */}
-    <line className="sr2"
-      x1="76%" y1="22%" x2="92%" y2="12%"
-      stroke="#dc2626" strokeWidth="2.5"
-      strokeDasharray="18 220" strokeDashoffset="220"/>
-    {/* Edge Q→S */}
-    <line className="sr3"
-      x1="76%" y1="22%" x2="80%" y2="40%"
-      stroke="#dc2626" strokeWidth="2.5"
-      strokeDasharray="18 220" strokeDashoffset="220"/>
-
-    {/* Red nodes */}
     <circle className="nr"   cx="62%" cy="8%"  r="4.5" fill="#dc2626"/>
-    <circle className="nr-s" cx="76%" cy="22%" r="4"   fill="#dc2626"/>
-    <circle className="nr"   cx="92%" cy="12%" r="3.5" fill="#dc2626"/>
-    <circle className="nr-s" cx="80%" cy="40%" r="4"   fill="#dc2626"/>
-    <circle className="nr"   cx="96%" cy="34%" r="3"   fill="#dc2626"/>
+    <circle className="nr-s" cx="74%" cy="22%" r="4"   fill="#dc2626"/>
+    <circle className="nr"   cx="88%" cy="12%" r="3.5" fill="#dc2626"/>
+    <circle className="nr-s" cx="78%" cy="38%" r="4"   fill="#dc2626"/>
+    <circle className="nr"   cx="92%" cy="30%" r="3"   fill="#dc2626"/>
 
-    {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        BOTTOM CONNECTOR — neutral grey nodes bridging the two networks
-        (very dim — just enough to fill the lower area)
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
-    <line x1="10%" y1="72%" x2="30%" y2="85%" stroke="#a0a09a" strokeWidth="0.8" opacity="0.10"/>
-    <line x1="30%" y1="85%" x2="55%" y2="78%" stroke="#a0a09a" strokeWidth="0.8" opacity="0.08"/>
-    <line x1="55%" y1="78%" x2="72%" y2="88%" stroke="#a0a09a" strokeWidth="0.8" opacity="0.08"/>
-    <circle cx="10%" cy="72%" r="3" fill="#a0a09a" opacity="0.18"/>
-    <circle cx="30%" cy="85%" r="2.5" fill="#a0a09a" opacity="0.15"/>
-    <circle cx="55%" cy="78%" r="3" fill="#a0a09a" opacity="0.16"/>
-    <circle cx="72%" cy="88%" r="2.5" fill="#a0a09a" opacity="0.13"/>
+    {/* Neutral connectors — bottom, very dim */}
+    <line x1="10%" y1="72%" x2="30%" y2="84%" stroke="#a0a09a" strokeWidth="0.8" opacity="0.09"/>
+    <line x1="30%" y1="84%" x2="55%" y2="77%" stroke="#a0a09a" strokeWidth="0.8" opacity="0.07"/>
+    <line x1="55%" y1="77%" x2="70%" y2="86%" stroke="#a0a09a" strokeWidth="0.8" opacity="0.07"/>
+    <circle cx="10%" cy="72%" r="3"   fill="#a0a09a" opacity="0.16"/>
+    <circle cx="30%" cy="84%" r="2.5" fill="#a0a09a" opacity="0.13"/>
+    <circle cx="55%" cy="77%" r="3"   fill="#a0a09a" opacity="0.14"/>
+    <circle cx="70%" cy="86%" r="2.5" fill="#a0a09a" opacity="0.11"/>
   </svg>
 );
 
-// ── Main component ─────────────────────────────────────────────────────────────
+// ── Main component ────────────────────────────────────────────────────────────
 const CorrelationHeatmap = () => {
   const [matrixData, setMatrixData] = useState(null);
   const [loading,    setLoading]    = useState(true);
-  const [tooltip,    setTooltip]    = useState(null);
+  const [hoverTip,   setHoverTip]   = useState(null);   // follows mouse
+  const [pinnedTip,  setPinnedTip]  = useState(null);   // click-to-lock
   const [tab,        setTab]        = useState('RECOMMEND');
 
   useEffect(() => {
@@ -165,13 +105,34 @@ const CorrelationHeatmap = () => {
       .finally(() => setLoading(false));
   }, []);
 
+  // Hover: show floating tooltip following the mouse
   const onMouseMove = useCallback((e, t1, t2, val) => {
     if (val === 1) return;
-    const { bandColor } = getCellStyle(val);
-    setTooltip({ t1, t2, val, bandColor, x: e.clientX, y: e.clientY });
+    const style = getCellStyle(val);
+    setHoverTip({ t1, t2, val, style, x: e.clientX, y: e.clientY });
   }, []);
 
-  const onMouseLeave = useCallback(() => setTooltip(null), []);
+  const onMouseLeave = useCallback(() => setHoverTip(null), []);
+
+  // Click: pin a card near the cell. Second click on same cell unpins.
+  const onCellClick = useCallback((e, t1, t2, val) => {
+    if (val === 1) return;
+    e.stopPropagation();
+    const style = getCellStyle(val);
+    // Toggle — clicking the same cell again clears the pin
+    setPinnedTip(prev =>
+      prev && prev.t1 === t1 && prev.t2 === t2
+        ? null
+        : { t1, t2, val, style, x: e.clientX, y: e.clientY }
+    );
+  }, []);
+
+  // Click anywhere outside the heatmap clears the pin
+  useEffect(() => {
+    const clear = () => setPinnedTip(null);
+    document.addEventListener('click', clear);
+    return () => document.removeEventListener('click', clear);
+  }, []);
 
   if (loading) {
     return (
@@ -184,14 +145,14 @@ const CorrelationHeatmap = () => {
   if (!matrixData?.tickers?.length) return null;
 
   const { tickers, matrix, insights = [], windowStart, windowEnd, windowDays, lastUpdated } = matrixData;
-  const byVerdict = v => insights.filter(i => i.verdict === v);
-  const recommends = byVerdict('RECOMMEND');
-  const weak       = byVerdict('WEAK_SIGNAL');
-  const monitors   = byVerdict('MONITOR');
+  const byVerdict   = v => insights.filter(i => i.verdict === v);
+  const recommends  = byVerdict('RECOMMEND');
+  const weak        = byVerdict('WEAK_SIGNAL');
+  const monitors    = byVerdict('MONITOR');
   const tabInsights = tab === 'RECOMMEND' ? recommends : tab === 'WEAK_SIGNAL' ? weak : monitors;
 
   return (
-    <div className="correlation-container">
+    <div className="correlation-container" onClick={() => setPinnedTip(null)}>
       <NeuralBackground/>
 
       {/* Header */}
@@ -207,18 +168,16 @@ const CorrelationHeatmap = () => {
         </div>
         {lastUpdated && (
           <span className="heatmap-updated">
-            Updated {new Date(lastUpdated).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+            Updated {new Date(lastUpdated).toLocaleDateString('en-US', { month:'short', day:'numeric' })}
           </span>
         )}
       </div>
 
-      {/* Side-by-side body */}
       <div className="heatmap-body">
-
         {/* Left — heatmap + legend */}
         <div className="heatmap-left">
           <div className="heatmap-scroll">
-            <table className="heatmap-table">
+            <table className="heatmap-table" onClick={e => e.stopPropagation()}>
               <thead>
                 <tr>
                   <th className="heatmap-corner"/>
@@ -232,13 +191,19 @@ const CorrelationHeatmap = () => {
                     {tickers.map(col => {
                       const val   = matrix[row]?.[col] ?? 0;
                       const style = getCellStyle(val);
+                      const isPinned = pinnedTip?.t1 === row && pinnedTip?.t2 === col;
                       return (
                         <td
                           key={col}
-                          className="heatmap-cell"
-                          style={{ background: style.background, color: style.color, cursor: style.cursor || 'crosshair' }}
+                          className={`heatmap-cell${isPinned ? ' cell-pinned' : ''}`}
+                          style={{
+                            background: style.background,
+                            color: style.color,
+                            cursor: val === 1 ? 'default' : 'crosshair',
+                          }}
                           onMouseMove={e => onMouseMove(e, row, col, val)}
                           onMouseLeave={onMouseLeave}
+                          onClick={e => onCellClick(e, row, col, val)}
                         >
                           {corrLabel(val)}
                         </td>
@@ -265,7 +230,7 @@ const CorrelationHeatmap = () => {
                 <span>{label}</span>
               </div>
             ))}
-            <span className="legend-note">Returns-based · 250d rolling</span>
+            <span className="legend-note">Returns-based · 250d rolling · Click cell to pin</span>
           </div>
         </div>
 
@@ -286,7 +251,8 @@ const CorrelationHeatmap = () => {
                   { v: 'WEAK_SIGNAL', cls: 'weak',      label: '~ Weak Signal', count: weak.length },
                   { v: 'MONITOR',     cls: 'monitor',   label: '◎ Monitor',     count: monitors.length },
                 ].map(({ v, cls, label, count }) => (
-                  <button key={v} className={`vtab ${tab === v ? `vtab-active ${cls}` : ''}`}
+                  <button key={v}
+                    className={`vtab ${tab === v ? `vtab-active ${cls}` : ''}`}
                     onClick={() => setTab(v)}>
                     {label}
                     {count > 0 && <span className="vtab-count">{count}</span>}
@@ -312,25 +278,50 @@ const CorrelationHeatmap = () => {
         )}
       </div>
 
-      {/* Tooltip */}
-      {tooltip && (
+      {/* ── Hover tooltip — follows mouse ── */}
+      {hoverTip && !pinnedTip && (
         <div
           className="heatmap-tooltip"
-          style={{ left: tooltip.x, top: tooltip.y }}
+          style={{ left: hoverTip.x, top: hoverTip.y, pointerEvents: 'none' }}
         >
           <span className="tooltip-tickers">
-            {tooltip.t1} <span className="tooltip-sep">vs</span> {tooltip.t2}
+            {hoverTip.t1} <span className="tooltip-sep">vs</span> {hoverTip.t2}
           </span>
-          <span className="tooltip-val" style={{ color: tooltip.bandColor || '#f0f0ee' }}>
-            {tooltip.val.toFixed(3)}
+          <span className="tooltip-val" style={{ color: hoverTip.style.bandColor || '#f0f0ee' }}>
+            {hoverTip.val.toFixed(3)}
           </span>
+        </div>
+      )}
+
+      {/* ── Pinned card — appears on click, anchored near click position ── */}
+      {pinnedTip && (
+        <div
+          className="heatmap-pinned"
+          style={{
+            left: Math.min(pinnedTip.x + 16, window.innerWidth - 200),
+            top:  Math.min(pinnedTip.y - 20, window.innerHeight - 130),
+          }}
+          onClick={e => e.stopPropagation()}
+        >
+          <button className="pinned-close" onClick={() => setPinnedTip(null)}>✕</button>
+          <div className="pinned-pair">
+            <span>{pinnedTip.t1}</span>
+            <span className="pinned-pair-sep">vs</span>
+            <span>{pinnedTip.t2}</span>
+          </div>
+          <div className="pinned-value" style={{ color: pinnedTip.style.bandColor || '#f0f0ee' }}>
+            {pinnedTip.val.toFixed(3)}
+          </div>
+          <div className="pinned-label" style={{ color: pinnedTip.style.bandColor ? `${pinnedTip.style.bandColor}99` : '#6b6b65' }}>
+            {pinnedTip.style.bandLabel}
+          </div>
         </div>
       )}
     </div>
   );
 };
 
-// ── Insight Card ───────────────────────────────────────────────────────────────
+// ── Insight Card ──────────────────────────────────────────────────────────────
 const InsightCard = ({ insight }) => {
   const {
     pair, correlation, corrTier, verdict, verdictReason,
@@ -355,7 +346,7 @@ const InsightCard = ({ insight }) => {
           </div>
           <span className="insight-corr-badge"
             style={{ background: `${tierColor}20`, color: tierColor, borderColor: `${tierColor}40` }}>
-            {corrTier === 'extreme' ? 'Extreme' : corrTier === 'high' ? 'High' : 'Flagged'} · {(correlation * 100).toFixed(0)}%
+            {corrTier === 'extreme' ? 'Extreme' : corrTier === 'high' ? 'High' : 'Flagged'} · {(correlation*100).toFixed(0)}%
           </span>
         </div>
         <p className="monitor-reason">{verdictReason}</p>
@@ -389,21 +380,21 @@ const InsightCard = ({ insight }) => {
           <span className="insight-sep">↔</span>
           <span className="insight-sym">{pair[1]}</span>
         </div>
-        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+        <div style={{ display:'flex', gap:'6px', alignItems:'center' }}>
           <span className="verdict-chip"
-            style={{ background: `${verdictColor}18`, color: verdictColor, borderColor: `${verdictColor}35` }}>
+            style={{ background:`${verdictColor}18`, color:verdictColor, borderColor:`${verdictColor}35` }}>
             {verdict === 'RECOMMEND' ? '✓ Recommend' : '~ Weak Signal'}
           </span>
           <span className="insight-corr-badge"
-            style={{ background: `${tierColor}20`, color: tierColor, borderColor: `${tierColor}40` }}>
-            {(correlation * 100).toFixed(0)}%
+            style={{ background:`${tierColor}20`, color:tierColor, borderColor:`${tierColor}40` }}>
+            {(correlation*100).toFixed(0)}%
           </span>
         </div>
       </div>
 
       {winnerReasons.length > 0 && (
         <div className="evidence-list">
-          {winnerReasons.map((r, i) => <span key={i} className="evidence-item">✓ {r}</span>)}
+          {winnerReasons.map((r,i) => <span key={i} className="evidence-item">✓ {r}</span>)}
         </div>
       )}
 
@@ -412,7 +403,7 @@ const InsightCard = ({ insight }) => {
           <div className="col-role retain">Retain</div>
           <div className="insight-sym-lg">{winner}</div>
           <div className="insight-action-tag" style={{ color: ACTION_COLOR[winnerAction] || '#6b7280' }}>
-            {winnerAction?.replace(/_/g, ' ') || '—'}
+            {winnerAction?.replace(/_/g,' ') || '—'}
           </div>
           <div className="insight-cascade" style={{ color: CASCADE_COLOR[winnerCascade] || '#6b7280' }}>
             {winnerCascade || '—'}
@@ -423,7 +414,6 @@ const InsightCard = ({ insight }) => {
             <MetricRow label="Q"   value={`${fmtScore(winnerQual63)}/10`}/>
           </div>
         </div>
-
         <div className="insight-divider">
           <span className="edge-label">α edge</span>
           <span className="edge-value" style={{ color: '#059669' }}>
@@ -431,12 +421,11 @@ const InsightCard = ({ insight }) => {
           </span>
           <span className="edge-period">21d</span>
         </div>
-
         <div className="insight-col loser-col">
           <div className="col-role review">Review</div>
           <div className="insight-sym-lg" style={{ color: '#9aa0b0' }}>{loser}</div>
           <div className="insight-action-tag" style={{ color: ACTION_COLOR[loserAction] || '#6b7280' }}>
-            {loserAction?.replace(/_/g, ' ') || '—'}
+            {loserAction?.replace(/_/g,' ') || '—'}
           </div>
           <div className="insight-cascade" style={{ color: CASCADE_COLOR[loserCascade] || '#6b7280' }}>
             {loserCascade || '—'}
