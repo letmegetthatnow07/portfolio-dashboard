@@ -29,14 +29,45 @@ const CASCADE_COLOR = {
   HEALTHY: '#059669', WEAKENING: '#d97706', DECAYING: '#ea580c', CRITICAL: '#b91c1c',
 };
 
-// ── Canvas Neural Background — random drift, mouse repulsion ─────────────────
-// Nodes are randomly scattered with random colours (green/red/neutral).
-// No fixed colour zones — they drift freely like market signals.
-// Canvas sits behind the heatmap with pointer-events:none.
+// ── Canvas Neural Background for heatmap — stock-like vertical motion ────────
+// Module-level node state — never resets on React re-render or UI action
+const _hmNodes = [];
+let _hmReady = false;
+
+const buildHmNodes = (W, H) => {
+  _hmNodes.length = 0;
+  const COLORS = [
+    { c: '#059669', a: () => 0.36 + Math.random() * 0.18 },
+    { c: '#dc2626', a: () => 0.32 + Math.random() * 0.16 },
+    { c: '#a0a09a', a: () => 0.14 + Math.random() * 0.10 },
+  ];
+  const pick = () => {
+    const r = Math.random();
+    return r < 0.38 ? COLORS[0] : r < 0.76 ? COLORS[1] : COLORS[2];
+  };
+  const COUNT = 18;
+  for (let i = 0; i < COUNT; i++) {
+    const col = pick();
+    _hmNodes.push({
+      x: W * (0.04 + Math.random() * 0.92),
+      y: H * (i / COUNT + Math.random() * (1 / COUNT)), // evenly spread
+      vx: (Math.random() - 0.5) * 0.28,
+      vy: (Math.random() < 0.5 ? 1 : -1) * (0.22 + Math.random() * 0.32),
+      oAmp: 28 + Math.random() * 45,
+      oPeriod: 4 + Math.random() * 8,
+      oPhase: Math.random() * Math.PI * 2,
+      r: 1.8 + Math.random() * 1.8,
+      color: col.c, alpha: col.a(),
+      pulseOffset: Math.random() * Math.PI * 2,
+      pulseSpeed: 0.008 + Math.random() * 0.014,
+    });
+  }
+  _hmReady = true;
+};
+
 const NeuralBackground = () => {
   const canvasRef = useRef(null);
   const mouseRef  = useRef({ x: -9999, y: -9999 });
-  const nodesRef  = useRef([]);
   const rafRef    = useRef(null);
 
   useEffect(() => {
@@ -48,40 +79,7 @@ const NeuralBackground = () => {
     const resize = () => {
       canvas.width  = container.offsetWidth;
       canvas.height = container.offsetHeight;
-      initNodes();
-    };
-
-    const COLORS = [
-      { c: '#059669', a: () => 0.40 + Math.random() * 0.22 },
-      { c: '#dc2626', a: () => 0.36 + Math.random() * 0.20 },
-      { c: '#a0a09a', a: () => 0.18 + Math.random() * 0.12 },
-    ];
-    const pickColor = () => {
-      const r = Math.random();
-      if (r < 0.40) return COLORS[0];
-      if (r < 0.80) return COLORS[1];
-      return COLORS[2];
-    };
-
-    const initNodes = () => {
-      const W = canvas.width, H = canvas.height;
-      const nodes = [];
-      for (let i = 0; i < 22; i++) {
-        const col = pickColor();
-        const x = W * (0.03 + Math.random() * 0.94);
-        const y = H * (0.03 + Math.random() * 0.94);
-        nodes.push({
-          x, y,
-          baseX: x, baseY: y,
-          vx: (Math.random() - 0.5) * 0.5,
-          vy: (Math.random() - 0.5) * 0.5,
-          r: 2.0 + Math.random() * 2.2,
-          color: col.c, alpha: col.a(),
-          pulseOffset: Math.random() * Math.PI * 2,
-          pulseSpeed: 0.010 + Math.random() * 0.018,
-        });
-      }
-      nodesRef.current = nodes;
+      if (!_hmReady) buildHmNodes(canvas.width, canvas.height);
     };
 
     const onMouse = e => {
@@ -92,67 +90,60 @@ const NeuralBackground = () => {
     canvas.addEventListener('mousemove', onMouse);
     canvas.addEventListener('mouseleave', onLeave);
 
-    const EDGE_DIST   = 140;
-    const REPEL_DIST  = 100;
-    const REPEL_FORCE = 1.4;
-    const DAMPING     = 0.96;
-    const REVERT      = 0.003;
+    const EDGE_DIST = 120, REPEL_DIST = 90, REPEL_FORCE = 1.5;
+    const H_DAMP = 0.93, V_DAMP = 0.984, H_RESTORE = 0.014, MAX_SPD = 2.0;
 
     const draw = (t) => {
       const W = canvas.width, H = canvas.height;
       ctx.clearRect(0, 0, W, H);
-      const nodes = nodesRef.current;
+      const nodes = _hmNodes;
       const mx = mouseRef.current.x, my = mouseRef.current.y;
+      const now = t * 0.001;
 
       for (const n of nodes) {
-        n.vx += (n.baseX - n.x) * REVERT;
-        n.vy += (n.baseY - n.y) * REVERT;
-        n.vx += (Math.random() - 0.5) * 0.06;
-        n.vy += (Math.random() - 0.5) * 0.06;
+        n.vy += Math.sin(now / n.oPeriod * Math.PI * 2 + n.oPhase) * 0.032;
+        n.vx += (Math.random() - 0.5) * 0.025;
+        n.vy += (Math.random() - 0.5) * 0.025;
+        n.vx -= n.vx * H_RESTORE;
         const dx = n.x - mx, dy = n.y - my;
-        const dist = Math.sqrt(dx*dx + dy*dy);
+        const dist = Math.sqrt(dx * dx + dy * dy);
         if (dist < REPEL_DIST && dist > 0) {
           const f = (REPEL_DIST - dist) / REPEL_DIST * REPEL_FORCE;
-          n.vx += (dx/dist)*f; n.vy += (dy/dist)*f;
+          n.vx += (dx / dist) * f; n.vy += (dy / dist) * f;
         }
-        n.vx *= DAMPING; n.vy *= DAMPING;
-        const spd = Math.sqrt(n.vx*n.vx + n.vy*n.vy);
-        if (spd > 2.2) { n.vx = n.vx/spd*2.2; n.vy = n.vy/spd*2.2; }
+        n.vx *= H_DAMP; n.vy *= V_DAMP;
+        const spd = Math.sqrt(n.vx * n.vx + n.vy * n.vy);
+        if (spd > MAX_SPD) { n.vx = n.vx / spd * MAX_SPD; n.vy = n.vy / spd * MAX_SPD; }
         n.x += n.vx; n.y += n.vy;
-        if (n.x < 0) { n.x = 0; n.vx *= -0.5; }
-        if (n.x > W) { n.x = W; n.vx *= -0.5; }
-        if (n.y < 0) { n.y = 0; n.vy *= -0.5; }
-        if (n.y > H) { n.y = H; n.vy *= -0.5; }
+        if (n.x < 0) { n.x = 0; n.vx = Math.abs(n.vx) * 0.6; }
+        if (n.x > W) { n.x = W; n.vx = -Math.abs(n.vx) * 0.6; }
+        if (n.y < 0) n.y = H; // vertical wrap
+        if (n.y > H) n.y = 0;
       }
 
-      // Edges — connect any nodes within EDGE_DIST regardless of colour
       for (let i = 0; i < nodes.length; i++) {
-        for (let j = i+1; j < nodes.length; j++) {
+        for (let j = i + 1; j < nodes.length; j++) {
           const a = nodes[i], b = nodes[j];
-          const dx = a.x-b.x, dy = a.y-b.y;
-          const d = Math.sqrt(dx*dx + dy*dy);
+          const dx = a.x - b.x, dy = a.y - b.y;
+          const d = Math.sqrt(dx * dx + dy * dy);
           if (d > EDGE_DIST) continue;
-          const alpha = (1 - d/EDGE_DIST) * 0.16;
-          // colour edge by the brighter node
-          const edgeCol = a.color === '#a0a09a' ? b.color : a.color;
-          ctx.beginPath();
-          ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
-          ctx.strokeStyle = edgeCol === '#059669' ? `rgba(5,150,105,${alpha})`
-                          : edgeCol === '#dc2626' ? `rgba(220,38,38,${alpha})`
-                          : `rgba(160,160,154,${alpha})`;
+          const ea = (1 - d / EDGE_DIST) * 0.13;
+          const col = a.color === '#a0a09a' ? b.color : a.color;
+          ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+          ctx.strokeStyle = col === '#059669' ? `rgba(5,150,105,${ea})`
+                          : col === '#dc2626' ? `rgba(220,38,38,${ea})`
+                          :                    `rgba(160,160,154,${ea})`;
           ctx.lineWidth = 1; ctx.stroke();
         }
       }
 
-      // Nodes
-      const now = t * 0.001;
       for (const n of nodes) {
         const pulse = 0.82 + 0.18 * Math.sin(now * n.pulseSpeed * 60 + n.pulseOffset);
         ctx.beginPath();
-        ctx.arc(n.x, n.y, n.r * pulse, 0, Math.PI*2);
-        ctx.fillStyle = n.color === '#059669' ? `rgba(5,150,105,${n.alpha*pulse})`
-                      : n.color === '#dc2626' ? `rgba(220,38,38,${n.alpha*pulse})`
-                      : `rgba(160,160,154,${n.alpha*pulse})`;
+        ctx.arc(n.x, n.y, n.r * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = n.color === '#059669' ? `rgba(5,150,105,${n.alpha * pulse})`
+                      : n.color === '#dc2626' ? `rgba(220,38,38,${n.alpha * pulse})`
+                      :                        `rgba(160,160,154,${n.alpha * pulse})`;
         ctx.fill();
       }
 
@@ -170,7 +161,7 @@ const NeuralBackground = () => {
       canvas.removeEventListener('mousemove', onMouse);
       canvas.removeEventListener('mouseleave', onLeave);
     };
-  }, []);
+  }, []); // never re-runs
 
   return <canvas ref={canvasRef} className="neural-bg-canvas" aria-hidden="true"/>;
 };
