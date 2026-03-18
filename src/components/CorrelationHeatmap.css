@@ -138,26 +138,35 @@
   background: #1a1917;
   border: 1px solid #2e2d2b;
   border-radius: 7px;
-  padding: 6px 10px 6px 12px;
+  padding: 5px 10px 5px 11px;
   font-family: 'DM Mono', monospace;
-  font-size: 12px;
-  color: #f0f0ee;
   z-index: 9001;
   white-space: nowrap;
   box-shadow: 0 4px 16px rgba(0,0,0,.32);
-  display: flex; align-items: center; gap: 6px;
+  display: flex; align-items: center; gap: 5px;
   animation: pinnedIn .15s ease both;
   pointer-events: auto;
 }
-.pin-pair { color: #c8c7c1; font-size: 11px; font-weight: 500; }
-.pin-eq   { color: #4a4a44; font-size: 11px; }
-.pin-val  { font-size: 14px; font-weight: 700; letter-spacing: -0.01em; }
-.pin-close {
-  background: none; border: none; color: #4a4a44;
-  font-size: 11px; cursor: pointer; padding: 0 0 0 4px;
-  line-height: 1; transition: color .12s ease; margin-left: 2px;
+/* Pair name — muted, same style as "Capital Optimisation" heading */
+.pin-pair {
+  font-size: 11px;
+  font-weight: 500;
+  color: #9ca3af;   /* same muted grey as .insights-sub / capital opt text */
+  letter-spacing: 0.01em;
 }
-.pin-close:hover { color: #f0f0ee; }
+.pin-eq { color: #3a3a34; font-size: 11px; }
+/* Value — bold, coloured to match the cell band */
+.pin-val {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.pin-close {
+  background: none; border: none; color: #3a3a34;
+  font-size: 10px; cursor: pointer; padding: 0 0 0 4px;
+  line-height: 1; transition: color .12s ease; margin-left: 1px;
+}
+.pin-close:hover { color: #a0a09a; }
 
 /* ── Loading ─────────────────────────────────────────────────────────────── */
 .heatmap-loading {
