@@ -29,68 +29,124 @@ const CASCADE_COLOR = {
   HEALTHY: '#059669', WEAKENING: '#d97706', DECAYING: '#ea580c', CRITICAL: '#b91c1c',
 };
 
-// ── Neural background — green bull network + red bear network ──────────────────
-// Opacity values 0.25–0.55 on nodes, 0.18–0.28 on lines — clearly visible
-// but background-level. CSS animations (drift1/2/3, node-pulse) run in the CSS.
+// ── Neural Network Background ──────────────────────────────────────────────────
+// Nodes connected by edges. Signal packets (animated dashes) travel along edges.
+// Green = bull network (top-left region), Red = bear network (right region).
+// All elements are subtle — visible but never competing with the heatmap data.
+//
+// SVG uses percentage coordinates so it scales with the container.
+// Edge base lines are rendered at low opacity with slow glow animation.
+// On top of each edge, a "signal" line with stroke-dasharray + dashoffset
+// animation makes a packet appear to travel from one node to the other.
 const NeuralBackground = () => (
-  <svg className="neural-bg" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+  <svg className="neural-bg" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"
+       preserveAspectRatio="xMidYMid slice">
+
     <defs>
-      <radialGradient id="ng-green" cx="50%" cy="50%" r="50%">
-        <stop offset="0%"   stopColor="#059669" stopOpacity="0.22"/>
+      {/* Signal packet gradient — green */}
+      <linearGradient id="sig-grad-g" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%"   stopColor="#059669" stopOpacity="0"/>
+        <stop offset="50%"  stopColor="#059669" stopOpacity="1"/>
         <stop offset="100%" stopColor="#059669" stopOpacity="0"/>
-      </radialGradient>
-      <radialGradient id="ng-red" cx="50%" cy="50%" r="50%">
-        <stop offset="0%"   stopColor="#dc2626" stopOpacity="0.18"/>
+      </linearGradient>
+      {/* Signal packet gradient — red */}
+      <linearGradient id="sig-grad-r" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%"   stopColor="#dc2626" stopOpacity="0"/>
+        <stop offset="50%"  stopColor="#dc2626" stopOpacity="1"/>
         <stop offset="100%" stopColor="#dc2626" stopOpacity="0"/>
-      </radialGradient>
+      </linearGradient>
     </defs>
 
-    {/* Layer 1 — green bull network, top-left, drifts on drift1 */}
-    <g className="layer1" style={{ transformOrigin: '25% 32%' }}>
-      <line x1="4%"  y1="9%"  x2="19%" y2="27%" stroke="#059669" strokeWidth="1.2" strokeOpacity="0.28"/>
-      <line x1="19%" y1="27%" x2="35%" y2="15%" stroke="#059669" strokeWidth="1.2" strokeOpacity="0.25"/>
-      <line x1="35%" y1="15%" x2="50%" y2="31%" stroke="#059669" strokeWidth="1.2" strokeOpacity="0.22"/>
-      <line x1="50%" y1="31%" x2="40%" y2="50%" stroke="#059669" strokeWidth="1.2" strokeOpacity="0.24"/>
-      <line x1="4%"  y1="9%"  x2="40%" y2="50%" stroke="#059669" strokeWidth="0.7" strokeOpacity="0.14"/>
-      <line x1="19%" y1="27%" x2="40%" y2="50%" stroke="#059669" strokeWidth="0.7" strokeOpacity="0.12"/>
-      <circle className="node-green"      cx="4%"  cy="9%"  r="4.5" fill="#059669" opacity="0.42"/>
-      <circle className="node-green"      cx="19%" cy="27%" r="4"   fill="#059669" opacity="0.38"/>
-      <circle className="node-green"      cx="35%" cy="15%" r="4.5" fill="#059669" opacity="0.40"/>
-      <circle className="node-green-slow" cx="50%" cy="31%" r="3.5" fill="#059669" opacity="0.32"/>
-      <circle className="node-green-slow" cx="40%" cy="50%" r="4"   fill="#059669" opacity="0.35"/>
-    </g>
+    {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        GREEN BULL NETWORK — top-left quadrant
+        Nodes: A(5%,12%), B(18%,28%), C(32%,14%), D(22%,46%), E(42%,32%)
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
 
-    {/* Layer 2 — red bear network, right side, drifts on drift2 */}
-    <g className="layer2" style={{ transformOrigin: '76% 26%' }}>
-      <line x1="63%" y1="7%"  x2="79%" y2="23%" stroke="#dc2626" strokeWidth="1.2" strokeOpacity="0.24"/>
-      <line x1="79%" y1="23%" x2="94%" y2="13%" stroke="#dc2626" strokeWidth="1.2" strokeOpacity="0.22"/>
-      <line x1="79%" y1="23%" x2="75%" y2="42%" stroke="#dc2626" strokeWidth="1.2" strokeOpacity="0.20"/>
-      <line x1="63%" y1="7%"  x2="75%" y2="42%" stroke="#dc2626" strokeWidth="0.7" strokeOpacity="0.13"/>
-      <line x1="94%" y1="13%" x2="86%" y2="36%" stroke="#dc2626" strokeWidth="0.7" strokeOpacity="0.13"/>
-      <circle className="node-red"      cx="63%" cy="7%"  r="4.5" fill="#dc2626" opacity="0.38"/>
-      <circle className="node-red"      cx="79%" cy="23%" r="4"   fill="#dc2626" opacity="0.34"/>
-      <circle className="node-red"      cx="94%" cy="13%" r="3.5" fill="#dc2626" opacity="0.30"/>
-      <circle className="node-red-slow" cx="75%" cy="42%" r="4.5" fill="#dc2626" opacity="0.28"/>
-      <circle className="node-red-slow" cx="86%" cy="36%" r="3.5" fill="#dc2626" opacity="0.26"/>
-    </g>
+    {/* Static edges — green */}
+    <line className="eg"  x1="5%"  y1="12%" x2="18%" y2="28%" stroke="#059669" strokeWidth="1.2"/>
+    <line className="eg"  x1="18%" y1="28%" x2="32%" y2="14%" stroke="#059669" strokeWidth="1.2"/>
+    <line className="eg2" x1="32%" y1="14%" x2="42%" y2="32%" stroke="#059669" strokeWidth="1.0"/>
+    <line className="eg2" x1="18%" y1="28%" x2="22%" y2="46%" stroke="#059669" strokeWidth="1.0"/>
+    <line className="eg"  x1="22%" y1="46%" x2="42%" y2="32%" stroke="#059669" strokeWidth="1.0"/>
+    <line className="eg2" x1="5%"  y1="12%" x2="32%" y2="14%" stroke="#059669" strokeWidth="0.6"/>
 
-    {/* Layer 3 — neutral connector, bottom, drifts on drift3 */}
-    <g className="layer3" style={{ transformOrigin: '50% 78%' }}>
-      <line x1="11%" y1="70%" x2="29%" y2="84%" stroke="#6b6b65" strokeWidth="0.9" strokeOpacity="0.18"/>
-      <line x1="29%" y1="84%" x2="51%" y2="76%" stroke="#6b6b65" strokeWidth="0.9" strokeOpacity="0.16"/>
-      <line x1="51%" y1="76%" x2="67%" y2="86%" stroke="#6b6b65" strokeWidth="0.9" strokeOpacity="0.14"/>
-      <line x1="67%" y1="86%" x2="84%" y2="74%" stroke="#6b6b65" strokeWidth="0.9" strokeOpacity="0.12"/>
-      <line x1="11%" y1="70%" x2="51%" y2="76%" stroke="#6b6b65" strokeWidth="0.5" strokeOpacity="0.09"/>
-      <circle className="node-slow" cx="11%" cy="70%" r="3.5" fill="#a0a09a" opacity="0.34"/>
-      <circle className="node-slow" cx="29%" cy="84%" r="3"   fill="#a0a09a" opacity="0.28"/>
-      <circle className="node-slow" cx="51%" cy="76%" r="4"   fill="#a0a09a" opacity="0.32"/>
-      <circle className="node-slow" cx="67%" cy="86%" r="3"   fill="#a0a09a" opacity="0.26"/>
-      <circle className="node-slow" cx="84%" cy="74%" r="3.5" fill="#a0a09a" opacity="0.24"/>
-    </g>
+    {/* Signal packets — green (dasharray = packet length, dashoffset animates) */}
+    {/* Edge A→B */}
+    <line className="sg1"
+      x1="5%" y1="12%" x2="18%" y2="28%"
+      stroke="#059669" strokeWidth="2.5"
+      strokeDasharray="18 220" strokeDashoffset="220"/>
+    {/* Edge B→C */}
+    <line className="sg2"
+      x1="18%" y1="28%" x2="32%" y2="14%"
+      stroke="#059669" strokeWidth="2.5"
+      strokeDasharray="18 220" strokeDashoffset="220"/>
+    {/* Edge C→E */}
+    <line className="sg3"
+      x1="32%" y1="14%" x2="42%" y2="32%"
+      stroke="#059669" strokeWidth="2.5"
+      strokeDasharray="18 220" strokeDashoffset="220"/>
+    {/* Edge B→D */}
+    <line className="sg4"
+      x1="18%" y1="28%" x2="22%" y2="46%"
+      stroke="#059669" strokeWidth="2.5"
+      strokeDasharray="18 220" strokeDashoffset="220"/>
 
-    {/* Ambient glow blobs */}
-    <ellipse cx="18%" cy="32%" rx="22%" ry="15%" fill="url(#ng-green)"/>
-    <ellipse cx="80%" cy="20%" rx="20%" ry="13%" fill="url(#ng-red)"/>
+    {/* Green nodes */}
+    <circle className="ng"   cx="5%"  cy="12%" r="4.5" fill="#059669"/>
+    <circle className="ng-s" cx="18%" cy="28%" r="4"   fill="#059669"/>
+    <circle className="ng"   cx="32%" cy="14%" r="4.5" fill="#059669"/>
+    <circle className="ng-s" cx="22%" cy="46%" r="3.5" fill="#059669"/>
+    <circle className="ng"   cx="42%" cy="32%" r="4"   fill="#059669"/>
+
+    {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        RED BEAR NETWORK — right side
+        Nodes: P(62%,8%), Q(76%,22%), R(92%,12%), S(80%,40%), T(96%,34%)
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
+
+    {/* Static edges — red */}
+    <line className="er"  x1="62%" y1="8%"  x2="76%" y2="22%" stroke="#dc2626" strokeWidth="1.2"/>
+    <line className="er"  x1="76%" y1="22%" x2="92%" y2="12%" stroke="#dc2626" strokeWidth="1.2"/>
+    <line className="er2" x1="76%" y1="22%" x2="80%" y2="40%" stroke="#dc2626" strokeWidth="1.0"/>
+    <line className="er2" x1="92%" y1="12%" x2="96%" y2="34%" stroke="#dc2626" strokeWidth="1.0"/>
+    <line className="er"  x1="80%" y1="40%" x2="96%" y2="34%" stroke="#dc2626" strokeWidth="1.0"/>
+    <line className="er2" x1="62%" y1="8%"  x2="92%" y2="12%" stroke="#dc2626" strokeWidth="0.6"/>
+
+    {/* Signal packets — red */}
+    {/* Edge P→Q */}
+    <line className="sr1"
+      x1="62%" y1="8%"  x2="76%" y2="22%"
+      stroke="#dc2626" strokeWidth="2.5"
+      strokeDasharray="18 220" strokeDashoffset="220"/>
+    {/* Edge Q→R */}
+    <line className="sr2"
+      x1="76%" y1="22%" x2="92%" y2="12%"
+      stroke="#dc2626" strokeWidth="2.5"
+      strokeDasharray="18 220" strokeDashoffset="220"/>
+    {/* Edge Q→S */}
+    <line className="sr3"
+      x1="76%" y1="22%" x2="80%" y2="40%"
+      stroke="#dc2626" strokeWidth="2.5"
+      strokeDasharray="18 220" strokeDashoffset="220"/>
+
+    {/* Red nodes */}
+    <circle className="nr"   cx="62%" cy="8%"  r="4.5" fill="#dc2626"/>
+    <circle className="nr-s" cx="76%" cy="22%" r="4"   fill="#dc2626"/>
+    <circle className="nr"   cx="92%" cy="12%" r="3.5" fill="#dc2626"/>
+    <circle className="nr-s" cx="80%" cy="40%" r="4"   fill="#dc2626"/>
+    <circle className="nr"   cx="96%" cy="34%" r="3"   fill="#dc2626"/>
+
+    {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        BOTTOM CONNECTOR — neutral grey nodes bridging the two networks
+        (very dim — just enough to fill the lower area)
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
+    <line x1="10%" y1="72%" x2="30%" y2="85%" stroke="#a0a09a" strokeWidth="0.8" opacity="0.10"/>
+    <line x1="30%" y1="85%" x2="55%" y2="78%" stroke="#a0a09a" strokeWidth="0.8" opacity="0.08"/>
+    <line x1="55%" y1="78%" x2="72%" y2="88%" stroke="#a0a09a" strokeWidth="0.8" opacity="0.08"/>
+    <circle cx="10%" cy="72%" r="3" fill="#a0a09a" opacity="0.18"/>
+    <circle cx="30%" cy="85%" r="2.5" fill="#a0a09a" opacity="0.15"/>
+    <circle cx="55%" cy="78%" r="3" fill="#a0a09a" opacity="0.16"/>
+    <circle cx="72%" cy="88%" r="2.5" fill="#a0a09a" opacity="0.13"/>
   </svg>
 );
 
@@ -109,7 +165,6 @@ const CorrelationHeatmap = () => {
       .finally(() => setLoading(false));
   }, []);
 
-  // Tooltip tracks mouse position directly for accurate placement
   const onMouseMove = useCallback((e, t1, t2, val) => {
     if (val === 1) return;
     const { bandColor } = getCellStyle(val);
@@ -130,9 +185,9 @@ const CorrelationHeatmap = () => {
 
   const { tickers, matrix, insights = [], windowStart, windowEnd, windowDays, lastUpdated } = matrixData;
   const byVerdict = v => insights.filter(i => i.verdict === v);
-  const recommends  = byVerdict('RECOMMEND');
-  const weak        = byVerdict('WEAK_SIGNAL');
-  const monitors    = byVerdict('MONITOR');
+  const recommends = byVerdict('RECOMMEND');
+  const weak       = byVerdict('WEAK_SIGNAL');
+  const monitors   = byVerdict('MONITOR');
   const tabInsights = tab === 'RECOMMEND' ? recommends : tab === 'WEAK_SIGNAL' ? weak : monitors;
 
   return (
@@ -157,7 +212,7 @@ const CorrelationHeatmap = () => {
         )}
       </div>
 
-      {/* ── Side-by-side: heatmap left, capital optimisation right ── */}
+      {/* Side-by-side body */}
       <div className="heatmap-body">
 
         {/* Left — heatmap + legend */}
@@ -195,7 +250,7 @@ const CorrelationHeatmap = () => {
             </table>
           </div>
 
-          {/* Legend sits below the heatmap in the left column */}
+          {/* Legend */}
           <div className="heatmap-legend">
             {[
               { bg: '#7f1d1d', label: 'Extreme ≥0.85' },
@@ -246,7 +301,7 @@ const CorrelationHeatmap = () => {
               </p>
 
               {tabInsights.length === 0 ? (
-                <div className="no-insights">No {tab.replace('_',' ').toLowerCase()} pairs right now.</div>
+                <div className="no-insights">No {tab.replace('_', ' ').toLowerCase()} pairs right now.</div>
               ) : (
                 <div className="insights-grid">
                   {tabInsights.map((ins, idx) => <InsightCard key={idx} insight={ins}/>)}
@@ -257,7 +312,7 @@ const CorrelationHeatmap = () => {
         )}
       </div>
 
-      {/* Tooltip — tracks mouse, value coloured to match cell band */}
+      {/* Tooltip */}
       {tooltip && (
         <div
           className="heatmap-tooltip"
@@ -286,7 +341,7 @@ const InsightCard = ({ insight }) => {
     t1Stats, t2Stats,
   } = insight;
 
-  const tierColor = corrTier === 'extreme' ? '#7f1d1d' : corrTier === 'high' ? '#b91c1c' : '#f97316';
+  const tierColor    = corrTier === 'extreme' ? '#7f1d1d' : corrTier === 'high' ? '#b91c1c' : '#f97316';
   const verdictColor = verdict === 'RECOMMEND' ? '#10b981' : verdict === 'WEAK_SIGNAL' ? '#f59e0b' : '#6b7280';
 
   if (!winner) {
@@ -387,8 +442,8 @@ const InsightCard = ({ insight }) => {
             {loserCascade || '—'}
           </div>
           <div className="insight-metrics">
-            <MetricRow label="α21" value={fmtPct(loserAlpha21)}  positive={loserAlpha21 >= 0}  right/>
-            <MetricRow label="α63" value={fmtPct(loserAlpha63)}  positive={loserAlpha63 >= 0}  right/>
+            <MetricRow label="α21" value={fmtPct(loserAlpha21)} positive={loserAlpha21 >= 0} right/>
+            <MetricRow label="α63" value={fmtPct(loserAlpha63)} positive={loserAlpha63 >= 0} right/>
             <MetricRow label="Q"   value={`${fmtScore(loserQual63)}/10`} right/>
           </div>
         </div>
