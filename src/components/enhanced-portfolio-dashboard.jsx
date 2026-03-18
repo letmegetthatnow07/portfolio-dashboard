@@ -46,79 +46,112 @@ const scoreCol = s => {
   return '#dc2626';
 };
 
-// ── Market background — animated bull/bear candlesticks ───────────────────────
-// CSS classes mkt-c1..mkt-c5 = bull (bob up), mkt-d1..mkt-d4 = bear (drop down)
-// mkt-ln = rising trend line, mkt-lf = falling trend line
-// Opacity 0.14–0.22 = clearly visible without competing with data
+// ── Neural Network Market Background ──────────────────────────────────────────
+// Two networks: green bull (left side) + red bear (right side).
+// Each has static edge lines (low opacity glow) + animated signal packets
+// (stroke-dashoffset) travelling along edges + pulsing nodes.
+// Uses SVG percentage coordinates — scales to any viewport.
+// All elements are subtle (opacity 0.15–0.30 edges, 0.30–0.65 nodes).
 const MarketBackground = () => (
   <svg className="market-bg" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"
-    viewBox="0 0 1200 800" preserveAspectRatio="xMidYMid slice">
+       viewBox="0 0 1200 800" preserveAspectRatio="xMidYMid slice">
 
-    {/* ── Bull candles — green, left third ── */}
-    <g className="mkt-c1 mkt-gl" style={{ transformOrigin: '69px 570px' }}>
-      <line x1="69" y1="455" x2="69" y2="480"  stroke="#059669" strokeWidth="2" opacity="0.22"/>
-      <rect x="60" y="480" width="18" height="90"  fill="#059669" opacity="0.18" rx="2"/>
-      <line x1="69" y1="570" x2="69" y2="595"  stroke="#059669" strokeWidth="2" opacity="0.22"/>
-    </g>
-    <g className="mkt-c2 mkt-gl" style={{ transformOrigin: '109px 550px' }}>
-      <line x1="109" y1="415" x2="109" y2="440" stroke="#059669" strokeWidth="2" opacity="0.20"/>
-      <rect x="100" y="440" width="18" height="110" fill="#059669" opacity="0.17" rx="2"/>
-      <line x1="109" y1="550" x2="109" y2="575" stroke="#059669" strokeWidth="2" opacity="0.20"/>
-    </g>
-    <g className="mkt-c3 mkt-gl" style={{ transformOrigin: '149px 520px' }}>
-      <line x1="149" y1="375" x2="149" y2="400" stroke="#059669" strokeWidth="2" opacity="0.20"/>
-      <rect x="140" y="400" width="18" height="120" fill="#059669" opacity="0.17" rx="2"/>
-      <line x1="149" y1="520" x2="149" y2="546" stroke="#059669" strokeWidth="2" opacity="0.20"/>
-    </g>
-    <g className="mkt-c4 mkt-gl" style={{ transformOrigin: '189px 490px' }}>
-      <line x1="189" y1="335" x2="189" y2="360" stroke="#059669" strokeWidth="2" opacity="0.20"/>
-      <rect x="180" y="360" width="18" height="130" fill="#059669" opacity="0.17" rx="2"/>
-      <line x1="189" y1="490" x2="189" y2="516" stroke="#059669" strokeWidth="2" opacity="0.20"/>
-    </g>
-    <g className="mkt-c5 mkt-gl" style={{ transformOrigin: '229px 460px' }}>
-      <line x1="229" y1="294" x2="229" y2="320" stroke="#059669" strokeWidth="2" opacity="0.20"/>
-      <rect x="220" y="320" width="18" height="140" fill="#059669" opacity="0.17" rx="2"/>
-      <line x1="229" y1="460" x2="229" y2="486" stroke="#059669" strokeWidth="2" opacity="0.20"/>
-    </g>
+    {/* ── GREEN BULL NETWORK — left third ────────────────────────────────────
+        Nodes: A(80,640), B(160,490), C(260,580), D(200,370), E(340,450), F(120,280)
+        Arranged in a graph topology — larger vertical spread for visual depth.
+    ───────────────────────────────────────────────────────────────────────── */}
 
-    {/* ── Bear candles — red, right third ── */}
-    <g className="mkt-d1 mkt-gl" style={{ transformOrigin: '869px 300px' }}>
-      <line x1="869" y1="185" x2="869" y2="200" stroke="#dc2626" strokeWidth="2" opacity="0.18"/>
-      <rect x="860" y="200" width="18" height="100" fill="#dc2626" opacity="0.15" rx="2"/>
-      <line x1="869" y1="300" x2="869" y2="320" stroke="#dc2626" strokeWidth="2" opacity="0.18"/>
-    </g>
-    <g className="mkt-d2 mkt-gl" style={{ transformOrigin: '909px 350px' }}>
-      <line x1="909" y1="225" x2="909" y2="240" stroke="#dc2626" strokeWidth="2" opacity="0.17"/>
-      <rect x="900" y="240" width="18" height="110" fill="#dc2626" opacity="0.14" rx="2"/>
-      <line x1="909" y1="350" x2="909" y2="372" stroke="#dc2626" strokeWidth="2" opacity="0.17"/>
-    </g>
-    <g className="mkt-d3 mkt-gl" style={{ transformOrigin: '949px 400px' }}>
-      <line x1="949" y1="265" x2="949" y2="280" stroke="#dc2626" strokeWidth="2" opacity="0.17"/>
-      <rect x="940" y="280" width="18" height="120" fill="#dc2626" opacity="0.14" rx="2"/>
-      <line x1="949" y1="400" x2="949" y2="424" stroke="#dc2626" strokeWidth="2" opacity="0.17"/>
-    </g>
-    <g className="mkt-d4 mkt-gl" style={{ transformOrigin: '989px 430px' }}>
-      <line x1="989" y1="305" x2="989" y2="320" stroke="#dc2626" strokeWidth="2" opacity="0.16"/>
-      <rect x="980" y="320" width="18" height="110" fill="#dc2626" opacity="0.13" rx="2"/>
-      <line x1="989" y1="430" x2="989" y2="454" stroke="#dc2626" strokeWidth="2" opacity="0.16"/>
-    </g>
+    {/* Static edges */}
+    <line className="mkt-eg"  x1="80"  y1="640" x2="160" y2="490" stroke="#059669" strokeWidth="1.3"/>
+    <line className="mkt-eg"  x1="160" y1="490" x2="260" y2="580" stroke="#059669" strokeWidth="1.3"/>
+    <line className="mkt-eg2" x1="160" y1="490" x2="200" y2="370" stroke="#059669" strokeWidth="1.1"/>
+    <line className="mkt-eg2" x1="200" y1="370" x2="340" y2="450" stroke="#059669" strokeWidth="1.1"/>
+    <line className="mkt-eg"  x1="200" y1="370" x2="120" y2="280" stroke="#059669" strokeWidth="1.1"/>
+    <line className="mkt-eg2" x1="120" y1="280" x2="340" y2="450" stroke="#059669" strokeWidth="0.7"/>
+    <line className="mkt-eg2" x1="80"  y1="640" x2="260" y2="580" stroke="#059669" strokeWidth="0.7"/>
 
-    {/* ── Price trend lines ── */}
-    <g className="mkt-ln">
-      <polyline points="40,570 120,500 200,430 280,375 360,335"
-        fill="none" stroke="#059669" strokeWidth="1.8" opacity="0.20"
-        strokeLinecap="round" strokeLinejoin="round"/>
-    </g>
-    <g className="mkt-lf">
-      <polyline points="600,335 680,378 760,428 840,478 920,520 1010,558"
-        fill="none" stroke="#dc2626" strokeWidth="1.8" opacity="0.17"
-        strokeLinecap="round" strokeLinejoin="round"/>
-    </g>
+    {/* Signal packets — green (18px dash travelling along each edge) */}
+    <line className="mkt-sg1"
+      x1="80" y1="640" x2="160" y2="490"
+      stroke="#059669" strokeWidth="3"
+      strokeDasharray="18 260" strokeDashoffset="260"/>
+    <line className="mkt-sg2"
+      x1="160" y1="490" x2="200" y2="370"
+      stroke="#059669" strokeWidth="3"
+      strokeDasharray="18 260" strokeDashoffset="260"/>
+    <line className="mkt-sg3"
+      x1="200" y1="370" x2="340" y2="450"
+      stroke="#059669" strokeWidth="3"
+      strokeDasharray="18 260" strokeDashoffset="260"/>
+    <line className="mkt-sg4"
+      x1="200" y1="370" x2="120" y2="280"
+      stroke="#059669" strokeWidth="3"
+      strokeDasharray="18 260" strokeDashoffset="260"/>
+    <line className="mkt-sg5"
+      x1="160" y1="490" x2="260" y2="580"
+      stroke="#059669" strokeWidth="3"
+      strokeDasharray="18 260" strokeDashoffset="260"/>
 
-    {/* Faint grid reference lines */}
-    <line x1="40" y1="300" x2="1160" y2="300" stroke="#a0a09a" strokeWidth="0.6" opacity="0.06" strokeDasharray="5 10"/>
-    <line x1="40" y1="450" x2="1160" y2="450" stroke="#a0a09a" strokeWidth="0.6" opacity="0.06" strokeDasharray="5 10"/>
-    <line x1="40" y1="600" x2="1160" y2="600" stroke="#a0a09a" strokeWidth="0.6" opacity="0.06" strokeDasharray="5 10"/>
+    {/* Green nodes */}
+    <circle className="mkt-ng"   cx="80"  cy="640" r="5"   fill="#059669"/>
+    <circle className="mkt-ng-s" cx="160" cy="490" r="5.5" fill="#059669"/>
+    <circle className="mkt-ng"   cx="260" cy="580" r="4.5" fill="#059669"/>
+    <circle className="mkt-ng-s" cx="200" cy="370" r="5"   fill="#059669"/>
+    <circle className="mkt-ng"   cx="340" cy="450" r="4.5" fill="#059669"/>
+    <circle className="mkt-ng-s" cx="120" cy="280" r="4"   fill="#059669"/>
+
+    {/* ── RED BEAR NETWORK — right third ─────────────────────────────────────
+        Nodes: P(900,200), Q(1000,340), R(1100,220), S(960,480), T(1080,400), U(860,360)
+    ───────────────────────────────────────────────────────────────────────── */}
+
+    {/* Static edges */}
+    <line className="mkt-er"  x1="900"  y1="200" x2="1000" y2="340" stroke="#dc2626" strokeWidth="1.3"/>
+    <line className="mkt-er"  x1="1000" y1="340" x2="1100" y2="220" stroke="#dc2626" strokeWidth="1.3"/>
+    <line className="mkt-er2" x1="1000" y1="340" x2="960"  y2="480" stroke="#dc2626" strokeWidth="1.1"/>
+    <line className="mkt-er2" x1="960"  y1="480" x2="1080" y2="400" stroke="#dc2626" strokeWidth="1.1"/>
+    <line className="mkt-er"  x1="1100" y1="220" x2="1080" y2="400" stroke="#dc2626" strokeWidth="1.1"/>
+    <line className="mkt-er2" x1="900"  y1="200" x2="860"  y2="360" stroke="#dc2626" strokeWidth="0.7"/>
+    <line className="mkt-er2" x1="860"  y1="360" x2="1000" y2="340" stroke="#dc2626" strokeWidth="0.7"/>
+
+    {/* Signal packets — red */}
+    <line className="mkt-sr1"
+      x1="900" y1="200" x2="1000" y2="340"
+      stroke="#dc2626" strokeWidth="3"
+      strokeDasharray="18 260" strokeDashoffset="260"/>
+    <line className="mkt-sr2"
+      x1="1000" y1="340" x2="1100" y2="220"
+      stroke="#dc2626" strokeWidth="3"
+      strokeDasharray="18 260" strokeDashoffset="260"/>
+    <line className="mkt-sr3"
+      x1="1000" y1="340" x2="960" y2="480"
+      stroke="#dc2626" strokeWidth="3"
+      strokeDasharray="18 260" strokeDashoffset="260"/>
+    <line className="mkt-sr4"
+      x1="960" y1="480" x2="1080" y2="400"
+      stroke="#dc2626" strokeWidth="3"
+      strokeDasharray="18 260" strokeDashoffset="260"/>
+
+    {/* Red nodes */}
+    <circle className="mkt-nr"   cx="900"  cy="200" r="5"   fill="#dc2626"/>
+    <circle className="mkt-nr-s" cx="1000" cy="340" r="5.5" fill="#dc2626"/>
+    <circle className="mkt-nr"   cx="1100" cy="220" r="4.5" fill="#dc2626"/>
+    <circle className="mkt-nr-s" cx="960"  cy="480" r="5"   fill="#dc2626"/>
+    <circle className="mkt-nr"   cx="1080" cy="400" r="4.5" fill="#dc2626"/>
+    <circle className="mkt-nr-s" cx="860"  cy="360" r="4"   fill="#dc2626"/>
+
+    {/* ── NEUTRAL CONNECTORS — centre + bottom ────────────────────────────────
+        Very dim grey — just enough to fill the middle ground.
+    ───────────────────────────────────────────────────────────────────────── */}
+    <line x1="340" y1="450" x2="560" y2="520" stroke="#a0a09a" strokeWidth="0.8" opacity="0.10"/>
+    <line x1="560" y1="520" x2="720" y2="460" stroke="#a0a09a" strokeWidth="0.8" opacity="0.08"/>
+    <line x1="720" y1="460" x2="860" y2="360" stroke="#a0a09a" strokeWidth="0.8" opacity="0.08"/>
+    <circle cx="560" cy="520" r="3.5" fill="#a0a09a" opacity="0.18"/>
+    <circle cx="720" cy="460" r="3"   fill="#a0a09a" opacity="0.14"/>
+
+    {/* Faint horizontal grid reference lines — very subtle */}
+    <line x1="40" y1="300" x2="1160" y2="300" stroke="#a0a09a" strokeWidth="0.5" opacity="0.05" strokeDasharray="4 12"/>
+    <line x1="40" y1="500" x2="1160" y2="500" stroke="#a0a09a" strokeWidth="0.5" opacity="0.05" strokeDasharray="4 12"/>
+    <line x1="40" y1="680" x2="1160" y2="680" stroke="#a0a09a" strokeWidth="0.5" opacity="0.04" strokeDasharray="4 12"/>
   </svg>
 );
 
@@ -209,10 +242,16 @@ const EnhancedPortfolioDashboard = () => {
 
   useEffect(() => {
     fetchPortfolio();
-    // Auto-refresh every 5 minutes — no manual refresh button needed
     const interval = setInterval(fetchPortfolio, 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, []);
+
+  // Lock body scroll when a modal is open so the page doesn't scroll behind it
+  useEffect(() => {
+    const open = showForm || !!newsModalStock;
+    document.body.style.overflow = open ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  }, [showForm, newsModalStock]);
 
   const handleAddStock = async (e) => {
     e.preventDefault();
@@ -321,7 +360,7 @@ const EnhancedPortfolioDashboard = () => {
     <div className="dashboard-container">
       <MarketBackground />
 
-      {/* ── Header — refresh button removed; auto-refresh runs every 5min ── */}
+      {/* ── Header ── */}
       <div className="dashboard-header">
         <div>
           <h1>Alpha Compounder</h1>
@@ -491,12 +530,19 @@ const EnhancedPortfolioDashboard = () => {
 
       <CorrelationHeatmap/>
 
-      {/* ── Add / Edit Modal — position:fixed in CSS ensures it centres on viewport ── */}
+      {/* ── Add / Edit Modal ─────────────────────────────────────────────────────
+          position:fixed on .modal-overlay (in CSS) ensures this always appears
+          centred on the visible viewport regardless of scroll position.        */}
       {showForm && (
         <div className="modal-overlay" onClick={() => setShowForm(false)}>
           <div className="modal-content" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>{formMode === 'add' ? 'Add Asset' : 'Edit Position'}</h2>
+              <div>
+                <h2>{formMode === 'add' ? 'Add Asset' : 'Edit Position'}</h2>
+                <p className="modal-sub-label">
+                  {formMode === 'add' ? 'Enter ticker details to begin tracking.' : `Editing ${formData.symbol}`}
+                </p>
+              </div>
               <button onClick={() => setShowForm(false)} className="btn-close">✕</button>
             </div>
             <form onSubmit={formMode === 'add' ? handleAddStock : handleEditStock}>
@@ -546,7 +592,7 @@ const EnhancedPortfolioDashboard = () => {
         </div>
       )}
 
-      {/* ── Intelligence Modal ── */}
+      {/* ── Intelligence Modal ─────────────────────────────────────────────────── */}
       {newsModalStock && (
         <div className="modal-overlay" onClick={() => setNewsModalStock(null)}>
           <div className="modal-content news-modal" onClick={e => e.stopPropagation()}>
