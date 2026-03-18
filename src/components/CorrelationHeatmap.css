@@ -2,26 +2,8 @@
    CORRELATION HEATMAP
 ───────────────────────────────────────────────────────────────────────────── */
 
-@keyframes node-breathe-g      { 0%,100%{r:3.5;opacity:.38} 50%{r:5.5;opacity:.65} }
-@keyframes node-breathe-g-slow { 0%,100%{r:3;  opacity:.28} 50%{r:5;  opacity:.52} }
-@keyframes node-breathe-r      { 0%,100%{r:3.5;opacity:.35} 50%{r:5.5;opacity:.60} }
-@keyframes node-breathe-r-slow { 0%,100%{r:3;  opacity:.25} 50%{r:4.5;opacity:.48} }
-@keyframes edge-pulse-g        { 0%,100%{opacity:.13} 50%{opacity:.26} }
-@keyframes edge-pulse-r        { 0%,100%{opacity:.11} 50%{opacity:.22} }
-@keyframes signal-g {
-  0%  {stroke-dashoffset:220;opacity:0}
-  8%  {opacity:.60}
-  92% {opacity:.60}
-  100%{stroke-dashoffset:0;opacity:0}
-}
-@keyframes signal-r {
-  0%  {stroke-dashoffset:220;opacity:0}
-  8%  {opacity:.50}
-  92% {opacity:.50}
-  100%{stroke-dashoffset:0;opacity:0}
-}
 @keyframes tooltipIn  { from{opacity:0;transform:translate(-50%,-120%) scale(.94)} to{opacity:1;transform:translate(-50%,-130%) scale(1)} }
-@keyframes pinnedIn   { from{opacity:0;transform:translateY(6px) scale(.96)} to{opacity:1;transform:translateY(0) scale(1)} }
+@keyframes pinnedIn   { from{opacity:0;transform:translateY(4px) scale(.97)} to{opacity:1;transform:translateY(0) scale(1)} }
 @keyframes spin       { to{transform:rotate(360deg)} }
 
 /* ── Container ──────────────────────────────────────────────────────────── */
@@ -36,34 +18,19 @@
   box-shadow: 0 1px 3px rgba(50,45,30,.07), 0 2px 10px rgba(50,45,30,.05);
 }
 
-.neural-bg {
-  position: absolute; inset: 0;
-  width: 100%; height: 100%;
-  pointer-events: none; z-index: 0;
+/* Neural canvas — absolutely fills the container, behind all content */
+.neural-bg-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 0;
+  border-radius: 14px;
+  overflow: hidden;
 }
 
-/* Edge animations */
-.neural-bg .eg  { animation: edge-pulse-g 4.0s ease-in-out infinite; }
-.neural-bg .eg2 { animation: edge-pulse-g 5.5s ease-in-out infinite; animation-delay:-1.8s; }
-.neural-bg .er  { animation: edge-pulse-r 4.5s ease-in-out infinite; animation-delay:-0.9s; }
-.neural-bg .er2 { animation: edge-pulse-r 6.0s ease-in-out infinite; animation-delay:-2.4s; }
-
-/* Signal packets */
-.neural-bg .sg1 { animation: signal-g 3.2s ease-in-out infinite; animation-delay: 0s; }
-.neural-bg .sg2 { animation: signal-g 4.0s ease-in-out infinite; animation-delay:-1.3s; }
-.neural-bg .sg3 { animation: signal-g 3.6s ease-in-out infinite; animation-delay:-2.5s; }
-.neural-bg .sg4 { animation: signal-g 4.5s ease-in-out infinite; animation-delay:-0.7s; }
-.neural-bg .sr1 { animation: signal-r 3.5s ease-in-out infinite; animation-delay:-0.5s; }
-.neural-bg .sr2 { animation: signal-r 4.2s ease-in-out infinite; animation-delay:-2.0s; }
-.neural-bg .sr3 { animation: signal-r 3.0s ease-in-out infinite; animation-delay:-3.2s; }
-
-/* Nodes */
-.neural-bg .ng   { animation: node-breathe-g      3.5s ease-in-out infinite; }
-.neural-bg .ng-s { animation: node-breathe-g-slow 5.0s ease-in-out infinite; animation-delay:-1.5s; }
-.neural-bg .nr   { animation: node-breathe-r      4.0s ease-in-out infinite; animation-delay:-0.8s; }
-.neural-bg .nr-s { animation: node-breathe-r-slow 6.0s ease-in-out infinite; animation-delay:-2.0s; }
-
-.correlation-container > *:not(.neural-bg) { position: relative; z-index: 1; }
+.correlation-container > *:not(.neural-bg-canvas) { position: relative; z-index: 1; }
 
 /* ── Header ─────────────────────────────────────────────────────────────── */
 .heatmap-header {
@@ -150,57 +117,47 @@
   background: #1a1917;
   border: 1px solid #2e2d2b;
   border-radius: 8px;
-  padding: 8px 14px;
+  padding: 7px 12px;
   font-family: 'DM Mono', monospace;
   font-size: 12px;
   color: #f0f0ee;
   pointer-events: none;
   z-index: 9000;
   white-space: nowrap;
-  box-shadow: 0 6px 24px rgba(0,0,0,.30);
-  display: flex; align-items: center; gap: 10px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.28);
+  display: flex; align-items: center; gap: 8px;
   animation: tooltipIn .12s ease both;
 }
 .tooltip-tickers { color: #c8c7c1; font-weight: 500; font-size: 11px; }
 .tooltip-sep     { color: #4a4a44; margin: 0 1px; }
-.tooltip-val     { font-weight: 700; font-size: 14px; padding-left: 10px; border-left: 1px solid #333; letter-spacing: 0.02em; }
+.tooltip-val     { font-weight: 700; font-size: 13px; padding-left: 8px; border-left: 1px solid #333; }
 
-/* ── Pinned card (click-to-lock) ────────────────────────────────────────── */
-.heatmap-pinned {
+/* ── Compact pin popup — appears right at click point ───────────────────── */
+.heatmap-pin-popup {
   position: fixed;
   background: #1a1917;
   border: 1px solid #2e2d2b;
-  border-radius: 10px;
-  padding: 14px 18px;
+  border-radius: 7px;
+  padding: 6px 10px 6px 12px;
   font-family: 'DM Mono', monospace;
   font-size: 12px;
   color: #f0f0ee;
   z-index: 9001;
   white-space: nowrap;
-  box-shadow: 0 8px 30px rgba(0,0,0,.35);
-  animation: pinnedIn .18s ease both;
-  min-width: 160px;
-}
-.pinned-pair {
-  font-size: 11px; color: #a0a09a; margin-bottom: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.32);
   display: flex; align-items: center; gap: 6px;
+  animation: pinnedIn .15s ease both;
+  pointer-events: auto;
 }
-.pinned-pair-sep { color: #3a3a34; }
-.pinned-value {
-  font-size: 28px; font-weight: 700; letter-spacing: -0.02em;
-  line-height: 1;
-}
-.pinned-label {
-  font-size: 10px; color: #6b6b65; margin-top: 5px;
-  text-transform: uppercase; letter-spacing: 0.06em;
-}
-.pinned-close {
-  position: absolute; top: 8px; right: 10px;
+.pin-pair { color: #c8c7c1; font-size: 11px; font-weight: 500; }
+.pin-eq   { color: #4a4a44; font-size: 11px; }
+.pin-val  { font-size: 14px; font-weight: 700; letter-spacing: -0.01em; }
+.pin-close {
   background: none; border: none; color: #4a4a44;
-  font-size: 14px; cursor: pointer; line-height: 1;
-  transition: color .12s ease;
+  font-size: 11px; cursor: pointer; padding: 0 0 0 4px;
+  line-height: 1; transition: color .12s ease; margin-left: 2px;
 }
-.pinned-close:hover { color: #f0f0ee; }
+.pin-close:hover { color: #f0f0ee; }
 
 /* ── Loading ─────────────────────────────────────────────────────────────── */
 .heatmap-loading {
