@@ -205,11 +205,11 @@ input, select { font-family: var(--font-ui); }
 
 /* ── Cell types ──────────────────────────────────────────────────────────── */
 .stock-symbol {
-  font-family: var(--font-mono); font-size: 14px; font-weight: 500;
+  font-family: var(--font-mono); font-size: 15px; font-weight: 700;
   color: var(--text-main); letter-spacing: 0.01em; display: block;
 }
 .stock-name {
-  font-size: 11px; color: var(--text-dim); margin-top: 2px;
+  font-size: 12px; font-weight: 500; color: var(--text-muted); margin-top: 2px;
   max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .sector-pill {
@@ -238,32 +238,33 @@ input, select { font-family: var(--font-ui); }
 .alpha-val { font-family: var(--font-mono); font-size: 12px; font-weight: 600; margin-top: 3px; }
 .beta-val { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); margin-top: 2px; }
 .signal-badge {
-  display: inline-block; padding: 4px 10px; border-radius: 5px; border: 1px solid transparent;
-  font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
+  display: inline-block; padding: 5px 11px; border-radius: 5px; border: 1px solid transparent;
+  font-size: 11px; font-weight: 800; letter-spacing: 0.05em;
   text-transform: uppercase; white-space: nowrap;
 }
-/* Bull signals — green */
+/* Bull signals — vivid green */
 .signal-bull {
   color: #047857 !important;
-  background-color: rgba(5,150,105,0.14) !important;
-  border-color: rgba(5,150,105,0.40) !important;
+  background-color: rgba(5,150,105,0.18) !important;
+  border-color: rgba(5,150,105,0.50) !important;
 }
-/* Bear signals — red/orange by severity */
+/* Hard bear signals — vivid red (Sell, Decay, Reduce) */
 .signal-bear-hard {
   color: #b91c1c !important;
-  background-color: rgba(185,28,28,0.13) !important;
-  border-color: rgba(185,28,28,0.38) !important;
+  background-color: rgba(185,28,28,0.16) !important;
+  border-color: rgba(185,28,28,0.48) !important;
 }
+/* Soft bear signals — amber (Watch, Trim) */
 .signal-bear-soft {
-  color: #d97706 !important;
-  background-color: rgba(217,119,6,0.13) !important;
-  border-color: rgba(217,119,6,0.38) !important;
+  color: #b45309 !important;
+  background-color: rgba(217,119,6,0.16) !important;
+  border-color: rgba(217,119,6,0.48) !important;
 }
-/* Neutral / noise signals — grey */
+/* Neutral signals — visible grey (Hold, Noise, Normal) */
 .signal-neutral {
-  color: #6b7280 !important;
-  background-color: rgba(107,114,128,0.10) !important;
-  border-color: rgba(107,114,128,0.28) !important;
+  color: #374151 !important;
+  background-color: rgba(107,114,128,0.14) !important;
+  border-color: rgba(107,114,128,0.38) !important;
 }
 .spring-bar { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
 .spring-track { width: 72px; height: 3px; background: var(--border-light); border-radius: 2px; overflow: hidden; }
