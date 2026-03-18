@@ -83,16 +83,21 @@ const NeuralBackground = () => {
       if (!_hmReady) buildHmNodes(canvas.width, canvas.height);
     };
 
+    // Track mouse on window (canvas has pointer-events:none so canvas events never fire).
+    // Convert clientX/Y to canvas-local coordinates using getBoundingClientRect.
     const onMouse = e => {
       const rect = canvas.getBoundingClientRect();
-      mouseRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      mouseRef.current = {
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top,
+      };
     };
     const onLeave = () => { mouseRef.current = { x: -9999, y: -9999 }; };
-    canvas.addEventListener('mousemove', onMouse);
-    canvas.addEventListener('mouseleave', onLeave);
+    window.addEventListener('mousemove', onMouse);
+    window.addEventListener('mouseleave', onLeave);
 
-    const EDGE_DIST = 120, REPEL_DIST = 90, REPEL_FORCE = 0.7;
-    const H_DAMP = 0.91, V_DAMP = 0.990, H_RESTORE = 0.018, MAX_SPD = 0.85;
+    const EDGE_DIST = 120, REPEL_DIST = 90, REPEL_FORCE = 0.63;
+    const H_DAMP = 0.91, V_DAMP = 0.991, H_RESTORE = 0.018, MAX_SPD = 0.77;
 
     const draw = (t) => {
       const W = canvas.width, H = canvas.height;
@@ -102,9 +107,9 @@ const NeuralBackground = () => {
       const now = t * 0.001;
 
       for (const n of nodes) {
-        n.vy += Math.sin(now / n.oPeriod * Math.PI * 2 + n.oPhase) * 0.010;
-        n.vx += (Math.random() - 0.5) * 0.008;
-        n.vy += (Math.random() - 0.5) * 0.008;
+        n.vy += Math.sin(now / n.oPeriod * Math.PI * 2 + n.oPhase) * 0.009;
+        n.vx += (Math.random() - 0.5) * 0.007;
+        n.vy += (Math.random() - 0.5) * 0.007;
         n.vx -= n.vx * H_RESTORE;
         const dx = n.x - mx, dy = n.y - my;
         const dist = Math.sqrt(dx * dx + dy * dy);
@@ -159,8 +164,8 @@ const NeuralBackground = () => {
     return () => {
       cancelAnimationFrame(rafRef.current);
       ro.disconnect();
-      canvas.removeEventListener('mousemove', onMouse);
-      canvas.removeEventListener('mouseleave', onLeave);
+      window.removeEventListener('mousemove', onMouse);
+      window.removeEventListener('mouseleave', onLeave);
     };
   }, []); // never re-runs
 
