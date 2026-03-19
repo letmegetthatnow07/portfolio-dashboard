@@ -38,7 +38,7 @@ const TODAY = new Date().toISOString().split('T')[0];
 const VALID_SIGNALS = [
   'STRONG_BUY', 'BUY', 'HOLD', 'WATCH',
   'TRIM_25', 'SELL', 'SPRING_CANDIDATE', 'SPRING_CONFIRMED', 'ADD',
-  'HOLD_NOISE', 'NORMAL', 'INSUFFICIENT_DATA'
+  'HOLD_NOISE', 'NORMAL', 'INSUFFICIENT_DATA', 'IDIOSYNCRATIC_DECAY', 'REDUCE'
 ];
 
 // ─── CLIENTS ──────────────────────────────────────────────────────────────────
@@ -367,8 +367,8 @@ async function writeSupabaseDailyMetrics(symbol, scoreObj, priceData, technicals
     news_score:    scoreObj.news,
     insider_score: scoreObj.insider,
     signal:        safeSignal
-  }, { onConflict: 'symbol,date' });
-  if (error) logger.error(`daily_metrics write failed for ${symbol}:`, JSON.stringify(error));
+  }, { onConflict: 'uq_symbol_date' });
+  if (error) logger.error(`daily_metrics write failed for ${symbol}: code=${error.code} msg=${error.message} details=${error.details}`);
 }
 
 async function writeSupabaseRegimeFlags({ symbol, w1, w2, w3, w4, beta, excessReturn, regimeStatus, action, springDays, capexException, qualityScore, rsi }) {
@@ -388,8 +388,8 @@ async function writeSupabaseRegimeFlags({ symbol, w1, w2, w3, w4, beta, excessRe
     quality_score:     qualityScore   ?? null,
     rsi_14:            rsi            ?? null,
     last_updated:      new Date().toISOString()
-  }, { onConflict: 'symbol,date' });
-  if (error) logger.error(`regime_flags write failed for ${symbol}:`, error.message);
+  }, { onConflict: 'uq_regime_symbol_date' });
+  if (error) logger.error(`regime_flags write failed for ${symbol}: code=${error.code} msg=${error.message} details=${error.details}`);
 }
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
