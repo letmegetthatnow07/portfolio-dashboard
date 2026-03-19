@@ -359,7 +359,7 @@ async function writeSupabaseDailyMetrics(symbol, scoreObj, priceData, technicals
     p_symbol:        symbol,
     p_price:         priceData?.price          ?? 0,
     p_spy_price:     spyPrice                  ?? 0,
-    p_volume:        technicals?.currentVolume ?? 0,
+    p_volume:        Math.round(technicals?.currentVolume ?? 0),
     p_total_score:   scoreObj.total,
     p_fund_score:    scoreObj.fund,
     p_tech_score:    scoreObj.tech,
