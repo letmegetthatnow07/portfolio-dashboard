@@ -368,7 +368,7 @@ async function writeSupabaseDailyMetrics(symbol, scoreObj, priceData, technicals
     insider_score: scoreObj.insider,
     signal:        safeSignal
   }, { onConflict: 'symbol,date' });
-  if (error) logger.error(`daily_metrics write failed for ${symbol}:`, error.message);
+  if (error) logger.error(`daily_metrics write failed for ${symbol}:`, JSON.stringify(error));
 }
 
 async function writeSupabaseRegimeFlags({ symbol, w1, w2, w3, w4, beta, excessReturn, regimeStatus, action, springDays, capexException, qualityScore, rsi }) {
