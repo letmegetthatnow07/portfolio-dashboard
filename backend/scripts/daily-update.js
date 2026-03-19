@@ -354,41 +354,40 @@ class PriceAnalyzer {
 
 async function writeSupabaseDailyMetrics(symbol, scoreObj, priceData, technicals, spyPrice, regimeStatus) {
   const safeSignal = VALID_SIGNALS.includes(regimeStatus) ? regimeStatus : 'HOLD';
-  const { error } = await supabase.from('daily_metrics').upsert({
-    date:          TODAY,
-    symbol,
-    price:         priceData?.price          ?? 0,
-    spy_price:     spyPrice                  ?? 0,
-    volume:        technicals?.currentVolume ?? 0,
-    total_score:   scoreObj.total,
-    fund_score:    scoreObj.fund,
-    tech_score:    scoreObj.tech,
-    analyst_score: scoreObj.rating,
-    news_score:    scoreObj.news,
-    insider_score: scoreObj.insider,
-    signal:        safeSignal
-  }, { onConflict: 'uq_symbol_date' });
+  const { error } = await supabase.rpc('upsert_daily_metrics', {
+    p_date:          TODAY,
+    p_symbol:        symbol,
+    p_price:         priceData?.price          ?? 0,
+    p_spy_price:     spyPrice                  ?? 0,
+    p_volume:        technicals?.currentVolume ?? 0,
+    p_total_score:   scoreObj.total,
+    p_fund_score:    scoreObj.fund,
+    p_tech_score:    scoreObj.tech,
+    p_analyst_score: scoreObj.rating,
+    p_news_score:    scoreObj.news,
+    p_insider_score: scoreObj.insider,
+    p_signal:        safeSignal
+  });
   if (error) logger.error(`daily_metrics write failed for ${symbol}: code=${error.code} msg=${error.message} details=${error.details}`);
 }
 
 async function writeSupabaseRegimeFlags({ symbol, w1, w2, w3, w4, beta, excessReturn, regimeStatus, action, springDays, capexException, qualityScore, rsi }) {
-  const { error } = await supabase.from('regime_flags').upsert({
-    date:              TODAY,
-    symbol,
-    w1_signal:         w1             ?? false,
-    w2_confirmed:      w2             ?? false,
-    w3_confirmed:      w3             ?? false,
-    w4_confirmed:      w4             ?? false,
-    beta_63d:          beta           ?? 1.0,
-    excess_return_pct: excessReturn   ?? 0,
-    regime_status:     regimeStatus   ?? 'MARKET_NOISE',
-    action:            action         ?? 'HOLD',
-    spring_days:       springDays     ?? 0,
-    capex_exception:   capexException ?? false,
-    quality_score:     qualityScore   ?? null,
-    rsi_14:            rsi            ?? null,
-    last_updated:      new Date().toISOString()
-  }, { onConflict: 'uq_regime_symbol_date' });
+  const { error } = await supabase.rpc('upsert_regime_flags', {
+    p_date:              TODAY,
+    p_symbol:            symbol,
+    p_w1_signal:         w1             ?? false,
+    p_w2_confirmed:      w2             ?? false,
+    p_w3_confirmed:      w3             ?? false,
+    p_w4_confirmed:      w4             ?? false,
+    p_beta_63d:          beta           ?? 1.0,
+    p_excess_return_pct: excessReturn   ?? 0,
+    p_regime_status:     regimeStatus   ?? 'MARKET_NOISE',
+    p_action:            action         ?? 'HOLD',
+    p_spring_days:       springDays     ?? 0,
+    p_capex_exception:   capexException ?? false,
+    p_quality_score:     qualityScore   ?? null,
+    p_rsi_14:            rsi            ?? null
+  });
   if (error) logger.error(`regime_flags write failed for ${symbol}: code=${error.code} msg=${error.message} details=${error.details}`);
 }
 
