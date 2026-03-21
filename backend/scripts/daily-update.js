@@ -87,32 +87,30 @@ async function fetchInstrumentType(symbol, finnhubKey) {
   }
 }
 
-// ─── KNOWN ETF FALLBACK LIST ──────────────────────────────────────────────────
-// Finnhub sometimes returns "Common Stock" for ETFs that are structured as
-// regulated investment companies (e.g. Invesco, VanEck, iShares funds).
-// This list is a safety net — any symbol here is treated as ETF regardless
-// of what Finnhub's profile2 says. Add new ETFs here when you add them.
-// The dynamic detection still runs first; this only overrides misclassifications.
-const KNOWN_ETF_OVERRIDES = new Set([
-  // Momentum / factor ETFs
-  'SPMO', 'MTUM', 'VLUE', 'QUAL', 'USMV',
-  // Semiconductor / thematic
-  'SMH', 'SOXX', 'XSD', 'SOXQ',
-  // Your specific ETFs
-  'SHLD', 'AVNV',
-  // Broad market
-  'SPY', 'QQQ', 'IWM', 'VTI', 'VOO', 'IVV', 'VEA', 'VWO', 'EEM',
-  // Sector
-  'XLK', 'XLE', 'XLF', 'XLV', 'XLI', 'XLY', 'XLP', 'XLU', 'XLB', 'XLRE',
-  // Fixed income
-  'TLT', 'AGG', 'BND', 'HYG', 'LQD',
-  // Commodity
-  'GLD', 'SLV', 'USO', 'PDBC',
-  // Leveraged / inverse (always ETF)
-  'TQQQ', 'SQQQ', 'UPRO', 'SPXU', 'SOXL', 'SOXS',
-  // ARK funds
-  'ARKK', 'ARKQ', 'ARKG', 'ARKW', 'ARKF',
-]);
+// ─── FMP ETF CROSS-CHECK ─────────────────────────────────────────────────────
+// Finnhub sometimes returns "Common Stock" for ETFs (Invesco, VanEck, iShares
+// structured as Regulated Investment Companies). When this happens, we cross-
+// check with FMP's profile endpoint which has a reliable isEtf boolean.
+// This is fully dynamic — works for any ETF you add, no hardcoded list needed.
+// Result is cached per run to avoid duplicate API calls.
+const _fmpEtfCache = {};
+
+async function checkFmpIsEtf(symbol) {
+  if (_fmpEtfCache[symbol] !== undefined) return _fmpEtfCache[symbol];
+  try {
+    const res = await axios.get(
+      `https://financialmodelingprep.com/api/v3/profile/${symbol}?apikey=${process.env.FMP_API_KEY}`,
+      { timeout: 6000 }
+    );
+    const profile = res.data?.[0];
+    const isEtf = profile?.isEtf === true || profile?.isFund === true;
+    _fmpEtfCache[symbol] = isEtf;
+    return isEtf;
+  } catch (e) {
+    _fmpEtfCache[symbol] = false;
+    return false;
+  }
+}
 
 // ─── CLIENTS ──────────────────────────────────────────────────────────────────
 
@@ -995,13 +993,22 @@ async function updateMarketData() {
         const instrumentProfile  = await fetchInstrumentType(stock.symbol, process.env.FINNHUB_API_KEY);
         const profileExpenseRatio = instrumentProfile.expenseRatio;
 
-        // Three-source ETF classification (belt-and-suspenders):
-        //   1. Finnhub profile2 type field (dynamic, catches most ETFs)
-        //   2. KNOWN_ETF_OVERRIDES list (catches Finnhub misclassifications like SPMO/SMH)
-        //   3. Redis stock.type set at add-time (catches pre-existing stocks added as ETF)
+        // Three-source ETF classification — fully dynamic, no hardcoded list:
+        //   1. Finnhub profile2 type field (covers most ETFs directly)
+        //   2. FMP isEtf/isFund field (catches Finnhub misclassifications e.g. SPMO, SMH)
+        //      FMP is the cross-check for any ETF, including ones you add in the future
+        //   3. Redis stock.type === 'ETF' (covers stocks added before this detection existed)
+        //
+        // Source 2 only fires when source 1 returns Common Stock — avoids wasting
+        // FMP calls on genuine stocks. FMP free tier: 250/day, typically 1-2 used here.
+        let fmpIsEtf = false;
+        if (!instrumentProfile.isETF && stock.type !== 'ETF') {
+          fmpIsEtf = await checkFmpIsEtf(stock.symbol);
+        }
+
         const instrumentIsETF = (
           instrumentProfile.isETF ||
-          KNOWN_ETF_OVERRIDES.has(stock.symbol.toUpperCase()) ||
+          fmpIsEtf              ||
           stock.type === 'ETF'
         );
         const instrumentTypeName = instrumentIsETF ? 'ETF' : instrumentProfile.raw;
