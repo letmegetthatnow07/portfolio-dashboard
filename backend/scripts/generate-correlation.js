@@ -111,7 +111,39 @@ async function runCorrelationEngine() {
     console.log(`✓ Supabase: ${supaRows} rows merged`);
   }
 
-  // STEP 3: Rolling 250-day window
+  // STEP 3: Filter to CURRENT portfolio only
+  // This ensures deleted stocks disappear from the matrix on the next run.
+  // Redis portfolio is the source of truth for what's currently tracked.
+  let portfolioSymbols = null;
+  try {
+    const redis = createRedisClient({ url: process.env.REDIS_URL });
+    redis.on('error', () => {});
+    await redis.connect();
+    const raw = await redis.get('portfolio');
+    if (raw) {
+      const portfolioData = JSON.parse(raw);
+      portfolioSymbols = new Set(
+        (portfolioData.stocks || []).map(s => s.symbol.toUpperCase())
+      );
+      console.log(`✓ Portfolio filter: ${[...portfolioSymbols].join(', ')}`);
+    }
+    await redis.quit();
+  } catch (e) {
+    console.warn(`⚠ Portfolio filter unavailable (${e.message}) — using all tickers from price data`);
+  }
+
+  // Apply filter: only keep tickers in the current portfolio
+  // Always include all tickers if filter unavailable (graceful fallback)
+  if (portfolioSymbols) {
+    for (const ticker of Object.keys(priceData)) {
+      if (!portfolioSymbols.has(ticker.toUpperCase())) {
+        delete priceData[ticker];
+        console.log(`  ↳ Removed ${ticker} (not in current portfolio)`);
+      }
+    }
+  }
+
+  // STEP 4: Rolling 250-day window
   // ISO dates sort correctly alphabetically (YYYY-MM-DD)
   const sortedDates = Array.from(allDates).sort().slice(-250);
   const tickers     = Object.keys(priceData).sort();
@@ -119,7 +151,7 @@ async function runCorrelationEngine() {
   console.log(`✓ Window: ${sortedDates[0]} → ${sortedDates[sortedDates.length - 1]} (${sortedDates.length} days)`);
   console.log(`✓ Tickers: ${tickers.join(', ')}\n`);
 
-  // STEP 4: Returns-based correlation matrix
+  // STEP 5: Returns-based correlation matrix
   console.log('Calculating returns matrix...');
   const matrix = {};
 
@@ -151,7 +183,7 @@ async function runCorrelationEngine() {
   }
   console.log('✓ Matrix complete');
 
-  // STEP 5: Multi-window regime stats — 21d AND 63d per symbol
+  // STEP 6: Multi-window regime stats — 21d AND 63d per symbol
   //
   // Why two windows?
   //   21d = recent momentum (can be noisy — one earnings beat inflates it)
@@ -256,7 +288,7 @@ async function runCorrelationEngine() {
 
   console.log(`✓ Regime stats: 21d + 63d windows for ${Object.keys(statsMap).length} symbols`);
 
-  // STEP 6: Capital optimisation insights — conviction-gated
+  // STEP 7: Capital optimisation insights — conviction-gated
   //
   // Conviction gates (ALL must pass for a recommendation to fire):
   //   G1. Correlation confirmed:    Returns-based Pearson >= 0.65 over 250d
@@ -440,7 +472,7 @@ async function runCorrelationEngine() {
   const monitors    = insights.filter(i => i.verdict === 'MONITOR').length;
   console.log(`✓ ${insights.length} pairs flagged — RECOMMEND:${recommends} WEAK:${weakSignals} MONITOR:${monitors}`);
 
-  // STEP 7: Save to Redis
+  // STEP 8: Save to Redis
   const redisClient = createRedisClient({ url: process.env.REDIS_URL });
   redisClient.on('error', err => console.error('Redis error:', err.message));
 
