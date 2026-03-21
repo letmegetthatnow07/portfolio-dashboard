@@ -1,108 +1,98 @@
-name: Portfolio Pipeline
+name: Market & News Data Pipeline
 
 on:
   schedule:
-    # Slot 1  — 9:00 AM ET  = 14:00 UTC
-    - cron: '0 14 * * 1-5'
-    # Slot 2  — 1:00 PM ET  = 18:00 UTC
-    - cron: '0 18 * * 1-5'
-    # Slot 3  — 4:15 PM ET  = 21:15 UTC
-    - cron: '15 21 * * 1-5'
-    # EOD     — 5:00 PM ET  = 22:00 UTC
-    - cron: '0 22 * * 1-5'
-    # Matrix  — 5:30 PM ET  = 22:30 UTC  (30 min after EOD finishes)
-    - cron: '30 22 * * 1-5'
+    - cron: '0 14 * * 1-5'   # 9:00 AM ET  — News Slot 1
+    - cron: '0 18 * * 1-5'   # 1:00 PM ET  — News Slot 2
+    - cron: '15 21 * * 1-5'  # 4:15 PM ET  — News Slot 3
+    - cron: '0 22 * * 1-5'   # 5:00 PM ET  — EOD Master
+    - cron: '30 22 * * 1-5'  # 5:30 PM ET  — Correlation Matrix
 
   workflow_dispatch:
     inputs:
-      job:
-        description: 'Which job to run'
+      run_type:
+        description: 'Which engine to run?'
         required: true
-        default: 'update'
+        default: 'master'
         type: choice
         options:
+          - master
           - news
-          - update
           - matrix
-          - all
+
+permissions:
+  contents: write
 
 env:
-  REDIS_URL:            ${{ secrets.REDIS_URL }}
-  FINNHUB_API_KEY:      ${{ secrets.FINNHUB_API_KEY }}
-  NEWSDATA_API_KEY:     ${{ secrets.NEWSDATA_API_KEY }}
-  FMP_API_KEY:          ${{ secrets.FMP_API_KEY }}
-  POLYGON_API_KEY:      ${{ secrets.POLYGON_API_KEY }}
-  SEC_API_KEY:          ${{ secrets.SEC_API_KEY }}
-  SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
-  SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  pipeline:
+  update-pipeline:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: backend/package-lock.json
 
-      - name: Install dependencies
+      - name: Install backend dependencies
         working-directory: backend
-        run: npm ci
+        run: npm install
 
-      - name: Resolve task
-        id: task
+      - name: Determine Run Type
+        id: run-logic
         run: |
-          MANUAL="${{ github.event.inputs.job }}"
-          if [ -n "$MANUAL" ]; then
-            echo "task=$MANUAL" >> "$GITHUB_OUTPUT"
-            echo "Triggered manually: $MANUAL"
-            exit 0
-          fi
+          HOUR=$(date -u +"%H")
+          MINUTE=$(date -u +"%M")
 
-          HHMM=$(date -u +%H%M)
-          echo "UTC HHMM = $HHMM"
-
-          if [ "$HHMM" = "1400" ] || [ "$HHMM" = "1800" ] || [ "$HHMM" = "2115" ]; then
-            echo "task=news" >> "$GITHUB_OUTPUT"
-          elif [ "$HHMM" = "2200" ]; then
-            echo "task=update" >> "$GITHUB_OUTPUT"
-          elif [ "$HHMM" = "2230" ]; then
-            echo "task=matrix" >> "$GITHUB_OUTPUT"
-          else
-            HH=$(date -u +%H)
-            if [ "$HH" = "14" ] || [ "$HH" = "18" ] || [ "$HH" = "21" ]; then
-              echo "task=news" >> "$GITHUB_OUTPUT"
-            elif [ "$HH" = "22" ]; then
-              MM=$(date -u +%M | sed 's/^0*//')
-              MM=${MM:-0}
-              if [ "$MM" -le 20 ]; then
-                echo "task=update" >> "$GITHUB_OUTPUT"
-              else
-                echo "task=matrix" >> "$GITHUB_OUTPUT"
-              fi
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            TYPE="${{ github.event.inputs.run_type }}"
+            if [ "$TYPE" == "master" ]; then
+              echo "SCRIPT_TO_RUN=npm run update && npm run calculate-matrix" >> $GITHUB_ENV
+            elif [ "$TYPE" == "matrix" ]; then
+              echo "SCRIPT_TO_RUN=npm run calculate-matrix" >> $GITHUB_ENV
             else
-              echo "task=update" >> "$GITHUB_OUTPUT"
+              echo "SCRIPT_TO_RUN=npm run update:news" >> $GITHUB_ENV
             fi
+
+          elif [ "$HOUR" == "22" ]; then
+            # Strip leading zero before arithmetic comparison
+            MIN=$(echo "$MINUTE" | sed 's/^0*//')
+            MIN=${MIN:-0}
+            if [ "$MIN" -le 20 ]; then
+              echo "SCRIPT_TO_RUN=npm run update" >> $GITHUB_ENV
+            else
+              echo "SCRIPT_TO_RUN=npm run calculate-matrix" >> $GITHUB_ENV
+            fi
+
+          else
+            echo "SCRIPT_TO_RUN=npm run update:news" >> $GITHUB_ENV
           fi
 
-      - name: Run news update
-        if: steps.task.outputs.task == 'news' || steps.task.outputs.task == 'all'
+      - name: Execute Pipeline
         working-directory: backend
-        run: npm run update:news
+        env:
+          REDIS_URL:            ${{ secrets.REDIS_URL }}
+          FINNHUB_API_KEY:      ${{ secrets.FINNHUB_API_KEY }}
+          NEWSDATA_API_KEY:     ${{ secrets.NEWSDATA_API_KEY }}
+          FMP_API_KEY:          ${{ secrets.FMP_API_KEY }}
+          POLYGON_API_KEY:      ${{ secrets.POLYGON_API_KEY }}
+          SEC_API_KEY:          ${{ secrets.SEC_API_KEY }}
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: ${{ env.SCRIPT_TO_RUN }}
 
-      - name: Run EOD master update
-        if: steps.task.outputs.task == 'update' || steps.task.outputs.task == 'all'
-        working-directory: backend
-        run: npm run update
+      - name: Configure git
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
 
-      - name: Run correlation matrix
-        if: steps.task.outputs.task == 'matrix' || steps.task.outputs.task == 'all'
-        working-directory: backend
-        run: npm run calculate-matrix
+      - name: Commit CSV History
+        run: |
+          git add backend/data/score_history.csv || true
+          git commit -m "📊 Auto: EOD History $(date)" || true
+          git pull --rebase origin main || true
+          git push || true
