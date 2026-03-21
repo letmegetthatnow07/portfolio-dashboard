@@ -30,8 +30,7 @@ const CASCADE_COLOR = {
   HEALTHY: '#059669', WEAKENING: '#d97706', DECAYING: '#ea580c', CRITICAL: '#b91c1c',
 };
 
-// ── Canvas Neural Background for heatmap — stock-like vertical motion ────────
-// Module-level node state — never resets on React re-render or UI action
+// ── Canvas Neural Background — stock-like vertical motion ────────────────────
 const _hmNodes = [];
 let _hmReady = false;
 
@@ -46,7 +45,7 @@ const buildHmNodes = (W, H) => {
     const r = Math.random();
     return r < 0.38 ? COLORS[0] : r < 0.76 ? COLORS[1] : COLORS[2];
   };
-  const COUNT = 30; // same density as main dashboard
+  const COUNT = 30;
   for (let i = 0; i < COUNT; i++) {
     const col = pick();
     _hmNodes.push({
@@ -54,9 +53,9 @@ const buildHmNodes = (W, H) => {
       y: H * (i / COUNT + Math.random() * (1 / COUNT)),
       vx: (Math.random() - 0.5) * 0.10,
       vy: (Math.random() < 0.5 ? 1 : -1) * (0.07 + Math.random() * 0.09),
-      oAmp:    28 + Math.random() * 45,
-      oPeriod: 8 + Math.random() * 14,   // slow calm oscillation
-      oPhase:  Math.random() * Math.PI * 2,
+      oAmp: 28 + Math.random() * 45,
+      oPeriod: 8 + Math.random() * 14,
+      oPhase: Math.random() * Math.PI * 2,
       r: 1.8 + Math.random() * 1.8,
       color: col.c, alpha: col.a(),
       pulseOffset: Math.random() * Math.PI * 2,
@@ -83,14 +82,9 @@ const NeuralBackground = () => {
       if (!_hmReady) buildHmNodes(canvas.width, canvas.height);
     };
 
-    // Track mouse on window (canvas has pointer-events:none so canvas events never fire).
-    // Convert clientX/Y to canvas-local coordinates using getBoundingClientRect.
     const onMouse = e => {
       const rect = canvas.getBoundingClientRect();
-      mouseRef.current = {
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top,
-      };
+      mouseRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
     };
     const onLeave = () => { mouseRef.current = { x: -9999, y: -9999 }; };
     window.addEventListener('mousemove', onMouse);
@@ -167,7 +161,7 @@ const NeuralBackground = () => {
       window.removeEventListener('mousemove', onMouse);
       window.removeEventListener('mouseleave', onLeave);
     };
-  }, []); // never re-runs
+  }, []);
 
   return <canvas ref={canvasRef} className="neural-bg-canvas" aria-hidden="true"/>;
 };
@@ -187,7 +181,6 @@ const CorrelationHeatmap = () => {
       .finally(() => setLoading(false));
   }, []);
 
-  // Clear pin on scroll — simpler and cleaner than tracking position
   useEffect(() => {
     const onScroll = () => setPinnedTip(null);
     window.addEventListener('scroll', onScroll, { passive: true });
@@ -206,9 +199,6 @@ const CorrelationHeatmap = () => {
     );
   }, []);
 
-  // Click anywhere outside clears the pin.
-  // BUT: if the click is on a heatmap cell, let onCellClick handle the toggle
-  // instead — otherwise capture-phase fires first and clears before toggle runs.
   useEffect(() => {
     const clear = (e) => {
       if (e.target.closest && e.target.closest('.heatmap-cell')) return;
@@ -228,7 +218,12 @@ const CorrelationHeatmap = () => {
   }
   if (!matrixData?.tickers?.length) return null;
 
-  const { tickers, matrix, insights = [], windowStart, windowEnd, windowDays, lastUpdated } = matrixData;
+  const {
+    tickers, matrix, insights = [],
+    windowStart, windowEnd, windowDays, lastUpdated,
+    stale, staleReason,
+  } = matrixData;
+
   const byVerdict   = v => insights.filter(i => i.verdict === v);
   const recommends  = byVerdict('RECOMMEND');
   const weak        = byVerdict('WEAK_SIGNAL');
@@ -257,6 +252,13 @@ const CorrelationHeatmap = () => {
         )}
       </div>
 
+      {/* Stale warning — shown when a stock was deleted since last matrix run */}
+      {stale && (
+        <div className="heatmap-stale-banner">
+          ⚠ Matrix may be outdated — {staleReason || 'portfolio changed'}. Recalculates tonight at 5:30 PM ET.
+        </div>
+      )}
+
       <div className="heatmap-body">
         {/* Left — heatmap + legend */}
         <div className="heatmap-left">
@@ -273,8 +275,8 @@ const CorrelationHeatmap = () => {
                   <tr key={row}>
                     <td className="heatmap-row-header">{row}</td>
                     {tickers.map(col => {
-                      const val   = matrix[row]?.[col] ?? 0;
-                      const style = getCellStyle(val);
+                      const val      = matrix[row]?.[col] ?? 0;
+                      const style    = getCellStyle(val);
                       const isPinned = pinnedTip?.t1 === row && pinnedTip?.t2 === col;
                       return (
                         <td
@@ -360,6 +362,7 @@ const CorrelationHeatmap = () => {
         )}
       </div>
 
+      {/* Pinned tooltip — portal to body, click-to-pin interaction */}
       {pinnedTip && createPortal(
         <div
           className="heatmap-pin-popup"
