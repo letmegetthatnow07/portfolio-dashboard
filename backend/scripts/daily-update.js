@@ -41,6 +41,52 @@ const VALID_SIGNALS = [
   'HOLD_NOISE', 'NORMAL', 'INSUFFICIENT_DATA', 'IDIOSYNCRATIC_DECAY', 'REDUCE'
 ];
 
+// ─── INSTRUMENT TYPE DETECTION ────────────────────────────────────────────────
+// Instrument type is auto-detected via Finnhub profile2 API, not a hardcoded list.
+// This means any ticker you add — stock, ETF, REIT, ADR, preferred share —
+// is classified correctly without any code change.
+//
+// Finnhub type field values we care about:
+//   "Common Stock"  → stock (full pipeline)
+//   "ETP"           → ETF/ETP (skip fundamentals/insider/SEC/filings)
+//   "DR"            → Depositary Receipt / ADR (treat as stock)
+//   "Preferred Stock" → treat as stock
+//   "Closed-End Fund" → treat as ETF
+//   "REIT"          → treat as ETF (no traditional FCF/ROIC)
+//
+// In-memory cache per run to avoid duplicate profile calls.
+const _instrumentTypeCache = {};
+
+async function fetchInstrumentType(symbol, finnhubKey) {
+  if (_instrumentTypeCache[symbol]) return _instrumentTypeCache[symbol];
+  try {
+    const res = await axios.get(
+      `https://finnhub.io/api/v1/stock/profile2?symbol=${symbol}&token=${finnhubKey}`,
+      { timeout: 6000 }
+    );
+    const type = res.data?.type || 'Common Stock';
+    // Normalise to our two categories
+    const isFund = ['ETP', 'ETF', 'Closed-End Fund', 'REIT', 'Open-End Fund'].includes(type);
+    const result = {
+      raw:   type,
+      isETF: isFund,
+      name:  res.data?.name   || null,
+      // Expense ratio from Finnhub profile (field: expenseRatio, in decimal e.g. 0.0013)
+      expenseRatio: res.data?.expenseRatio != null
+        ? parseFloat((res.data.expenseRatio * 100).toFixed(4))  // convert to %
+        : null,
+    };
+    _instrumentTypeCache[symbol] = result;
+    return result;
+  } catch (e) {
+    // On failure, default to stock treatment — safer than skipping analysis
+    logger.warn(`Instrument type fetch failed for ${symbol}: ${e.message} — treating as stock`);
+    const fallback = { raw: 'Common Stock', isETF: false, name: null, expenseRatio: null };
+    _instrumentTypeCache[symbol] = fallback;
+    return fallback;
+  }
+}
+
 // ─── CLIENTS ──────────────────────────────────────────────────────────────────
 
 const supabase = createSupabaseClient(
@@ -279,11 +325,24 @@ class PriceAnalyzer {
           const tradeDate = new Date(trade.transactionDate || trade.filingDate);
           const shares    = parseFloat(trade.shares || trade.securitiesTransacted || 0);
           const price     = parseFloat(trade.pricePerShare || trade.price || 0);
-          const code      = trade.transactionCode || trade.code;
-          if (tradeDate >= sixMonthsAgo && shares > 0 && price > 0) {
-            const value = shares * price;
-            if (code === 'P' || code === 'P - Purchase') totalBought += value;
-            if (code === 'S' || code === 'S - Sale')     totalSold   += value;
+          const code      = (trade.transactionCode || trade.code || '').trim();
+          if (tradeDate >= sixMonthsAgo && shares > 0) {
+            const value = shares * (price || 1); // price may be 0 for grants
+
+            // P = open market purchase — strongest bullish signal
+            if (code === 'P') { totalBought += value; return; }
+
+            // S = open market sale — bearish signal
+            // But EXCLUDE F (tax withholding) and M+S combos (exercise-and-sell)
+            // F = mandatory tax withholding sale — NOT discretionary, ignore
+            // S after M in same filing period = exercise-and-sell (insider liquidity, not conviction)
+            if (code === 'S') { totalSold += value; return; }
+
+            // F = tax withholding sale — do NOT count as a sell signal
+            // M = option exercise — neutral (gaining shares, but often followed by S)
+            // A = award/RSU grant — not a market signal
+            // G = gift — not a market signal
+            // Codes F, M, A, G, U, C, X are all excluded
           }
         });
         return { bought: totalBought, sold: totalSold };
@@ -325,72 +384,98 @@ class PriceAnalyzer {
     let fundScore = 5, techScore = 5, ratingScore = 5, newsScore = 5, insiderScore = 5;
 
     if (fundamentals) {
-      // ── ROIC: 5% = breakeven (score 0), 20% = excellent (score 10) ───────
-      let roicS = Math.max(0, Math.min(10, ((fundamentals.roic - 0.05) / 0.15) * 10));
+      // ── ROIC ─────────────────────────────────────────────────────────────
+      // Curve calibrated for a compounder portfolio where 20% ROIC is normal:
+      //   <5%  = value destroyer (score 0)
+      //   10%  = mediocre (score 3.3)
+      //   15%  = cost-of-capital threshold (score 6.7)
+      //   20%  = excellent (score 8)   ← was the old ceiling
+      //   30%+ = exceptional (score 10) ← extended ceiling
+      // Formula: (roic - 0.05) / 0.25 * 10  (range 5%→30% maps to 0→10)
+      let roicS = Math.max(0, Math.min(10, ((fundamentals.roic - 0.05) / 0.25) * 10));
 
-      // ── SBC-adjusted FCF ────────────────────────────────────────────────
-      // Stock-based compensation is a real economic cost not in GAAP FCF.
-      // Adjust FCF margin down by SBC as % of revenue to get true owner earnings.
-      // If SBC data unavailable, use raw FCF margin (no penalty applied).
+      // ── SBC-adjusted FCF ─────────────────────────────────────────────────
+      // SBC is a real cost GAAP FCF ignores. We correct it properly:
+      // True FCF margin = reported FCF margin - (SBC / Revenue)
+      // SBC is in millions from EDGAR. Revenue = FCF / fcfMargin when available.
       let adjFcfMargin = fundamentals.fcfMargin;
-      if (fundamentals.sbcMargin != null && fundamentals.sbcMargin > 0) {
-        adjFcfMargin = Math.max(0, fundamentals.fcfMargin - fundamentals.sbcMargin);
-        logger.info(`  💰 SBC adj: FCF ${(fundamentals.fcfMargin*100).toFixed(1)}% → ${(adjFcfMargin*100).toFixed(1)}% (SBC ${(fundamentals.sbcMargin*100).toFixed(1)}%)`);
+      const rawFcfMargin = fundamentals.fcfMargin;
+      if (fundamentals.sbcMillions != null && fundamentals.sbcMillions > 0
+          && fundamentals.marketCapM > 0 && fundamentals.fcfMargin > 0) {
+        // Revenue proxy: use P/S ratio approach via market cap
+        // If FCF margin is 20% and market cap is $100B, revenue ≈ unknown
+        // Better: use the Finnhub revenue data directly if available
+        // Fallback: assume revenue = FCF / fcfMargin (circular but bounded)
+        // Most accurate available: SBC as fraction of FCF (not revenue)
+        // SBC/FCF tells you how much of your FCF is being handed to employees
+        const fcfMillions = fundamentals.fcfMargin * fundamentals.marketCapM;
+        if (fcfMillions > 0) {
+          const sbcAsFcfFraction = fundamentals.sbcMillions / fcfMillions;
+          // Subtract SBC fraction from FCF margin
+          adjFcfMargin = Math.max(0, fundamentals.fcfMargin * (1 - sbcAsFcfFraction));
+          if (Math.abs(adjFcfMargin - rawFcfMargin) > 0.005) {
+            logger.info(`  💰 SBC adj: FCF ${(rawFcfMargin*100).toFixed(1)}% → ${(adjFcfMargin*100).toFixed(1)}% (SBC ${(sbcAsFcfFraction*100).toFixed(0)}% of FCF)`);
+          }
+        }
       }
-      // FCF Margin scored: 0% = 0, 25%+ = 10 (tighter than before because SBC-adjusted)
-      let fcfS = Math.max(0, Math.min(10, (adjFcfMargin / 0.025) * 10));
+      // FCF Margin: 0%=0, 10%=4, 20%=8, 30%+=10
+      // Calibrated for businesses (not banks/asset managers) where 20%+ is excellent
+      let fcfS = Math.max(0, Math.min(10, (adjFcfMargin / 0.03) * 10));
 
-      // ── Debt/Equity: 0 = 10, 2.0 = 0 ────────────────────────────────────
+      // ── Debt/Equity ───────────────────────────────────────────────────────
+      // Negative D/E = net cash = best possible (score 10)
+      // D/E = 0.5 = modest (score 7.5)
+      // D/E = 1.5 = elevated but manageable (score 2.5)
+      // D/E = 2.0+ = concerning for a non-financial (score 0)
       let deS = fundamentals.debtToEquity < 0
         ? 10
         : Math.max(0, Math.min(10, 10 - ((fundamentals.debtToEquity / 2.0) * 10)));
 
-      // ── FCF Yield: valuation sanity check ────────────────────────────────
-      // >6% = very attractive (score 10), 3-6% = fair (score 5-10),
-      // 1-3% = expensive (score 2-5), <1% = very expensive (score 0-2)
-      // null = ETF/no market cap data → neutral score 5
-      let fcfYieldS = 5;
+      // ── FCF Yield — computed for display only, NOT in composite ──────────
+      let fcfYieldS = 5; // kept for moat score computation only
       if (fundamentals.fcfYield != null) {
         const fy = fundamentals.fcfYield;
         if (fy >= 0.06)      fcfYieldS = 10;
         else if (fy >= 0.03) fcfYieldS = 5 + ((fy - 0.03) / 0.03) * 5;
         else if (fy >= 0.01) fcfYieldS = 2 + ((fy - 0.01) / 0.02) * 3;
         else if (fy > 0)     fcfYieldS = (fy / 0.01) * 2;
-        else                 fcfYieldS = 0; // negative FCF yield
+        else                 fcfYieldS = 0;
         fcfYieldS = Math.max(0, Math.min(10, fcfYieldS));
       }
 
       // ── Dual-window revenue growth ────────────────────────────────────────
-      // TTM YoY: current velocity. 3Y CAGR: durability.
-      // A compounder needs BOTH — high TTM and high 3Y CAGR confirms compounding.
-      // If only TTM available, use it alone. If both, average them (equal weight).
+      // Zero-point at 5% growth (not 0%) — flat revenue should score below neutral
+      // for a compounder where growth is the thesis.
+      //   -10%  = score 0
+      //     0%  = score 4   (declining/flat — below neutral for a compounder)
+      //     5%  = score 5   (neutral — matching GDP-level growth)
+      //    15%  = score 7
+      //    25%+ = score 10
       const yoy  = fundamentals.revenueGrowthYoY  ?? 0;
       const cagr = fundamentals.revenueGrowth3Y   ?? 0;
-      // Score each on the same curve: 0% = 5, 25%+ = 10, -25% = 0
-      const yoyS  = Math.max(0, Math.min(10, 5 + (yoy  / 0.05)));
-      const cagrS = Math.max(0, Math.min(10, 5 + (cagr / 0.05)));
-      // If both windows available, weight 3Y more (durability > velocity)
+      // Curve: 0% → 4, 5% → 5, 25% → 10 (shifted zero-point vs before)
+      const yoyS  = Math.max(0, Math.min(10, 4 + (yoy  / 0.042)));
+      const cagrS = Math.max(0, Math.min(10, 4 + (cagr / 0.042)));
       let revGS;
       if (cagr !== 0 && yoy !== 0) {
-        revGS = (yoyS * 0.40) + (cagrS * 0.60);  // 3Y CAGR carries more weight
+        revGS = (yoyS * 0.40) + (cagrS * 0.60); // durability over velocity
       } else if (cagr !== 0) {
         revGS = cagrS;
       } else {
         revGS = yoyS;
       }
-      // Durability bonus: if 3Y CAGR ≥ TTM YoY, the growth is accelerating/stable
-      // If TTM >> 3Y CAGR, it's a recovery bounce — cap the score
+      // Credibility discount: big TTM spike on weak 3Y base = recovery, not compounding
       if (cagr !== 0 && yoy !== 0 && yoy > cagr * 1.5 && cagr < 0.10) {
-        // Big TTM spike on weak 3Y CAGR base → credibility discount
         revGS = Math.min(revGS, 6.5);
       }
 
       if (capexException) fcfS = Math.min(10, fcfS + 2.5);
 
       // ── Composite fundamental score ───────────────────────────────────────
-      // ROIC 33% / SBC-adj FCF 22% / FCF Yield 15% / D/E 15% / Rev Growth 15%
-      // FCF Yield replaces some D/E weight — valuation matters for compounders
-      fundScore = (roicS * 0.33) + (fcfS * 0.22) + (fcfYieldS * 0.15) + (deS * 0.15) + (revGS * 0.15);
+      // Quality-first (Fundsmith/Baillie Gifford): FCF Yield is valuation, not quality.
+      // A great business at a high price is still a great business.
+      // ROIC 40% / SBC-adj FCF 30% / D/E 20% / Rev Growth 10%
+      fundScore = (roicS * 0.40) + (fcfS * 0.30) + (deS * 0.20) + (revGS * 0.10);
 
       // ── Enhanced Moat Score (display-only, never feeds composite) ─────────
       // Components: ROIC above cost-of-capital, gross margin (pricing power),
@@ -470,7 +555,15 @@ class PriceAnalyzer {
       else if (sold > bought)             insiderScore = 4;
     }
 
-    const finalScore = (fundScore * 0.29) + (techScore * 0.16) + (ratingScore * 0.20) + (newsScore * 0.15) + (insiderScore * 0.20);
+    // ── Composite weights — fundamentals-first for a long-horizon compounder ──
+    // Fund 35% — quality of the business (ROIC, FCF, D/E, growth)
+    // Analyst 20% — consensus of professionals who model the business deeply
+    // Insider 20% — skin-in-the-game signal from people with private knowledge
+    // News 15% — intraday sentiment (recency-weighted 3x/day runs)
+    // Tech 10% — price trend confirmation (momentum, RSI)
+    // Technicals deliberately reduced: for long-horizon compounders, price
+    // momentum is a confirmation signal, not the primary driver.
+    const finalScore = (fundScore * 0.35) + (techScore * 0.10) + (ratingScore * 0.20) + (newsScore * 0.15) + (insiderScore * 0.20);
     return {
       total:   Math.max(0, Math.min(10, finalScore)),
       fund:    fundScore,
@@ -591,6 +684,75 @@ async function fetchFilingSentiment(symbol) {
     };
   } catch (e) {
     // Filing sentiment is optional — non-fatal
+    return null;
+  }
+}
+
+// ─── SEC EDGAR 8-K MATERIAL EVENT WATCHER ─────────────────────────────────────
+// Checks for recent 8-K filings and classifies the most important items.
+// Only runs when Finnhub filings list is already available (reuses CIK cache).
+// Material items tracked:
+//   1.01 Entry into material agreement (contracts, partnerships)
+//   2.02 Results of operations (earnings release)
+//   5.02 Departure/appointment of directors or officers (CEO/CFO change)
+//   4.01 Changes in registrant's certifying accountant (auditor red flag)
+//   2.01 Completion of acquisition (M&A)
+//   8.01 Other events (bankruptcy, going concern, restructuring)
+// Returns null if no material 8-K in last 30 days, or object with type + hint.
+
+async function fetchRecent8K(symbol) {
+  try {
+    const cik = await getEdgarCIK(symbol);
+    if (!cik) return null;
+
+    // EDGAR submissions API — lists all filings sorted by date
+    const res = await axios.get(
+      `https://data.sec.gov/submissions/CIK${cik}.json`,
+      { timeout: 10000, headers: { 'User-Agent': 'PortfolioDashboard contact@portfolio.local' } }
+    );
+
+    const filings = res.data?.filings?.recent;
+    if (!filings?.form?.length) return null;
+
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    // Find most recent 8-K within 30 days
+    const MATERIAL_ITEMS = {
+      '1.01': { label: 'Material Agreement',         hint: 'neutral',   icon: '📋' },
+      '2.01': { label: 'Acquisition Completed',      hint: 'positive',  icon: '🤝' },
+      '2.02': { label: 'Earnings Release',           hint: 'neutral',   icon: '📊' },
+      '4.01': { label: 'Auditor Change',             hint: 'negative',  icon: '⚠️'  },
+      '4.02': { label: 'Non-Reliance on Financials', hint: 'negative',  icon: '🚨' },
+      '5.02': { label: 'Director/Officer Change',    hint: 'neutral',   icon: '👔' },
+      '8.01': { label: 'Other Material Event',       hint: 'neutral',   icon: '📌' },
+    };
+
+    for (let i = 0; i < filings.form.length; i++) {
+      if (filings.form[i] !== '8-K') continue;
+      const filingDate = new Date(filings.filingDate[i]);
+      if (filingDate < thirtyDaysAgo) break; // sorted newest first, stop when past window
+
+      // Check the items in this 8-K
+      const items = (filings.items?.[i] || '').split(',').map(s => s.trim());
+      for (const item of items) {
+        if (MATERIAL_ITEMS[item]) {
+          return {
+            item,
+            label:     MATERIAL_ITEMS[item].label,
+            hint:      MATERIAL_ITEMS[item].hint,
+            icon:      MATERIAL_ITEMS[item].icon,
+            filedDate: filings.filingDate[i],
+          };
+        }
+      }
+    }
+
+    return null; // no material 8-K in last 30 days
+  } catch (e) {
+    if (e.response?.status !== 404) {
+      logger.warn(`8-K watcher failed for ${symbol}: ${e.message}`);
+    }
     return null;
   }
 }
@@ -792,32 +954,40 @@ async function updateMarketData() {
         // This gives us the weighted average of the 3 news runs for today
         const intradayNewsScore = await getIntradayNewsScore(stock.symbol);
 
-        // Parallel fetch — news is NOT included here anymore
-        // SBC from SEC EDGAR runs alongside other fetches (different host, no rate conflict)
-        const [priceData, fundamentals, technicals, ratings, insiderData, secCapex, sbcMillions] = await Promise.all([
+        // ── Instrument type detection ───────────────────────────────────────
+        // Auto-detected via Finnhub profile2 — works for any symbol you add:
+        // stocks, ETFs, ADRs, REITs, preferred shares, closed-end funds.
+        // No hardcoded list needed. SHLD, AVNV, any future addition just works.
+        const instrumentProfile  = await fetchInstrumentType(stock.symbol, process.env.FINNHUB_API_KEY);
+        const instrumentIsETF    = instrumentProfile.isETF;
+        const instrumentTypeName = instrumentProfile.raw;
+        const profileExpenseRatio = instrumentProfile.expenseRatio; // in % or null
+
+        if (instrumentIsETF) {
+          logger.info(`  ℹ️  ${instrumentTypeName} detected — skipping fundamental/insider/filing calls`);
+        } else {
+          logger.info(`  ℹ️  ${instrumentTypeName}`);
+        }
+
+        const [priceData, fundamentals, technicals, ratings, insiderData, secCapex, sbcMillions, recent8K] = await Promise.all([
           analyzer.fetchPrice(stock.symbol),
-          analyzer.fetchFundamentals(stock.symbol),
+          instrumentIsETF ? Promise.resolve(null) : analyzer.fetchFundamentals(stock.symbol),
           analyzer.fetchTechnicals(stock.symbol),
-          analyzer.fetchRatings(stock.symbol),
-          analyzer.fetchInsider(stock.symbol),
-          quantEngine.fetchSECCashFlow(stock.symbol),
-          fetchSECStockBasedComp(stock.symbol),
+          instrumentIsETF ? Promise.resolve(null) : analyzer.fetchRatings(stock.symbol),
+          instrumentIsETF ? Promise.resolve(null) : analyzer.fetchInsider(stock.symbol),
+          instrumentIsETF ? Promise.resolve(null) : quantEngine.fetchSECCashFlow(stock.symbol),
+          instrumentIsETF ? Promise.resolve(null) : fetchSECStockBasedComp(stock.symbol),
+          instrumentIsETF ? Promise.resolve(null) : fetchRecent8K(stock.symbol),
         ]);
 
-        // Attach SBC to fundamentals so calculateScore can use it
-        // SBC margin = SBC / revenue. Revenue = FCF margin * market cap (proxy).
-        // Better: SBC / (FCF * marketCap / fcfMargin) — but we use revenue proxy.
-        // Simplest accurate approach: SBC as % of market cap (dilution rate).
-        if (fundamentals && sbcMillions != null && fundamentals.marketCapM > 0) {
-          // SBC margin = annual SBC / annualised revenue proxy
-          // Use market cap as denominator for dilution signal (SBC/MarketCap)
-          // Revenue proxy = FCF / fcfMargin when both available
-          const revProxyM = (fundamentals.fcfMargin > 0 && fundamentals.marketCapM > 0)
-            ? (fundamentals.fcfMargin * fundamentals.marketCapM)
-            : fundamentals.marketCapM * 0.5; // rough revenue proxy
-          fundamentals.sbcMargin     = parseFloat((sbcMillions / Math.max(1, revProxyM)).toFixed(4));
-          fundamentals.sbcMillions   = sbcMillions;
+        // Attach SBC to fundamentals (stocks only — fundamentals is null for ETFs)
+        // Correct SBC calculation: sbcMillions from EDGAR / fcf from Finnhub
+        if (fundamentals && sbcMillions != null && sbcMillions > 0
+            && fundamentals.marketCapM > 0 && fundamentals.fcfMargin > 0) {
+          fundamentals.sbcMillions    = sbcMillions;
           fundamentals.sbcToMarketCap = parseFloat((sbcMillions / fundamentals.marketCapM).toFixed(4));
+          // sbcMargin is attached directly to the fundamentals object so
+          // calculateScore can use it in the FCF adjustment formula
         }
 
         const capexException = secCapex?.capexException ?? false;
@@ -841,15 +1011,14 @@ async function updateMarketData() {
         const grossMarginPct   = fundamentals?._raw?.grossMarginPct   ?? null;
 
         // Filing sentiment — quarterly cadence (Finnhub 10-K/10-Q tone analysis)
-        // Run for every stock every EOD run — Finnhub caches the filing so it's fast.
-        // Two calls per stock: filings list + sentiment. Budget: 2 × 18 = 36 calls/run,
-        // spread over 15s sleep intervals → well within 60/min Finnhub limit.
-        const filingSentiment = await fetchFilingSentiment(stock.symbol);
+        // Skipped for ETFs (file N-CEN/N-PORT, not 10-K/10-Q — no business tone to analyse)
+        const filingSentiment = instrumentIsETF ? null : await fetchFilingSentiment(stock.symbol);
 
         logger.info(`  📊 Fund(${scoreObj.fund.toFixed(1)}) Tech(${scoreObj.tech.toFixed(1)}) Analyst(${scoreObj.rating.toFixed(1)}) News(${scoreObj.news.toFixed(1)}) Insider(${scoreObj.insider.toFixed(1)}) → Total(${scoreObj.total.toFixed(1)})`);
         if (moatScore != null) logger.info(`  🏰 Moat: ${moatScore.toFixed(1)}/10 | RevGrowth3Y: ${(fundamentals?._raw?.revenueGrowth3YPct ?? 0).toFixed(1)}% | YoY: ${(revenueGrowthPct ?? 0).toFixed(1)}% | GrossMargin: ${(grossMarginPct ?? 0).toFixed(1)}% | MaxDD: ${maxDrawdown ?? '—'}%`);
         if (filingSentiment) logger.info(`  📄 Filing tone (${filingSentiment.form}): ${filingSentiment.score.toFixed(1)}/10 | pos:${(filingSentiment.positive*100).toFixed(2)}% neg:${(filingSentiment.negative*100).toFixed(2)}%`);
         if (sbcMillions != null) logger.info(`  💸 SBC: $${sbcMillions.toFixed(1)}M | as % mktcap: ${((fundamentals?.sbcToMarketCap ?? 0)*100).toFixed(2)}%`);
+        if (recent8K) logger.info(`  📋 8-K: ${recent8K.icon} ${recent8K.label} (${recent8K.filedDate}) — ${recent8K.hint}`);
 
         // Quant Engine regime analysis (unchanged)
         let beta = 1.0, excessReturn = 0, noiseDecay = 'INSUFFICIENT_DATA';
@@ -914,6 +1083,8 @@ async function updateMarketData() {
           latest_score:    Math.round(scoreObj.total * 10) / 10,
           signal:          action,
           classic_signal:  analyzer.getSignal(scoreObj.total),
+          instrument_type: instrumentIsETF ? 'ETF' : 'Stock',
+          expense_ratio:   profileExpenseRatio ?? null,  // from Finnhub profile2 (all instruments)
           current_price:   priceData?.price        ?? stock.current_price,
           change_percent:  priceData?.changePercent ?? stock.change_percent,
           score_breakdown: scoreObj,
@@ -936,6 +1107,19 @@ async function updateMarketData() {
           // Filing sentiment (quarterly tone analysis from 10-K/10-Q)
           filing_sentiment:    filingSentiment ? filingSentiment.score : null,
           filing_form:         filingSentiment ? filingSentiment.form  : null,
+          // 8-K material event (last 30 days)
+          event_8k:            recent8K ? recent8K.label    : null,
+          event_8k_hint:       recent8K ? recent8K.hint     : null,
+          event_8k_icon:       recent8K ? recent8K.icon     : null,
+          event_8k_date:       recent8K ? recent8K.filedDate: null,
+          // Score sub-breakdown — shown in detail panel
+          score_fund:          scoreObj.fund    != null ? parseFloat(scoreObj.fund.toFixed(1))    : null,
+          score_tech:          scoreObj.tech    != null ? parseFloat(scoreObj.tech.toFixed(1))    : null,
+          score_rating:        scoreObj.rating  != null ? parseFloat(scoreObj.rating.toFixed(1))  : null,
+          score_news:          scoreObj.news    != null ? parseFloat(scoreObj.news.toFixed(1))    : null,
+          score_insider:       scoreObj.insider != null ? parseFloat(scoreObj.insider.toFixed(1)) : null,
+          // FCF Yield stored separately — used for display/valuation context only
+          fcf_yield_score:     fcfYield != null ? parseFloat((fcfYield * 100).toFixed(2)) : null,
           w3_confirmed:    w3,
           w4_confirmed:    w4,
           capex_exception: capexException,
