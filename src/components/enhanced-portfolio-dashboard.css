@@ -1,13 +1,14 @@
 /* ─────────────────────────────────────────────────────────────────────────────
    ALPHA COMPOUNDER — Dashboard Styles
-   Theme: warm neutral #f2f1eb page, #fdfcf9 cards
+   Theme: warm neutral #f2f1eb page, #fdfcf9 cards — neither blue-tinted nor
+   stark white. Easy on the eyes at any time of day.
 ───────────────────────────────────────────────────────────────────────────── */
 
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,400&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&display=swap');
 
 :root {
-  --bg-main:      #f2f1eb;
-  --bg-card:      #fdfcf9;
+  --bg-main:      #f2f1eb;   /* warm parchment — softer than f5f5f3, not blue */
+  --bg-card:      #fdfcf9;   /* warm off-white card — not pure white, not cream */
   --bg-raised:    #f7f6f2;
   --bg-input:     #f7f6f2;
   --border-light: #e6e5df;
@@ -15,6 +16,11 @@
   --text-main:    #1a1917;
   --text-muted:   #6b6b65;
   --text-dim:     #a0a09a;
+  --color-strong-buy: #059669;
+  --color-buy:        #2563eb;
+  --color-hold:       #d97706;
+  --color-reduce:     #dc2626;
+  --color-sell:       #7f1d1d;
   --green:  #059669;
   --blue:   #2563eb;
   --amber:  #d97706;
@@ -22,19 +28,63 @@
   --r-sm:  6px; --r-md: 10px; --r-lg: 14px;
   --shadow-sm: 0 1px 3px rgba(50,45,30,.07), 0 2px 10px rgba(50,45,30,.05);
   --shadow-md: 0 4px 16px rgba(50,45,30,.09), 0 1px 4px rgba(50,45,30,.05);
-  --shadow-lg: 0 20px 60px rgba(26,25,23,.22), 0 4px 20px rgba(26,25,23,.10);
+  --shadow-lg: 0 12px 40px rgba(50,45,30,.14);
   --font-ui:   'DM Sans',  system-ui, sans-serif;
   --font-mono: 'DM Mono',  'Fira Code', monospace;
   --transition: 0.14s ease;
 }
 
-/* ── Utility animations ──────────────────────────────────────────────────── */
-@keyframes blink    { 0%,100%{opacity:1} 50%{opacity:.2} }
-@keyframes spin     { to{transform:rotate(360deg)} }
-@keyframes fadeIn   { from{opacity:0} to{opacity:1} }
-@keyframes slideUp  { from{transform:translateY(20px);opacity:0} to{transform:translateY(0);opacity:1} }
+/* ── Market background animation ─────────────────────────────────────────────
+   Bull candles bob upward (green), bear candles drop downward (red).
+   Price lines drift. Each element has independent timing so nothing syncs.
+   Opacity range 0.14–0.22 — clearly visible but never the main focus.       */
 
-/* ── Reset ───────────────────────────────────────────────────────────────── */
+@keyframes candle-bob-1 {
+  0%,100% { transform: translateY(0)    scaleY(1);    }
+  35%     { transform: translateY(-16px) scaleY(1.15); }
+  65%     { transform: translateY(-7px)  scaleY(0.95); }
+}
+@keyframes candle-bob-2 {
+  0%,100% { transform: translateY(0)    scaleY(1);    }
+  28%     { transform: translateY(-20px) scaleY(1.20); }
+  60%     { transform: translateY(-9px)  scaleY(0.93); }
+}
+@keyframes candle-bob-3 {
+  0%,100% { transform: translateY(0)    scaleY(1);    }
+  45%     { transform: translateY(-12px) scaleY(1.12); }
+}
+@keyframes candle-drop-1 {
+  0%,100% { transform: translateY(0)   scaleY(1);    }
+  38%     { transform: translateY(16px) scaleY(1.15); }
+  68%     { transform: translateY(7px)  scaleY(0.94); }
+}
+@keyframes candle-drop-2 {
+  0%,100% { transform: translateY(0)   scaleY(1);    }
+  32%     { transform: translateY(20px) scaleY(1.18); }
+  62%     { transform: translateY(9px)  scaleY(0.92); }
+}
+@keyframes candle-drop-3 {
+  0%,100% { transform: translateY(0)   scaleY(1);    }
+  50%     { transform: translateY(11px) scaleY(1.10); }
+}
+@keyframes line-rise {
+  0%,100% { transform: translateX(0)   translateY(0);    }
+  50%     { transform: translateX(14px) translateY(-18px); }
+}
+@keyframes line-fall {
+  0%,100% { transform: translateX(0)   translateY(0);   }
+  50%     { transform: translateX(14px) translateY(14px); }
+}
+@keyframes candle-glow {
+  0%,100% { opacity: 0.14; }
+  50%     { opacity: 0.22; }
+}
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
+@keyframes spin  { to{transform:rotate(360deg)} }
+@keyframes fadeIn  { from{opacity:0} to{opacity:1} }
+@keyframes slideUp { from{transform:translateY(12px);opacity:0} to{transform:translateY(0);opacity:1} }
+
+/* ── Reset ───────────────────────────────────────────────────────────────────── */
 *,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
@@ -48,7 +98,7 @@ body {
 button { font-family: var(--font-ui); cursor: pointer; }
 input, select { font-family: var(--font-ui); }
 
-/* ── Layout ──────────────────────────────────────────────────────────────── */
+/* ── Layout ──────────────────────────────────────────────────────────────────── */
 .dashboard-container {
   max-width: 1280px;
   margin: 0 auto;
@@ -56,18 +106,34 @@ input, select { font-family: var(--font-ui); }
   position: relative;
 }
 
-/* Neural canvas — fixed behind everything, pointer-events:none so it never interferes */
-.neural-canvas {
+/* Market background — fixed, behind everything */
+.market-bg {
   position: fixed;
   top: 0; left: 0;
   width: 100vw; height: 100vh;
   pointer-events: none;
   z-index: 0;
+  overflow: hidden;
 }
 
-.dashboard-container > *:not(.neural-canvas) { position: relative; z-index: 1; }
+/* Each animated group gets independent class + delay */
+.mkt-c1 { animation: candle-bob-1  16s ease-in-out infinite; transform-origin: 50% 100%; }
+.mkt-c2 { animation: candle-bob-2  20s ease-in-out infinite; transform-origin: 50% 100%; animation-delay: -4s; }
+.mkt-c3 { animation: candle-bob-3  13s ease-in-out infinite; transform-origin: 50% 100%; animation-delay: -8s; }
+.mkt-c4 { animation: candle-bob-1  18s ease-in-out infinite; transform-origin: 50% 100%; animation-delay: -6s; }
+.mkt-c5 { animation: candle-bob-2  15s ease-in-out infinite; transform-origin: 50% 100%; animation-delay: -2s; }
+.mkt-d1 { animation: candle-drop-1 17s ease-in-out infinite; transform-origin: 50% 0%; }
+.mkt-d2 { animation: candle-drop-2 21s ease-in-out infinite; transform-origin: 50% 0%; animation-delay: -5s; }
+.mkt-d3 { animation: candle-drop-3 14s ease-in-out infinite; transform-origin: 50% 0%; animation-delay: -9s; }
+.mkt-d4 { animation: candle-drop-1 19s ease-in-out infinite; transform-origin: 50% 0%; animation-delay: -3s; }
+.mkt-ln { animation: line-rise 25s ease-in-out infinite; }
+.mkt-lf { animation: line-fall 22s ease-in-out infinite; }
+.mkt-gl { animation: candle-glow  5s ease-in-out infinite; }
 
-/* ── Header ──────────────────────────────────────────────────────────────── */
+/* All page content above the background */
+.dashboard-container > *:not(.market-bg) { position: relative; z-index: 1; }
+
+/* ── Header ──────────────────────────────────────────────────────────────────── */
 .dashboard-header {
   display: flex; justify-content: space-between; align-items: flex-end;
   margin-bottom: 32px;
@@ -90,7 +156,7 @@ input, select { font-family: var(--font-ui); }
   background: var(--green); animation: blink 2.4s infinite; flex-shrink: 0;
 }
 
-/* ── Buttons ─────────────────────────────────────────────────────────────── */
+/* ── Buttons ──────────────────────────────────────────────────────────────────── */
 .btn-primary {
   background: var(--text-main); color: #fff; border: none;
   border-radius: var(--r-sm); padding: 9px 18px;
@@ -110,21 +176,22 @@ input, select { font-family: var(--font-ui); }
 .btn-close {
   background: transparent; border: 1px solid var(--border-light);
   border-radius: var(--r-sm); color: var(--text-muted);
-  width: 32px; height: 32px; font-size: 16px;
+  width: 30px; height: 30px; font-size: 14px;
   display: flex; align-items: center; justify-content: center;
-  transition: all var(--transition); flex-shrink: 0; cursor: pointer;
+  transition: all var(--transition); flex-shrink: 0;
 }
-.btn-close:hover { color: var(--text-main); border-color: var(--border-mid); background: var(--bg-raised); }
+.btn-close:hover { color: var(--text-main); border-color: var(--border-mid); }
 
 .btn-icon {
   background: none; border: none; font-size: 15px;
-  padding: 5px 7px; border-radius: var(--r-sm); color: var(--text-dim);
+  padding: 5px 7px; border-radius: var(--r-sm);
+  color: var(--text-dim);
   transition: color var(--transition), background var(--transition);
 }
 .btn-icon:hover { color: var(--text-main); background: var(--bg-raised); }
 .btn-icon-danger:hover { color: var(--red); }
 
-/* ── Stats ───────────────────────────────────────────────────────────────── */
+/* ── Stats ───────────────────────────────────────────────────────────────────── */
 .summary-section { margin-bottom: 28px; }
 .stats-grid {
   display: grid;
@@ -154,7 +221,7 @@ input, select { font-family: var(--font-ui); }
 .stat-sub.pos { color: var(--green); }
 .stat-sub.neg { color: var(--red); }
 
-/* ── Controls ────────────────────────────────────────────────────────────── */
+/* ── Controls ────────────────────────────────────────────────────────────────── */
 .controls-section {
   display: flex; align-items: center; gap: 10px;
   margin-bottom: 16px; flex-wrap: wrap;
@@ -180,7 +247,7 @@ input, select { font-family: var(--font-ui); }
 .minimal-select:focus { border-color: var(--text-muted); }
 .results-count { margin-left: auto; font-family: var(--font-mono); font-size: 12px; color: var(--text-dim); }
 
-/* ── Table ───────────────────────────────────────────────────────────────── */
+/* ── Table ───────────────────────────────────────────────────────────────────── */
 .table-wrapper {
   background: var(--bg-card); border: 1px solid var(--border-light);
   border-radius: var(--r-lg); box-shadow: var(--shadow-sm); overflow: hidden;
@@ -203,13 +270,13 @@ input, select { font-family: var(--font-ui); }
 .row-flat { border-left: 3px solid transparent; }
 .portfolio-table td { padding: 16px 20px; vertical-align: middle; }
 
-/* ── Cell types ──────────────────────────────────────────────────────────── */
+/* ── Cell types ─────────────────────────────────────────────────────────────── */
 .stock-symbol {
-  font-family: var(--font-mono); font-size: 15px; font-weight: 700;
+  font-family: var(--font-mono); font-size: 14px; font-weight: 500;
   color: var(--text-main); letter-spacing: 0.01em; display: block;
 }
 .stock-name {
-  font-size: 12px; font-weight: 500; color: var(--text-muted); margin-top: 2px;
+  font-size: 11px; color: var(--text-dim); margin-top: 2px;
   max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .sector-pill {
@@ -238,33 +305,9 @@ input, select { font-family: var(--font-ui); }
 .alpha-val { font-family: var(--font-mono); font-size: 12px; font-weight: 600; margin-top: 3px; }
 .beta-val { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); margin-top: 2px; }
 .signal-badge {
-  display: inline-block; padding: 5px 11px; border-radius: 5px; border: 1px solid transparent;
-  font-size: 11px; font-weight: 800; letter-spacing: 0.05em;
+  display: inline-block; padding: 4px 10px; border-radius: 5px; border: 1px solid transparent;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
   text-transform: uppercase; white-space: nowrap;
-}
-/* Bull signals — vivid green */
-.signal-bull {
-  color: #047857 !important;
-  background-color: rgba(5,150,105,0.18) !important;
-  border-color: rgba(5,150,105,0.50) !important;
-}
-/* Hard bear signals — vivid red (Sell, Decay, Reduce) */
-.signal-bear-hard {
-  color: #b91c1c !important;
-  background-color: rgba(185,28,28,0.16) !important;
-  border-color: rgba(185,28,28,0.48) !important;
-}
-/* Soft bear signals — amber (Watch, Trim) */
-.signal-bear-soft {
-  color: #b45309 !important;
-  background-color: rgba(217,119,6,0.16) !important;
-  border-color: rgba(217,119,6,0.48) !important;
-}
-/* Neutral signals — visible grey (Hold, Noise, Normal) */
-.signal-neutral {
-  color: #374151 !important;
-  background-color: rgba(107,114,128,0.14) !important;
-  border-color: rgba(107,114,128,0.38) !important;
 }
 .spring-bar { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
 .spring-track { width: 72px; height: 3px; background: var(--border-light); border-radius: 2px; overflow: hidden; }
@@ -280,7 +323,7 @@ input, select { font-family: var(--font-ui); }
 .weight-pct { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); margin-top: 3px; }
 .col-actions { width: 90px; white-space: nowrap; }
 
-/* ── Empty / Loading ─────────────────────────────────────────────────────── */
+/* ── Empty / Loading ─────────────────────────────────────────────────────────── */
 .no-results {
   padding: 56px; text-align: center; color: var(--text-muted); font-size: 14px;
   background: var(--bg-card); border: 1px solid var(--border-light);
@@ -293,70 +336,38 @@ input, select { font-family: var(--font-ui); }
   border-radius: 50%; animation: spin .8s linear infinite;
 }
 
-/* ── Modal overlay ───────────────────────────────────────────────────────────
-   Centred on viewport always. Backdrop fades page but elements still
-   partially visible — like the Physics Wallah streak modal.               */
+/* ── Modals ───────────────────────────────────────────────────────────────────
+   CRITICAL: position:fixed + z-index:9999 ensures modal always centres on
+   viewport regardless of page scroll position. Without fixed, it anchors
+   to the document and appears at the bottom when scrolled down.              */
 .modal-overlay {
-  position: fixed;
+  position: fixed;      /* ← must be fixed, not absolute */
   inset: 0;
-  background: rgba(26,25,23,.45);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  background: rgba(26,25,23,.35);
+  backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 9999;
-  padding: 24px;
-  animation: fadeIn .18s ease both;
+  z-index: 9999;        /* ← above everything including sticky headers */
+  padding: 20px;
+  animation: fadeIn .15s ease;
 }
-
-.modal-box {
-  background: var(--bg-card);
-  border: 1px solid var(--border-mid);
-  border-radius: 18px;
-  width: 100%;
-  max-width: 480px;
-  max-height: calc(100svh - 80px);
-  overflow-y: auto;
-  box-shadow: 0 24px 60px rgba(26,25,23,.28), 0 4px 16px rgba(26,25,23,.10);
-  animation: slideUp .22s ease both;
-  display: flex;
-  flex-direction: column;
+.modal-content {
+  background: var(--bg-card); border: 1px solid var(--border-light);
+  border-radius: var(--r-lg); width: 100%; max-width: 540px;
+  box-shadow: var(--shadow-lg); animation: slideUp .18s ease; overflow: hidden;
+  /* Ensure modal doesn't scroll with page — it sits in viewport centre */
+  max-height: 90vh; overflow-y: auto;
 }
-
-.modal-box.modal-news {
-  max-width: 580px;
-}
-
+.modal-content.news-modal { max-width: 640px; }
 .modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 22px 24px 18px;
-  border-bottom: 1px solid var(--border-light);
-  flex-shrink: 0;
+  display: flex; justify-content: space-between; align-items: flex-start;
+  padding: 22px 24px 18px; border-bottom: 1px solid var(--border-light);
 }
-.modal-header-text h2 { font-size: 16px; font-weight: 700; color: var(--text-main); line-height: 1.3; }
+.modal-header h2 { font-size: 17px; font-weight: 700; color: var(--text-main); }
 .modal-sub-label { font-size: 12px; color: var(--text-muted); margin-top: 3px; }
 
-.modal-body {
-  overflow-y: auto;
-  flex: 1;
-}
-
-.modal-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 16px 24px;
-  border-top: 1px solid var(--border-light);
-  flex-shrink: 0;
-  background: var(--bg-main);
-  border-radius: 0 0 16px 16px;
-}
-
-/* ── Forms ───────────────────────────────────────────────────────────────── */
+/* ── Forms ───────────────────────────────────────────────────────────────────── */
 .form-grid {
   display: grid; grid-template-columns: 1fr 1fr;
   gap: 16px; padding: 22px 24px;
@@ -374,8 +385,17 @@ input, select { font-family: var(--font-ui); }
 }
 .form-group input:focus, .form-group select:focus { border-color: var(--text-muted); }
 .form-group input:disabled { opacity: 0.45; cursor: not-allowed; }
+.form-actions {
+  display: flex; justify-content: flex-end; gap: 8px;
+  padding: 16px 24px 22px; border-top: 1px solid var(--border-light);
+  background: var(--bg-main);
+}
 
-/* ── News ────────────────────────────────────────────────────────────────── */
+/* ── News ────────────────────────────────────────────────────────────────────── */
+.news-container {
+  padding: 0; max-height: 65vh; overflow-y: auto;
+  display: flex; flex-direction: column;
+}
 .news-card {
   display: block; text-decoration: none; padding: 18px 24px;
   border-bottom: 1px solid var(--border-light); color: var(--text-main);
@@ -391,8 +411,110 @@ input, select { font-family: var(--font-ui); }
 .news-desc { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
 .no-news { text-align: center; color: var(--text-muted); padding: 44px 24px; font-size: 13px; }
 
-/* ── Scrollbars ──────────────────────────────────────────────────────────── */
+/* ── Scrollbars ─────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border-mid); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+
+/* ── Expandable row detail panel ─────────────────────────────────────────────── */
+.row-expanded { background: var(--bg-raised) !important; }
+.row-expand-icon {
+  font-size: 10px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+  width: 12px;
+}
+
+.detail-row td { padding: 0; }
+
+.detail-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0;
+  background: var(--bg-raised);
+  border-top: 1px solid var(--border-light);
+  border-bottom: 2px solid var(--border-mid);
+  animation: slideDown .15s ease;
+}
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.detail-section {
+  padding: 16px 20px;
+  border-right: 1px solid var(--border-light);
+}
+.detail-section:last-child { border-right: none; }
+
+.detail-section-head { margin-bottom: 12px; }
+.detail-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-main);
+  display: block;
+  margin-bottom: 2px;
+}
+.detail-section-sub {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.detail-metrics-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.detail-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.detail-metric-featured {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+.detail-metric-featured .detail-metric-label { min-width: 70px; }
+.detail-metric-featured .detail-metric-note  { flex: 1; }
+
+.detail-metric-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  font-weight: 500;
+}
+.detail-metric-value {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-main);
+  line-height: 1.2;
+}
+.detail-metric-note {
+  font-size: 10px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+/* Moat ring — smaller version of score ring */
+.moat-ring {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+}
+.moat-ring svg { position: absolute; top: 0; left: 0; }
+.moat-ring-num {
+  position: relative;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  z-index: 1;
+}
