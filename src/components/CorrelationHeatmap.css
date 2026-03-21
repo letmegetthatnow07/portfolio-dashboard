@@ -2,8 +2,8 @@
    CORRELATION HEATMAP
 ───────────────────────────────────────────────────────────────────────────── */
 
-@keyframes pinnedIn   { from{opacity:0;transform:translateY(4px) scale(.97)} to{opacity:1;transform:translateY(0) scale(1)} }
-@keyframes spin       { to{transform:rotate(360deg)} }
+@keyframes pinnedIn { from{opacity:0;transform:translateY(4px) scale(.97)} to{opacity:1;transform:translateY(0) scale(1)} }
+@keyframes spin     { to{transform:rotate(360deg)} }
 
 /* ── Container ──────────────────────────────────────────────────────────── */
 .correlation-container {
@@ -17,7 +17,7 @@
   box-shadow: 0 1px 3px rgba(50,45,30,.07), 0 2px 10px rgba(50,45,30,.05);
 }
 
-/* Neural canvas — absolutely fills the container, behind all content */
+/* Canvas neural background */
 .neural-bg-canvas {
   position: absolute;
   inset: 0;
@@ -26,7 +26,6 @@
   pointer-events: none;
   z-index: 0;
   border-radius: 14px;
-  overflow: hidden;
 }
 
 .correlation-container > *:not(.neural-bg-canvas) { position: relative; z-index: 1; }
@@ -40,9 +39,17 @@
   font-family: 'DM Mono', monospace; font-size: 15px; font-weight: 500;
   letter-spacing: -0.02em; color: #1a1917; margin: 0 0 4px;
 }
-.heatmap-subtitle  { font-size: 11px; color: #6b6b65; }
-.window-range      { font-family: 'DM Mono', monospace; }
-.heatmap-updated   { font-family: 'DM Mono', monospace; font-size: 10px; color: #a0a09a; white-space: nowrap; padding-top: 3px; }
+.heatmap-subtitle { font-size: 11px; color: #6b6b65; }
+.window-range     { font-family: 'DM Mono', monospace; }
+.heatmap-updated  { font-family: 'DM Mono', monospace; font-size: 10px; color: #a0a09a; white-space: nowrap; padding-top: 3px; }
+
+/* Stale warning */
+.heatmap-stale-banner {
+  background: #fffbeb; border: 1px solid #fcd34d;
+  border-radius: 7px; padding: 8px 14px;
+  font-size: 11px; color: #92400e;
+  margin-bottom: 16px;
+}
 
 /* ── Side-by-side layout ─────────────────────────────────────────────────── */
 .heatmap-body {
@@ -109,11 +116,11 @@
 .legend-swatch { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
 .legend-note { margin-left: auto; font-size: 10px; font-style: italic; color: #a0a09a; }
 
-/* ── Compact pin popup — fixed to viewport, light warm card ─────────────── */
+/* ── Pinned popup ────────────────────────────────────────────────────────── */
 .heatmap-pin-popup {
   position: fixed;
-  background: #f7f6f2;             /* warm card — matches site's --bg-raised */
-  border: 1px solid #d0cfc9;       /* matches --border-mid */
+  background: #f7f6f2;
+  border: 1px solid #d0cfc9;
   border-radius: 8px;
   padding: 7px 10px 7px 13px;
   font-family: 'DM Mono', monospace;
@@ -124,20 +131,9 @@
   animation: pinnedIn .15s ease both;
   pointer-events: auto;
 }
-/* Pair name — bold, dark grey — prominent but not harsh */
-.pin-pair {
-  font-size: 12px;
-  font-weight: 700;
-  color: #3a3835;
-  letter-spacing: 0.02em;
-}
-.pin-eq { color: #a0a09a; font-size: 11px; }
-/* Value — large bold, coloured to match the cell band */
-.pin-val {
-  font-size: 16px;
-  font-weight: 800;
-  letter-spacing: -0.02em;
-}
+.pin-pair { font-size: 12px; font-weight: 700; color: #3a3835; letter-spacing: 0.02em; }
+.pin-eq   { color: #a0a09a; font-size: 11px; }
+.pin-val  { font-size: 16px; font-weight: 800; letter-spacing: -0.02em; }
 
 /* ── Loading ─────────────────────────────────────────────────────────────── */
 .heatmap-loading {
@@ -160,7 +156,6 @@
   color: #1a1917; margin: 0 0 4px;
 }
 .insights-sub { font-size: 11px; color: #6b6b65; line-height: 1.5; }
-
 .verdict-tabs { display: flex; gap: 5px; margin-bottom: 10px; flex-wrap: wrap; }
 .vtab {
   display: flex; align-items: center; gap: 5px;
@@ -191,7 +186,6 @@
 .recommend-card { border-left: 3px solid #05966940; }
 .weak-card      { border-left: 3px solid #d9770640; }
 .monitor-card   { border-left: 3px solid #a0a09a40; }
-
 .insight-card-head {
   display: flex; align-items: center; justify-content: space-between;
   gap: 8px; flex-wrap: wrap;
@@ -216,13 +210,13 @@
   display: grid; grid-template-columns: 1fr 52px 1fr; align-items: center; gap: 6px;
   background: #fdfcf9; border: 1px solid #e6e5df; border-radius: 7px; padding: 10px 8px;
 }
-.insight-col { display: flex; flex-direction: column; gap: 3px; }
-.winner-col  { align-items: flex-start; }
-.loser-col   { align-items: flex-end; }
-.col-role    { font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; }
+.insight-col   { display: flex; flex-direction: column; gap: 3px; }
+.winner-col    { align-items: flex-start; }
+.loser-col     { align-items: flex-end; }
+.col-role      { font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; }
 .col-role.retain { color: #059669; }
 .col-role.review { color: #a0a09a; }
-.insight-sym-lg { font-family: 'DM Mono', monospace; font-size: 16px; font-weight: 600; color: #1a1917; line-height: 1.1; }
+.insight-sym-lg  { font-family: 'DM Mono', monospace; font-size: 16px; font-weight: 600; color: #1a1917; line-height: 1.1; }
 .insight-action-tag { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
 .insight-cascade    { font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 3px; }
 .insight-metrics    { display: flex; flex-direction: column; gap: 2px; }
