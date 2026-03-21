@@ -87,6 +87,33 @@ async function fetchInstrumentType(symbol, finnhubKey) {
   }
 }
 
+// ─── KNOWN ETF FALLBACK LIST ──────────────────────────────────────────────────
+// Finnhub sometimes returns "Common Stock" for ETFs that are structured as
+// regulated investment companies (e.g. Invesco, VanEck, iShares funds).
+// This list is a safety net — any symbol here is treated as ETF regardless
+// of what Finnhub's profile2 says. Add new ETFs here when you add them.
+// The dynamic detection still runs first; this only overrides misclassifications.
+const KNOWN_ETF_OVERRIDES = new Set([
+  // Momentum / factor ETFs
+  'SPMO', 'MTUM', 'VLUE', 'QUAL', 'USMV',
+  // Semiconductor / thematic
+  'SMH', 'SOXX', 'XSD', 'SOXQ',
+  // Your specific ETFs
+  'SHLD', 'AVNV',
+  // Broad market
+  'SPY', 'QQQ', 'IWM', 'VTI', 'VOO', 'IVV', 'VEA', 'VWO', 'EEM',
+  // Sector
+  'XLK', 'XLE', 'XLF', 'XLV', 'XLI', 'XLY', 'XLP', 'XLU', 'XLB', 'XLRE',
+  // Fixed income
+  'TLT', 'AGG', 'BND', 'HYG', 'LQD',
+  // Commodity
+  'GLD', 'SLV', 'USO', 'PDBC',
+  // Leveraged / inverse (always ETF)
+  'TQQQ', 'SQQQ', 'UPRO', 'SPXU', 'SOXL', 'SOXS',
+  // ARK funds
+  'ARKK', 'ARKQ', 'ARKG', 'ARKW', 'ARKF',
+]);
+
 // ─── CLIENTS ──────────────────────────────────────────────────────────────────
 
 const supabase = createSupabaseClient(
@@ -380,7 +407,7 @@ class PriceAnalyzer {
    * @param {boolean}      capexException
    * @param {number|null}  newsScoreOverride   — pre-computed intraday average
    */
-  calculateScore(priceData, fundamentals, technicals, ratings, analyzedNews, insiderData, capexException = false, newsScoreOverride = null) {
+  calculateScore(priceData, fundamentals, technicals, ratings, analyzedNews, insiderData, capexException = false, newsScoreOverride = null, isETF = false) {
     let fundScore = 5, techScore = 5, ratingScore = 5, newsScore = 5, insiderScore = 5;
 
     if (fundamentals) {
@@ -555,15 +582,22 @@ class PriceAnalyzer {
       else if (sold > bought)             insiderScore = 4;
     }
 
-    // ── Composite weights — fundamentals-first for a long-horizon compounder ──
-    // Fund 35% — quality of the business (ROIC, FCF, D/E, growth)
-    // Analyst 20% — consensus of professionals who model the business deeply
-    // Insider 20% — skin-in-the-game signal from people with private knowledge
-    // News 15% — intraday sentiment (recency-weighted 3x/day runs)
-    // Tech 10% — price trend confirmation (momentum, RSI)
-    // Technicals deliberately reduced: for long-horizon compounders, price
-    // momentum is a confirmation signal, not the primary driver.
-    const finalScore = (fundScore * 0.35) + (techScore * 0.10) + (ratingScore * 0.20) + (newsScore * 0.15) + (insiderScore * 0.20);
+    // ── Composite weights ─────────────────────────────────────────────────────
+    // STOCKS (fundamentals-first, long-horizon compounder):
+    //   Fund 35% | Analyst 20% | Insider 20% | News 15% | Tech 10%
+    //
+    // ETFs (no fundamentals, no insiders — momentum and theme):
+    //   Tech 50% | News 30% | Analyst 20%
+    //   Tech dominates because ETFs ARE momentum vehicles — price trend IS the
+    //   signal. News captures theme/sector sentiment. Analyst captures consensus
+    //   on the underlying index or theme. Fund and Insider are always 5 (neutral)
+    //   for ETFs because those concepts don't apply.
+    let finalScore;
+    if (isETF) {
+      finalScore = (techScore * 0.50) + (newsScore * 0.30) + (ratingScore * 0.20);
+    } else {
+      finalScore = (fundScore * 0.35) + (techScore * 0.10) + (ratingScore * 0.20) + (newsScore * 0.15) + (insiderScore * 0.20);
+    }
     return {
       total:   Math.max(0, Math.min(10, finalScore)),
       fund:    fundScore,
@@ -959,12 +993,21 @@ async function updateMarketData() {
         // stocks, ETFs, ADRs, REITs, preferred shares, closed-end funds.
         // No hardcoded list needed. SHLD, AVNV, any future addition just works.
         const instrumentProfile  = await fetchInstrumentType(stock.symbol, process.env.FINNHUB_API_KEY);
-        const instrumentIsETF    = instrumentProfile.isETF;
-        const instrumentTypeName = instrumentProfile.raw;
-        const profileExpenseRatio = instrumentProfile.expenseRatio; // in % or null
+        const profileExpenseRatio = instrumentProfile.expenseRatio;
+
+        // Three-source ETF classification (belt-and-suspenders):
+        //   1. Finnhub profile2 type field (dynamic, catches most ETFs)
+        //   2. KNOWN_ETF_OVERRIDES list (catches Finnhub misclassifications like SPMO/SMH)
+        //   3. Redis stock.type set at add-time (catches pre-existing stocks added as ETF)
+        const instrumentIsETF = (
+          instrumentProfile.isETF ||
+          KNOWN_ETF_OVERRIDES.has(stock.symbol.toUpperCase()) ||
+          stock.type === 'ETF'
+        );
+        const instrumentTypeName = instrumentIsETF ? 'ETF' : instrumentProfile.raw;
 
         if (instrumentIsETF) {
-          logger.info(`  ℹ️  ${instrumentTypeName} detected — skipping fundamental/insider/filing calls`);
+          logger.info(`  ℹ️  ETF (${instrumentProfile.raw}) — skipping fundamental/insider/filing calls`);
         } else {
           logger.info(`  ℹ️  ${instrumentTypeName}`);
         }
@@ -998,7 +1041,8 @@ async function updateMarketData() {
         const scoreObj = analyzer.calculateScore(
           priceData, fundamentals, technicals,
           ratings, null, insiderData, capexException,
-          intradayNewsScore ?? 5.0
+          intradayNewsScore ?? 5.0,
+          instrumentIsETF   // ETFs use different composite weights
         );
 
         // Compute MaxDD from price history (trailing 252 days)
@@ -1014,8 +1058,12 @@ async function updateMarketData() {
         // Skipped for ETFs (file N-CEN/N-PORT, not 10-K/10-Q — no business tone to analyse)
         const filingSentiment = instrumentIsETF ? null : await fetchFilingSentiment(stock.symbol);
 
-        logger.info(`  📊 Fund(${scoreObj.fund.toFixed(1)}) Tech(${scoreObj.tech.toFixed(1)}) Analyst(${scoreObj.rating.toFixed(1)}) News(${scoreObj.news.toFixed(1)}) Insider(${scoreObj.insider.toFixed(1)}) → Total(${scoreObj.total.toFixed(1)})`);
-        if (moatScore != null) logger.info(`  🏰 Moat: ${moatScore.toFixed(1)}/10 | RevGrowth3Y: ${(fundamentals?._raw?.revenueGrowth3YPct ?? 0).toFixed(1)}% | YoY: ${(revenueGrowthPct ?? 0).toFixed(1)}% | GrossMargin: ${(grossMarginPct ?? 0).toFixed(1)}% | MaxDD: ${maxDrawdown ?? '—'}%`);
+        if (instrumentIsETF) {
+          logger.info(`  📊 [ETF] Tech(${scoreObj.tech.toFixed(1)}) Analyst(${scoreObj.rating.toFixed(1)}) News(${scoreObj.news.toFixed(1)}) → Total(${scoreObj.total.toFixed(1)}) | MaxDD: ${maxDrawdown ?? '—'}%`);
+        } else {
+          logger.info(`  📊 Fund(${scoreObj.fund.toFixed(1)}) Tech(${scoreObj.tech.toFixed(1)}) Analyst(${scoreObj.rating.toFixed(1)}) News(${scoreObj.news.toFixed(1)}) Insider(${scoreObj.insider.toFixed(1)}) → Total(${scoreObj.total.toFixed(1)})`);
+          if (moatScore != null) logger.info(`  🏰 Moat: ${moatScore.toFixed(1)}/10 | RevGrowth3Y: ${(fundamentals?._raw?.revenueGrowth3YPct ?? 0).toFixed(1)}% | YoY: ${(revenueGrowthPct ?? 0).toFixed(1)}% | GrossMargin: ${(grossMarginPct ?? 0).toFixed(1)}% | MaxDD: ${maxDrawdown ?? '—'}%`);
+        }
         if (filingSentiment) logger.info(`  📄 Filing tone (${filingSentiment.form}): ${filingSentiment.score.toFixed(1)}/10 | pos:${(filingSentiment.positive*100).toFixed(2)}% neg:${(filingSentiment.negative*100).toFixed(2)}%`);
         if (sbcMillions != null) logger.info(`  💸 SBC: $${sbcMillions.toFixed(1)}M | as % mktcap: ${((fundamentals?.sbcToMarketCap ?? 0)*100).toFixed(2)}%`);
         if (recent8K) logger.info(`  📋 8-K: ${recent8K.icon} ${recent8K.label} (${recent8K.filedDate}) — ${recent8K.hint}`);
