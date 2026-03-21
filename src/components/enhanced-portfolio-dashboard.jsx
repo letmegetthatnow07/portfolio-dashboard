@@ -278,7 +278,8 @@ const DetailPanel = ({ stock }) => {
 
   const hasData = stock.moat_score != null || fcfYieldPct != null || stock.ev_fcf != null
     || stock.max_drawdown != null || stock.revenue_growth_3y != null
-    || stock.gross_margin_pct != null || sbcPct != null || filingScore != null;
+    || stock.gross_margin_pct != null || sbcPct != null || filingScore != null
+    || stock.event_8k != null || stock.score_fund != null;
 
   if (!hasData) {
     return (
@@ -311,9 +312,9 @@ const DetailPanel = ({ stock }) => {
                   value={stock.gross_margin_pct != null ? `${stock.gross_margin_pct.toFixed(1)}%` : null}
                   hint="Pricing power — higher = stronger moat"
                   positive={stock.gross_margin_pct > 40}/>
-                <FundRow label="Rev Growth (YoY)"
+                <FundRow label="Rev Growth (TTM YoY)"
                   value={stock.revenue_growth_pct != null ? `${stock.revenue_growth_pct >= 0 ? '+' : ''}${stock.revenue_growth_pct.toFixed(1)}%` : null}
-                  hint="TTM revenue growth vs prior year"
+                  hint="Trailing 12-month revenue growth vs same period prior year — velocity check"
                   positive={stock.revenue_growth_pct > 10}/>
                 <FundRow label="Rev Growth (3Y CAGR)"
                   value={stock.revenue_growth_3y != null ? `${stock.revenue_growth_3y >= 0 ? '+' : ''}${stock.revenue_growth_3y.toFixed(1)}%` : null}
@@ -382,6 +383,64 @@ const DetailPanel = ({ stock }) => {
                   positive={filingScore >= 6}/>
                 {stock.filing_form && (
                   <FundRow label="Filing Type" value={stock.filing_form}/>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 8-K material event section */}
+          {stock.event_8k && (
+            <div className="detail-section">
+              <div className="detail-section-head">
+                <span className="detail-section-title">📋 Recent 8-K</span>
+              </div>
+              <div className="detail-rows">
+                <FundRow label="Event"
+                  value={`${stock.event_8k_icon || ''} ${stock.event_8k}`}
+                  hint="Material SEC filing within the last 30 days"
+                  positive={stock.event_8k_hint === 'positive'}/>
+                {stock.event_8k_date && (
+                  <FundRow label="Filed" value={stock.event_8k_date}/>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Score breakdown section */}
+          {(stock.score_fund != null) && (
+            <div className="detail-section">
+              <div className="detail-section-head">
+                <span className="detail-section-title">📐 Score Breakdown</span>
+                <span className="detail-section-score" style={{ color: scoreCol(stock.latest_score) }}>
+                  {stock.latest_score?.toFixed(1)}/10
+                </span>
+              </div>
+              <div className="detail-rows">
+                <FundRow label="Fundamentals (40%)"
+                  value={stock.score_fund != null ? `${stock.score_fund.toFixed(1)}/10` : null}
+                  hint="ROIC, SBC-adjusted FCF, D/E ratio, revenue growth durability"
+                  positive={stock.score_fund >= 6}/>
+                <FundRow label="Technicals (16%)"
+                  value={stock.score_tech != null ? `${stock.score_tech.toFixed(1)}/10` : null}
+                  hint="SMA-200 trend + RSI momentum"
+                  positive={stock.score_tech >= 6}/>
+                <FundRow label="Analyst Rating (20%)"
+                  value={stock.score_rating != null ? `${stock.score_rating.toFixed(1)}/10` : null}
+                  hint="Weighted analyst consensus: Strong Buy → Sell"
+                  positive={stock.score_rating >= 6}/>
+                <FundRow label="News (15%)"
+                  value={stock.score_news != null ? `${stock.score_news.toFixed(1)}/10` : null}
+                  hint="Intraday news sentiment — recency-weighted across 3 daily runs"
+                  positive={stock.score_news >= 6}/>
+                <FundRow label="Insider (20%)"
+                  value={stock.score_insider != null ? `${stock.score_insider.toFixed(1)}/10` : null}
+                  hint="Open market buys vs sells (excludes tax withholding and option grants)"
+                  positive={stock.score_insider >= 6}/>
+                {stock.fcf_yield_score != null && (
+                  <FundRow label="FCF Yield (display)"
+                    value={`${stock.fcf_yield_score.toFixed(1)}%`}
+                    hint="Valuation context only — not in score. >5% attractive, <2% expensive."
+                    positive={stock.fcf_yield_score > 3}/>
                 )}
               </div>
             </div>
