@@ -276,10 +276,13 @@ const DetailPanel = ({ stock }) => {
     : filingScore >= 3 ? '#d97706'
     : '#dc2626';
 
-  const hasData = stock.moat_score != null || fcfYieldPct != null || stock.ev_fcf != null
-    || stock.max_drawdown != null || stock.revenue_growth_3y != null
-    || stock.gross_margin_pct != null || sbcPct != null || filingScore != null
-    || stock.event_8k != null || stock.score_fund != null;
+  const isETFInstrument = stock.instrument_type === 'ETF';
+  const hasData = isETFInstrument
+    ? (stock.max_drawdown != null || stock.expense_ratio != null || stock.score_tech != null)
+    : (stock.moat_score != null || fcfYieldPct != null || stock.ev_fcf != null
+       || stock.max_drawdown != null || stock.revenue_growth_3y != null
+       || stock.gross_margin_pct != null || sbcPct != null || filingScore != null
+       || stock.event_8k != null || stock.score_fund != null);
 
   if (!hasData) {
     return (
@@ -298,8 +301,36 @@ const DetailPanel = ({ stock }) => {
       <td colSpan={7}>
         <div className="detail-panel">
 
-          {/* Moat section */}
-          {stock.moat_score != null && (
+          {/* ETF-specific panel — shown instead of stock fundamentals */}
+          {isETFInstrument && (
+            <div className="detail-section etf-info-section">
+              <div className="detail-section-head">
+                <span className="detail-section-title">📊 ETF Overview</span>
+              </div>
+              <div className="detail-rows">
+                <FundRow label="Instrument" value="Exchange-Traded Fund"
+                  hint="ETF scores are based on price momentum, trend strength, and news — not fundamental business metrics"/>
+                {stock.expense_ratio != null && (
+                  <FundRow label="Expense Ratio"
+                    value={`${stock.expense_ratio.toFixed(2)}%/yr`}
+                    hint="Annual cost drag on returns. <0.20% = low cost, >0.50% = high cost."
+                    positive={stock.expense_ratio < 0.25}/>
+                )}
+                {stock.max_drawdown != null && (
+                  <FundRow label="Max Drawdown (1Y)"
+                    value={`${stock.max_drawdown.toFixed(1)}%`}
+                    hint="Peak-to-trough decline over the last 252 trading days"
+                    positive={stock.max_drawdown > -20}/>
+                )}
+                <FundRow label="Scoring Method"
+                  value="Tech (50%) + News (30%) + Analyst (20%)"
+                  hint="ETFs use a simplified composite: no fundamentals, no insiders, no filings"/>
+              </div>
+            </div>
+          )}
+
+          {/* Moat section — stocks only */}
+          {!isETFInstrument && stock.moat_score != null && (
             <div className="detail-section">
               <div className="detail-section-head">
                 <span className="detail-section-title">🏰 Moat</span>
@@ -324,8 +355,8 @@ const DetailPanel = ({ stock }) => {
             </div>
           )}
 
-          {/* Valuation section */}
-          {(fcfYieldPct != null || stock.ev_fcf != null) && (
+          {/* Valuation section — stocks only */}
+          {!isETFInstrument && (fcfYieldPct != null || stock.ev_fcf != null) && (
             <div className="detail-section">
               <div className="detail-section-head">
                 <span className="detail-section-title">💰 Valuation</span>
@@ -343,8 +374,8 @@ const DetailPanel = ({ stock }) => {
             </div>
           )}
 
-          {/* Risk section */}
-          {(stock.max_drawdown != null || sbcPct != null) && (
+          {/* Risk section — stocks only (MaxDD shown in ETF panel above) */}
+          {!isETFInstrument && (stock.max_drawdown != null || sbcPct != null) && (
             <div className="detail-section">
               <div className="detail-section-head">
                 <span className="detail-section-title">⚠️ Risk</span>
@@ -367,8 +398,8 @@ const DetailPanel = ({ stock }) => {
             </div>
           )}
 
-          {/* Filing sentiment section */}
-          {filingScore != null && (
+          {/* Filing sentiment section — stocks only */}
+          {!isETFInstrument && filingScore != null && (
             <div className="detail-section">
               <div className="detail-section-head">
                 <span className="detail-section-title">📄 Filing Tone</span>
@@ -388,8 +419,8 @@ const DetailPanel = ({ stock }) => {
             </div>
           )}
 
-          {/* 8-K material event section */}
-          {stock.event_8k && (
+          {/* 8-K material event section — stocks only */}
+          {!isETFInstrument && stock.event_8k && (
             <div className="detail-section">
               <div className="detail-section-head">
                 <span className="detail-section-title">📋 Recent 8-K</span>
@@ -406,8 +437,8 @@ const DetailPanel = ({ stock }) => {
             </div>
           )}
 
-          {/* Score breakdown section */}
-          {(stock.score_fund != null) && (
+          {/* Score breakdown — weights differ for ETFs vs stocks */}
+          {(isETFInstrument ? stock.score_tech != null : stock.score_fund != null) && (
             <div className="detail-section">
               <div className="detail-section-head">
                 <span className="detail-section-title">📐 Score Breakdown</span>
@@ -416,31 +447,50 @@ const DetailPanel = ({ stock }) => {
                 </span>
               </div>
               <div className="detail-rows">
-                <FundRow label="Fundamentals (40%)"
-                  value={stock.score_fund != null ? `${stock.score_fund.toFixed(1)}/10` : null}
-                  hint="ROIC, SBC-adjusted FCF, D/E ratio, revenue growth durability"
-                  positive={stock.score_fund >= 6}/>
-                <FundRow label="Technicals (16%)"
-                  value={stock.score_tech != null ? `${stock.score_tech.toFixed(1)}/10` : null}
-                  hint="SMA-200 trend + RSI momentum"
-                  positive={stock.score_tech >= 6}/>
-                <FundRow label="Analyst Rating (20%)"
-                  value={stock.score_rating != null ? `${stock.score_rating.toFixed(1)}/10` : null}
-                  hint="Weighted analyst consensus: Strong Buy → Sell"
-                  positive={stock.score_rating >= 6}/>
-                <FundRow label="News (15%)"
-                  value={stock.score_news != null ? `${stock.score_news.toFixed(1)}/10` : null}
-                  hint="Intraday news sentiment — recency-weighted across 3 daily runs"
-                  positive={stock.score_news >= 6}/>
-                <FundRow label="Insider (20%)"
-                  value={stock.score_insider != null ? `${stock.score_insider.toFixed(1)}/10` : null}
-                  hint="Open market buys vs sells (excludes tax withholding and option grants)"
-                  positive={stock.score_insider >= 6}/>
-                {stock.fcf_yield_score != null && (
-                  <FundRow label="FCF Yield (display)"
-                    value={`${stock.fcf_yield_score.toFixed(1)}%`}
-                    hint="Valuation context only — not in score. >5% attractive, <2% expensive."
-                    positive={stock.fcf_yield_score > 3}/>
+                {isETFInstrument ? (
+                  <>
+                    <FundRow label="Technicals (50%)"
+                      value={stock.score_tech != null ? `${stock.score_tech.toFixed(1)}/10` : null}
+                      hint="SMA-200 trend + RSI — price momentum is the primary signal for ETFs"
+                      positive={stock.score_tech >= 6}/>
+                    <FundRow label="News Sentiment (30%)"
+                      value={stock.score_news != null ? `${stock.score_news.toFixed(1)}/10` : null}
+                      hint="Sector/theme news — captures macro and sector-level events relevant to the fund"
+                      positive={stock.score_news >= 6}/>
+                    <FundRow label="Analyst Consensus (20%)"
+                      value={stock.score_rating != null ? `${stock.score_rating.toFixed(1)}/10` : null}
+                      hint="Analyst ratings on the ETF where available"
+                      positive={stock.score_rating >= 6}/>
+                  </>
+                ) : (
+                  <>
+                    <FundRow label="Fundamentals (35%)"
+                      value={stock.score_fund != null ? `${stock.score_fund.toFixed(1)}/10` : null}
+                      hint="ROIC, SBC-adjusted FCF, D/E ratio, revenue growth durability"
+                      positive={stock.score_fund >= 6}/>
+                    <FundRow label="Analyst Rating (20%)"
+                      value={stock.score_rating != null ? `${stock.score_rating.toFixed(1)}/10` : null}
+                      hint="Weighted analyst consensus: Strong Buy → Sell"
+                      positive={stock.score_rating >= 6}/>
+                    <FundRow label="Insider (20%)"
+                      value={stock.score_insider != null ? `${stock.score_insider.toFixed(1)}/10` : null}
+                      hint="Open market buys vs sells (excludes tax withholding and option grants)"
+                      positive={stock.score_insider >= 6}/>
+                    <FundRow label="News (15%)"
+                      value={stock.score_news != null ? `${stock.score_news.toFixed(1)}/10` : null}
+                      hint="Intraday news sentiment — recency-weighted across 3 daily runs"
+                      positive={stock.score_news >= 6}/>
+                    <FundRow label="Technicals (10%)"
+                      value={stock.score_tech != null ? `${stock.score_tech.toFixed(1)}/10` : null}
+                      hint="SMA-200 trend + RSI — confirmation signal for long-horizon compounders"
+                      positive={stock.score_tech >= 6}/>
+                    {stock.fcf_yield_score != null && (
+                      <FundRow label="FCF Yield (display)"
+                        value={`${stock.fcf_yield_score.toFixed(1)}%`}
+                        hint="Valuation context only — not in score. >5% attractive, <2% expensive."
+                        positive={stock.fcf_yield_score > 3}/>
+                    )}
+                  </>
                 )}
               </div>
             </div>
@@ -730,7 +780,12 @@ const EnhancedPortfolioDashboard = () => {
 
                         {/* Asset */}
                         <td>
-                          <strong className="stock-symbol">{stock.symbol}</strong>
+                          <div className="symbol-row">
+                            <strong className="stock-symbol">{stock.symbol}</strong>
+                            {stock.instrument_type === 'ETF' && (
+                              <span className="etf-badge" title="ETF — judged on momentum, trend and news only">ETF</span>
+                            )}
+                          </div>
                           {stock.name   && <div className="stock-name">{stock.name}</div>}
                           {stock.sector && <span className="sector-pill">{stock.sector}</span>}
                         </td>
