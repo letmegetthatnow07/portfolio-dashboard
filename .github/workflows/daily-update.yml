@@ -2,31 +2,39 @@ name: Portfolio Pipeline
 
 on:
   schedule:
-    # Slot 1 — 9:00 AM ET (14:00 UTC)
+    # Slot 1  — 9:00 AM ET  = 14:00 UTC
     - cron: '0 14 * * 1-5'
-    # Slot 2 — 1:00 PM ET (18:00 UTC)
+    # Slot 2  — 1:00 PM ET  = 18:00 UTC
     - cron: '0 18 * * 1-5'
-    # Slot 3 — 4:15 PM ET (21:15 UTC)
+    # Slot 3  — 4:15 PM ET  = 21:15 UTC
     - cron: '15 21 * * 1-5'
-    # EOD Master — 5:00 PM ET (22:00 UTC)
+    # EOD     — 5:00 PM ET  = 22:00 UTC
     - cron: '0 22 * * 1-5'
-    # Correlation matrix — 5:30 PM ET (22:30 UTC), after EOD master has finished
-    # Runs every trading day so the heatmap is always current and deleted stocks
-    # are removed automatically on the next recalculation.
+    # Matrix  — 5:30 PM ET  = 22:30 UTC  (30 min after EOD finishes)
     - cron: '30 22 * * 1-5'
 
   workflow_dispatch:
     inputs:
       job:
-        description: 'Which job to run manually'
+        description: 'Which job to run'
         required: true
-        default: 'all'
+        default: 'update'
         type: choice
         options:
-          - all
           - news
           - update
           - matrix
+          - all
+
+env:
+  REDIS_URL:            ${{ secrets.REDIS_URL }}
+  FINNHUB_API_KEY:      ${{ secrets.FINNHUB_API_KEY }}
+  NEWSDATA_API_KEY:     ${{ secrets.NEWSDATA_API_KEY }}
+  FMP_API_KEY:          ${{ secrets.FMP_API_KEY }}
+  POLYGON_API_KEY:      ${{ secrets.POLYGON_API_KEY }}
+  SEC_API_KEY:          ${{ secrets.SEC_API_KEY }}
+  SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+  SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
 
 jobs:
   pipeline:
@@ -48,69 +56,53 @@ jobs:
         working-directory: backend
         run: npm ci
 
-      - name: Determine job from schedule
-        id: job
+      - name: Resolve task
+        id: task
         run: |
-          HOUR=$(date -u +%H)
-          MINUTE=$(date -u +%M)
-          INPUT="${{ github.event.inputs.job }}"
-
-          if [ "$INPUT" = "news" ]; then
-            echo "task=news" >> $GITHUB_OUTPUT
-          elif [ "$INPUT" = "update" ]; then
-            echo "task=update" >> $GITHUB_OUTPUT
-          elif [ "$INPUT" = "matrix" ]; then
-            echo "task=matrix" >> $GITHUB_OUTPUT
-          elif [ "$INPUT" = "all" ]; then
-            echo "task=all" >> $GITHUB_OUTPUT
-          elif [ "$HOUR" = "14" ]; then
-            echo "task=news" >> $GITHUB_OUTPUT
-          elif [ "$HOUR" = "18" ]; then
-            echo "task=news" >> $GITHUB_OUTPUT
-          elif [ "$HOUR" = "21" ]; then
-            echo "task=news" >> $GITHUB_OUTPUT
-          elif [ "$HOUR" = "22" ] && [ "$MINUTE" -lt "20" ]; then
-            echo "task=update" >> $GITHUB_OUTPUT
-          elif [ "$HOUR" = "22" ] && [ "$MINUTE" -ge "20" ]; then
-            echo "task=matrix" >> $GITHUB_OUTPUT
-          else
-            echo "task=update" >> $GITHUB_OUTPUT
+          MANUAL="${{ github.event.inputs.job }}"
+          if [ -n "$MANUAL" ]; then
+            echo "task=$MANUAL" >> "$GITHUB_OUTPUT"
+            echo "Triggered manually: $MANUAL"
+            exit 0
           fi
 
-      - name: Run intraday news update
-        if: steps.job.outputs.task == 'news' || steps.job.outputs.task == 'all'
+          HHMM=$(date -u +%H%M)
+          echo "UTC HHMM = $HHMM"
+
+          if [ "$HHMM" = "1400" ] || [ "$HHMM" = "1800" ] || [ "$HHMM" = "2115" ]; then
+            echo "task=news" >> "$GITHUB_OUTPUT"
+          elif [ "$HHMM" = "2200" ]; then
+            echo "task=update" >> "$GITHUB_OUTPUT"
+          elif [ "$HHMM" = "2230" ]; then
+            echo "task=matrix" >> "$GITHUB_OUTPUT"
+          else
+            HH=$(date -u +%H)
+            if [ "$HH" = "14" ] || [ "$HH" = "18" ] || [ "$HH" = "21" ]; then
+              echo "task=news" >> "$GITHUB_OUTPUT"
+            elif [ "$HH" = "22" ]; then
+              MM=$(date -u +%M | sed 's/^0*//')
+              MM=${MM:-0}
+              if [ "$MM" -le 20 ]; then
+                echo "task=update" >> "$GITHUB_OUTPUT"
+              else
+                echo "task=matrix" >> "$GITHUB_OUTPUT"
+              fi
+            else
+              echo "task=update" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Run news update
+        if: steps.task.outputs.task == 'news' || steps.task.outputs.task == 'all'
         working-directory: backend
         run: npm run update:news
-        env:
-          REDIS_URL:           ${{ secrets.REDIS_URL }}
-          FINNHUB_API_KEY:     ${{ secrets.FINNHUB_API_KEY }}
-          NEWSDATA_API_KEY:    ${{ secrets.NEWSDATA_API_KEY }}
-          FMP_API_KEY:         ${{ secrets.FMP_API_KEY }}
-          POLYGON_API_KEY:     ${{ secrets.POLYGON_API_KEY }}
-          SEC_API_KEY:         ${{ secrets.SEC_API_KEY }}
-          SUPABASE_URL:        ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
 
       - name: Run EOD master update
-        if: steps.job.outputs.task == 'update' || steps.job.outputs.task == 'all'
+        if: steps.task.outputs.task == 'update' || steps.task.outputs.task == 'all'
         working-directory: backend
         run: npm run update
-        env:
-          REDIS_URL:           ${{ secrets.REDIS_URL }}
-          FINNHUB_API_KEY:     ${{ secrets.FINNHUB_API_KEY }}
-          NEWSDATA_API_KEY:    ${{ secrets.NEWSDATA_API_KEY }}
-          FMP_API_KEY:         ${{ secrets.FMP_API_KEY }}
-          POLYGON_API_KEY:     ${{ secrets.POLYGON_API_KEY }}
-          SEC_API_KEY:         ${{ secrets.SEC_API_KEY }}
-          SUPABASE_URL:        ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
 
       - name: Run correlation matrix
-        # Runs after EOD update (22:30 UTC) OR when explicitly triggered
-        if: steps.job.outputs.task == 'matrix' || steps.job.outputs.task == 'all'
+        if: steps.task.outputs.task == 'matrix' || steps.task.outputs.task == 'all'
         working-directory: backend
         run: npm run calculate-matrix
-        env:
-          REDIS_URL:           ${{ secrets.REDIS_URL }}
-          SUPABASE_URL:        ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
