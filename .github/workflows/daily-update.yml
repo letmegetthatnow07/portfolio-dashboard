@@ -1,86 +1,116 @@
-name: Market & News Data Pipeline
+name: Portfolio Pipeline
 
 on:
   schedule:
-    - cron: '0 13 * * 1-5'  # 9:00 AM ET (News Run 1)
-    - cron: '0 17 * * 1-5'  # 1:00 PM ET (News Run 2)
-    - cron: '15 20 * * 1-5' # 4:15 PM ET (News Run 3)
-    - cron: '0 21 * * 1-5'  # 5:00 PM ET (Master EOD Run)
+    # Slot 1 — 9:00 AM ET (14:00 UTC)
+    - cron: '0 14 * * 1-5'
+    # Slot 2 — 1:00 PM ET (18:00 UTC)
+    - cron: '0 18 * * 1-5'
+    # Slot 3 — 4:15 PM ET (21:15 UTC)
+    - cron: '15 21 * * 1-5'
+    # EOD Master — 5:00 PM ET (22:00 UTC)
+    - cron: '0 22 * * 1-5'
+    # Correlation matrix — 5:30 PM ET (22:30 UTC), after EOD master has finished
+    # Runs every trading day so the heatmap is always current and deleted stocks
+    # are removed automatically on the next recalculation.
+    - cron: '30 22 * * 1-5'
+
   workflow_dispatch:
     inputs:
-      run_type:
-        description: 'Which engine to run?'
+      job:
+        description: 'Which job to run manually'
         required: true
-        default: 'master'
+        default: 'all'
         type: choice
         options:
-          - master
+          - all
           - news
+          - update
           - matrix
 
-permissions:
-  contents: write
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
-  update-pipeline:
+  pipeline:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
 
-      - name: Install backend dependencies
+      - name: Install dependencies
         working-directory: backend
-        run: npm install
+        run: npm ci
 
-      - name: Determine Run Type
-        id: run-logic
+      - name: Determine job from schedule
+        id: job
         run: |
-          HOUR=$(date -u +"%H")
-          
-          # Triggered manually via dropdown
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            if [ "${{ github.event.inputs.run_type }}" == "master" ]; then
-              echo "SCRIPT_TO_RUN=npm run update && npm run calculate-matrix" >> $GITHUB_ENV
-            elif [ "${{ github.event.inputs.run_type }}" == "matrix" ]; then
-              echo "SCRIPT_TO_RUN=npm run calculate-matrix" >> $GITHUB_ENV
-            else
-              echo "SCRIPT_TO_RUN=npm run update:news" >> $GITHUB_ENV
-            fi
-          # Triggered by schedule (21 UTC = 5PM ET Master Run)
-          elif [ "$HOUR" == "21" ]; then
-            echo "SCRIPT_TO_RUN=npm run update" >> $GITHUB_ENV
+          HOUR=$(date -u +%H)
+          MINUTE=$(date -u +%M)
+          INPUT="${{ github.event.inputs.job }}"
+
+          if [ "$INPUT" = "news" ]; then
+            echo "task=news" >> $GITHUB_OUTPUT
+          elif [ "$INPUT" = "update" ]; then
+            echo "task=update" >> $GITHUB_OUTPUT
+          elif [ "$INPUT" = "matrix" ]; then
+            echo "task=matrix" >> $GITHUB_OUTPUT
+          elif [ "$INPUT" = "all" ]; then
+            echo "task=all" >> $GITHUB_OUTPUT
+          elif [ "$HOUR" = "14" ]; then
+            echo "task=news" >> $GITHUB_OUTPUT
+          elif [ "$HOUR" = "18" ]; then
+            echo "task=news" >> $GITHUB_OUTPUT
+          elif [ "$HOUR" = "21" ]; then
+            echo "task=news" >> $GITHUB_OUTPUT
+          elif [ "$HOUR" = "22" ] && [ "$MINUTE" -lt "20" ]; then
+            echo "task=update" >> $GITHUB_OUTPUT
+          elif [ "$HOUR" = "22" ] && [ "$MINUTE" -ge "20" ]; then
+            echo "task=matrix" >> $GITHUB_OUTPUT
           else
-            echo "SCRIPT_TO_RUN=npm run update:news" >> $GITHUB_ENV
+            echo "task=update" >> $GITHUB_OUTPUT
           fi
 
-      - name: Execute Pipeline
+      - name: Run intraday news update
+        if: steps.job.outputs.task == 'news' || steps.job.outputs.task == 'all'
         working-directory: backend
+        run: npm run update:news
         env:
-          REDIS_URL: ${{ secrets.REDIS_URL }}
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-          NEWSDATA_API_KEY: ${{ secrets.NEWSDATA_API_KEY }}
-          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
-          POLYGON_API_KEY: ${{ secrets.POLYGON_API_KEY }}
-          SEC_API_KEY: ${{ secrets.SEC_API_KEY }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          REDIS_URL:           ${{ secrets.REDIS_URL }}
+          FINNHUB_API_KEY:     ${{ secrets.FINNHUB_API_KEY }}
+          NEWSDATA_API_KEY:    ${{ secrets.NEWSDATA_API_KEY }}
+          FMP_API_KEY:         ${{ secrets.FMP_API_KEY }}
+          POLYGON_API_KEY:     ${{ secrets.POLYGON_API_KEY }}
+          SEC_API_KEY:         ${{ secrets.SEC_API_KEY }}
+          SUPABASE_URL:        ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: ${{ env.SCRIPT_TO_RUN }}
 
-      - name: Configure git
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
+      - name: Run EOD master update
+        if: steps.job.outputs.task == 'update' || steps.job.outputs.task == 'all'
+        working-directory: backend
+        run: npm run update
+        env:
+          REDIS_URL:           ${{ secrets.REDIS_URL }}
+          FINNHUB_API_KEY:     ${{ secrets.FINNHUB_API_KEY }}
+          NEWSDATA_API_KEY:    ${{ secrets.NEWSDATA_API_KEY }}
+          FMP_API_KEY:         ${{ secrets.FMP_API_KEY }}
+          POLYGON_API_KEY:     ${{ secrets.POLYGON_API_KEY }}
+          SEC_API_KEY:         ${{ secrets.SEC_API_KEY }}
+          SUPABASE_URL:        ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
 
-      - name: Commit CSV History & Code Updates
-        run: |
-          git add backend/data/score_history.csv || true
-          git commit -m "📊 Auto: EOD History & Database Sync $(date)" || true
-          git push || true
+      - name: Run correlation matrix
+        # Runs after EOD update (22:30 UTC) OR when explicitly triggered
+        if: steps.job.outputs.task == 'matrix' || steps.job.outputs.task == 'all'
+        working-directory: backend
+        run: npm run calculate-matrix
+        env:
+          REDIS_URL:           ${{ secrets.REDIS_URL }}
+          SUPABASE_URL:        ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
