@@ -54,18 +54,26 @@
 /* ── Side-by-side layout ─────────────────────────────────────────────────── */
 .heatmap-body {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: minmax(0, 1fr) 320px;
   gap: 28px;
   align-items: start;
 }
-@media (max-width: 960px) { .heatmap-body { grid-template-columns: 1fr; } }
-.heatmap-right { min-width: 0; }
+@media (max-width: 1100px) { .heatmap-body { grid-template-columns: 1fr; } }
+.heatmap-left  { min-width: 0; overflow: hidden; }
+.heatmap-right { min-width: 0; width: 320px; flex-shrink: 0; }
 
 /* ── Scroll wrapper ─────────────────────────────────────────────────────── */
-.heatmap-scroll { overflow-x: auto; padding-bottom: 4px; }
-.heatmap-scroll::-webkit-scrollbar { height: 4px; }
+.heatmap-scroll {
+  overflow-x: auto;
+  overflow-y: visible;
+  padding-bottom: 6px;
+  /* Scrollbar always visible so user knows table continues */
+  scrollbar-width: thin;
+  scrollbar-color: #d0cfc9 transparent;
+}
+.heatmap-scroll::-webkit-scrollbar { height: 5px; }
 .heatmap-scroll::-webkit-scrollbar-track { background: transparent; }
-.heatmap-scroll::-webkit-scrollbar-thumb { background: #d0cfc9; border-radius: 2px; }
+.heatmap-scroll::-webkit-scrollbar-thumb { background: #d0cfc9; border-radius: 3px; }
 
 /* ── Table ───────────────────────────────────────────────────────────────── */
 .heatmap-table {
@@ -86,9 +94,9 @@
   letter-spacing: 0.04em; white-space: nowrap; vertical-align: middle;
 }
 .heatmap-cell {
-  width: 44px; height: 44px;
+  width: 40px; height: 40px;
   text-align: center; vertical-align: middle;
-  font-size: 11px; font-weight: 500;
+  font-size: 10px; font-weight: 500;
   font-variant-numeric: tabular-nums;
   border-radius: 5px; cursor: crosshair;
   transition: transform 0.12s ease, box-shadow 0.12s ease;
