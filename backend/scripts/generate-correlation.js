@@ -41,9 +41,14 @@ function toISO(dateStr) {
 }
 
 // ── Returns-based Pearson correlation ────────────────────────────────────────
+// Minimum 3 shared return observations required (was 5 — lowered to handle
+// ETFs that have been in the portfolio fewer than 5 trading days).
+// With very few points the correlation is noisy, but it's still more honest
+// than showing 0.00 which implies no relationship when there's no data.
+// The UI shows the window days count so users can judge data quality themselves.
 function calculatePearson(x, y) {
   const n = x.length;
-  if (n < 5 || n !== y.length) return null;
+  if (n < 3 || n !== y.length) return null;
   const mean = arr => arr.reduce((a, b) => a + b, 0) / arr.length;
   const mx = mean(x), my = mean(y);
   let num = 0, dx2 = 0, dy2 = 0;
@@ -52,7 +57,7 @@ function calculatePearson(x, y) {
     num += ex * ey; dx2 += ex * ex; dy2 += ey * ey;
   }
   const denom = Math.sqrt(dx2 * dy2);
-  return denom === 0 ? 0 : num / denom;
+  return denom === 0 ? null : num / denom;  // null not 0 when zero variance
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -178,7 +183,7 @@ async function runCorrelationEngine() {
       }
 
       const corr = calculatePearson(r1, r2);
-      matrix[t1][t2] = corr !== null ? parseFloat(corr.toFixed(3)) : 0;
+      matrix[t1][t2] = corr !== null ? parseFloat(corr.toFixed(3)) : null;
     }
   }
   console.log('✓ Matrix complete');
