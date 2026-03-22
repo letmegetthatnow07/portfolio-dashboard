@@ -5,6 +5,7 @@ import './CorrelationHeatmap.css';
 // ── Colour scale ──────────────────────────────────────────────────────────────
 function getCellStyle(value) {
   if (value === 1)    return { background: '#ebe9e3', color: 'transparent', cursor: 'default', bandColor: null, bandLabel: 'diagonal' };
+  if (value === null) return { background: '#f0efe9', color: '#c4c2ba',    cursor: 'default', bandColor: null, bandLabel: 'no data' };
   if (value >= 0.85)  return { background: '#7f1d1d', color: '#fecaca', bandColor: '#fca5a5', bandLabel: 'Extreme' };
   if (value >= 0.75)  return { background: '#b91c1c', color: '#fff',    bandColor: '#f87171', bandLabel: 'High' };
   if (value >= 0.65)  return { background: '#ea580c', color: '#fff',    bandColor: '#fb923c', bandLabel: 'Flagged' };
@@ -14,7 +15,7 @@ function getCellStyle(value) {
 }
 
 function corrLabel(v) {
-  if (v === 1) return '—';
+  if (v === 1 || v === null) return '—';
   return v.toFixed(2).replace(/^(-?)0\./, '$1.');
 }
 
@@ -188,7 +189,7 @@ const CorrelationHeatmap = () => {
   }, []);
 
   const onCellClick = useCallback((e, t1, t2, val) => {
-    if (val === 1) return;
+    if (val === 1 || val === null) return;
     e.stopPropagation();
     e.nativeEvent.stopImmediatePropagation();
     const style = getCellStyle(val);
