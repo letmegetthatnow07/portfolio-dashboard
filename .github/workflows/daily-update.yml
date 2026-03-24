@@ -42,11 +42,29 @@ jobs:
         working-directory: backend
         run: npm install
 
+      # ── Task routing ──────────────────────────────────────────────────────────
+      # IMPORTANT: We do NOT use clock time to decide the task.
+      # GitHub Actions schedules can be delayed by 15-60+ minutes — using
+      # minute-based splits meant the 22:00 EOD cron, when delayed past 22:20,
+      # ran calculate-matrix instead of npm run update, silently skipping EOD.
+      #
+      # Fix: each cron is identified by its HOUR only (each hour is unique).
+      # The two 22:xx crons are disambiguated by the GITHUB_RUN_NUMBER being
+      # even/odd — actually simpler: we identify them by checking which of
+      # the two 22:xx crons triggered. Since GitHub runs them as separate
+      # workflow triggers, we check the trigger minute at schedule time.
+      # Even better: use SEPARATE named cron entries with env vars.
+      #
+      # The cleanest solution: check only the scheduled HOUR.
+      # Since we only have ONE cron per hour (14, 18, 21, 22 EOD, 22:30 matrix),
+      # and 22:00 vs 22:30 differ only by minute — we instead just run BOTH
+      # update and calculate-matrix in the 22:xx block, sequentially.
+      # This means the matrix always runs on fresh data. Zero ambiguity.
+
       - name: Determine Run Type
         id: run-logic
         run: |
           HOUR=$(date -u +"%H")
-          MINUTE=$(date -u +"%M")
 
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             TYPE="${{ github.event.inputs.run_type }}"
@@ -59,16 +77,15 @@ jobs:
             fi
 
           elif [ "$HOUR" == "22" ]; then
-            # Strip leading zero before arithmetic comparison
-            MIN=$(echo "$MINUTE" | sed 's/^0*//')
-            MIN=${MIN:-0}
-            if [ "$MIN" -le 20 ]; then
-              echo "SCRIPT_TO_RUN=npm run update" >> $GITHUB_ENV
-            else
-              echo "SCRIPT_TO_RUN=npm run calculate-matrix" >> $GITHUB_ENV
-            fi
+            # Both the 22:00 and 22:30 crons land here.
+            # Run BOTH update AND matrix every time — no minute-based split.
+            # update is idempotent (upserts), matrix runs in ~2min after fresh data.
+            # Even if GitHub delays 22:00 past 22:30, update still runs first,
+            # then matrix runs on the fresh data. Correct result either way.
+            echo "SCRIPT_TO_RUN=npm run update && npm run calculate-matrix" >> $GITHUB_ENV
 
           else
+            # Hours 14, 18, 21 — all news slots
             echo "SCRIPT_TO_RUN=npm run update:news" >> $GITHUB_ENV
           fi
 
