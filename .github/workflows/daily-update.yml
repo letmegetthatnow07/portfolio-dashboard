@@ -116,6 +116,19 @@ jobs:
           GEMINI_API_KEY:       ${{ secrets.GEMINI_API_KEY }}
         run: npm run earnings-event || true
 
+      - name: Run Filing Narrative Analyser
+        # Runs on EOD master days. Checks for new 10-K/10-Q filings since last run.
+        # Skips stocks with no new filing (accession number unchanged in Redis).
+        # Runs at most 4x/year per stock — negligible Gemini usage.
+        if: env.SCRIPT_TO_RUN == 'npm run update && npm run calculate-matrix'
+        working-directory: backend
+        env:
+          REDIS_URL:            ${{ secrets.REDIS_URL }}
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          GEMINI_API_KEY:       ${{ secrets.GEMINI_API_KEY }}
+        run: npm run filing-narrative || true
+
       - name: Configure git
         run: |
           git config --local user.email "action@github.com"
