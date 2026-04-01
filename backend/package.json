@@ -8,6 +8,7 @@
     "update:news": "node scripts/news-update.js",
     "calculate-matrix": "node scripts/generate-correlation.js",
     "earnings-event": "node scripts/earnings-event.js",
+    "filing-narrative": "node scripts/filing-narrative.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
