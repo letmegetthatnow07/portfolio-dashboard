@@ -255,10 +255,132 @@ const FundRow = ({ label, value, hint, positive }) => {
   );
 };
 
+// ── Earnings Event Card — shown in detail panel for 90 days after earnings ────
+const EarningsCard = ({ event }) => {
+  if (!event?.gemini) return null;
+  const g = event.gemini;
+
+  const guidanceColor = g.guidance_direction === 'raised'   ? '#059669'
+                      : g.guidance_direction === 'lowered'  ? '#dc2626'
+                      : '#6b7280';
+
+  const guidanceLabel = g.guidance_direction === 'raised'   ? '▲ Guidance Raised'
+                      : g.guidance_direction === 'lowered'  ? '▼ Guidance Lowered'
+                      : g.guidance_direction === 'maintained' ? '→ Guidance Maintained'
+                      : 'No Guidance';
+
+  const toneBar = (score, max = 5) => {
+    const pct = ((score - 1) / (max - 1)) * 100;
+    const col = score >= 4 ? '#059669' : score >= 3 ? '#d97706' : '#dc2626';
+    return (
+      <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+        <div style={{ flex:1, height:4, background:'#e6e5df', borderRadius:2, overflow:'hidden' }}>
+          <div style={{ width:`${pct}%`, height:'100%', background:col, borderRadius:2 }}/>
+        </div>
+        <span style={{ fontSize:10, fontFamily:'DM Mono,monospace', color:col, minWidth:12 }}>{score}/5</span>
+      </div>
+    );
+  };
+
+  return (
+    <div className="detail-section earnings-card">
+      <div className="detail-section-head">
+        <span className="detail-section-title">📞 Earnings · Q{event.quarter} {event.year}</span>
+        <span style={{
+          fontSize:10, fontFamily:'DM Mono,monospace', fontWeight:700,
+          padding:'2px 7px', borderRadius:4,
+          background: guidanceColor + '18', color: guidanceColor,
+          border: `1px solid ${guidanceColor}40`,
+        }}>{guidanceLabel}</span>
+      </div>
+
+      {/* EPS and Revenue beat chips */}
+      <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+        {g.eps_beat != null && (
+          <span style={{
+            fontSize:11, padding:'3px 8px', borderRadius:4,
+            background: g.eps_beat ? '#05966918' : '#dc262618',
+            color: g.eps_beat ? '#059669' : '#dc2626',
+            border: `1px solid ${g.eps_beat ? '#05966940' : '#dc262640'}`,
+            fontWeight:600,
+          }}>
+            {g.eps_beat ? '✓ EPS Beat' : '✗ EPS Miss'}
+          </span>
+        )}
+        {g.revenue_beat != null && (
+          <span style={{
+            fontSize:11, padding:'3px 8px', borderRadius:4,
+            background: g.revenue_beat ? '#05966918' : '#dc262618',
+            color: g.revenue_beat ? '#059669' : '#dc2626',
+            border: `1px solid ${g.revenue_beat ? '#05966940' : '#dc262640'}`,
+            fontWeight:600,
+          }}>
+            {g.revenue_beat ? '✓ Rev Beat' : '✗ Rev Miss'}
+          </span>
+        )}
+      </div>
+
+      {/* Summary */}
+      <p style={{ fontSize:12, color:'#3a3835', lineHeight:1.55, margin:0 }}>{g.summary}</p>
+
+      {/* Tone bars */}
+      <div className="detail-rows" style={{ gap:6 }}>
+        <div className="fund-row">
+          <span className="fund-lbl">Guidance Tone</span>
+          <div style={{ flex:1 }}>{toneBar(g.guidance_tone)}</div>
+        </div>
+        <div className="fund-row">
+          <span className="fund-lbl">Mgmt Confidence</span>
+          <div style={{ flex:1 }}>{toneBar(g.management_tone)}</div>
+        </div>
+      </div>
+
+      {/* Thesis confirms */}
+      {g.thesis_confirms?.length > 0 && (
+        <div style={{
+          background:'#f0fdf4', border:'1px solid #bbf7d0',
+          borderRadius:5, padding:'7px 10px', display:'flex', flexDirection:'column', gap:3,
+        }}>
+          {g.thesis_confirms.map((c,i) => (
+            <span key={i} style={{ fontSize:11, color:'#166534', fontFamily:'DM Mono,monospace' }}>✓ {c}</span>
+          ))}
+        </div>
+      )}
+
+      {/* Thesis risks */}
+      {g.thesis_risks?.length > 0 && (
+        <div style={{
+          background:'#fef2f2', border:'1px solid #fecaca',
+          borderRadius:5, padding:'7px 10px', display:'flex', flexDirection:'column', gap:3,
+        }}>
+          {g.thesis_risks.map((r,i) => (
+            <span key={i} style={{ fontSize:11, color:'#991b1b', fontFamily:'DM Mono,monospace' }}>⚠ {r}</span>
+          ))}
+        </div>
+      )}
+
+      <span style={{ fontSize:10, color:'#a0a09a', fontFamily:'DM Mono,monospace' }}>
+        Filed {new Date(event.processedAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})} · Visible 90 days
+      </span>
+    </div>
+  );
+};
+
 // ── Detail Panel — slides out below a row when expanded ──────────────────────
 // Shows all the new metrics that don't fit in the main table:
 // Moat breakdown, FCF Yield, EV/FCF, MaxDD, Rev Growth 3Y, Gross Margin, SBC, Filing Sentiment
 const DetailPanel = ({ stock }) => {
+  const [earningsEvent, setEarningsEvent] = useState(null);
+
+  // Fetch earnings event for this stock when the panel opens
+  // Stored in Redis with 90-day TTL — fast read, no extra cost
+  useEffect(() => {
+    fetch(`/api/portfolio/earnings-event/${stock.symbol}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.event) setEarningsEvent(d.event); })
+      .catch(() => {});
+  }, [stock.symbol]);
+
   const fcfYieldPct = stock.fcf_yield != null ? (stock.fcf_yield * 100) : null;
   const sbcPct      = stock.sbc_to_market_cap;
   const filingScore = stock.filing_sentiment;
@@ -435,6 +557,11 @@ const DetailPanel = ({ stock }) => {
                 )}
               </div>
             </div>
+          )}
+
+          {/* Earnings Event card — stocks only, shown for 90 days after earnings */}
+          {!isETFInstrument && earningsEvent && (
+            <EarningsCard event={earningsEvent}/>
           )}
 
           {/* Score breakdown — weights differ for ETFs vs stocks */}
