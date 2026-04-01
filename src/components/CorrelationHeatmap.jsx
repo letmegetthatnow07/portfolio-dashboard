@@ -193,12 +193,13 @@ const CorrelationHeatmap = () => {
     e.stopPropagation();
     e.nativeEvent.stopImmediatePropagation();
     const style = getCellStyle(val);
+    const dataPoints = getDataPoints(t1, t2);
     setPinnedTip(prev =>
       prev && prev.t1 === t1 && prev.t2 === t2
         ? null
-        : { t1, t2, val, style, x: e.clientX, y: e.clientY }
+        : { t1, t2, val, style, dataPoints, x: e.clientX, y: e.clientY }
     );
-  }, []);
+  }, [getDataPoints]);
 
   useEffect(() => {
     const clear = (e) => {
@@ -224,6 +225,13 @@ const CorrelationHeatmap = () => {
     windowStart, windowEnd, windowDays, lastUpdated,
     stale, staleReason,
   } = matrixData;
+
+  // Helper to get shared data point count for a pair
+  const getDataPoints = (t1, t2) => {
+    const dp = matrix._dataPoints;
+    if (!dp) return null;
+    return dp[t1]?.[t2] ?? dp[t2]?.[t1] ?? null;
+  };
 
   const byVerdict   = v => insights.filter(i => i.verdict === v);
   const recommends  = byVerdict('RECOMMEND');
@@ -276,7 +284,7 @@ const CorrelationHeatmap = () => {
                   <tr key={row}>
                     <td className="heatmap-row-header">{row}</td>
                     {tickers.map(col => {
-                      const val      = matrix[row]?.[col] ?? 0;
+                      const val      = matrix[row]?.[col] ?? null;
                       const style    = getCellStyle(val);
                       const isPinned = pinnedTip?.t1 === row && pinnedTip?.t2 === col;
                       return (
@@ -286,7 +294,7 @@ const CorrelationHeatmap = () => {
                           style={{
                             background: style.background,
                             color: style.color,
-                            cursor: val === 1 ? 'default' : 'crosshair',
+                            cursor: (val === 1 || val === null) ? 'default' : 'crosshair',
                           }}
                           onClick={e => onCellClick(e, row, col, val)}
                         >
@@ -368,7 +376,7 @@ const CorrelationHeatmap = () => {
         <div
           className="heatmap-pin-popup"
           style={{
-            left: Math.min(pinnedTip.x + 14, window.innerWidth - 240),
+            left: Math.min(pinnedTip.x + 14, window.innerWidth - 260),
             top:  Math.max(pinnedTip.y - 42, 8),
           }}
         >
@@ -377,6 +385,11 @@ const CorrelationHeatmap = () => {
           <span className="pin-val" style={{ color: pinnedTip.style.bandColor || '#6b6b65' }}>
             {pinnedTip.val.toFixed(2)}
           </span>
+          {pinnedTip.dataPoints != null && (
+            <span className="pin-n" title="Number of shared trading days used to compute this correlation">
+              n={pinnedTip.dataPoints}
+            </span>
+          )}
         </div>,
         document.body
       )}
