@@ -193,13 +193,12 @@ const CorrelationHeatmap = () => {
     e.stopPropagation();
     e.nativeEvent.stopImmediatePropagation();
     const style = getCellStyle(val);
-    const dataPoints = getDataPoints(t1, t2);
     setPinnedTip(prev =>
       prev && prev.t1 === t1 && prev.t2 === t2
         ? null
-        : { t1, t2, val, style, dataPoints, x: e.clientX, y: e.clientY }
+        : { t1, t2, val, style, x: e.clientX, y: e.clientY }
     );
-  }, [getDataPoints]);
+  }, []);
 
   useEffect(() => {
     const clear = (e) => {
@@ -225,13 +224,6 @@ const CorrelationHeatmap = () => {
     windowStart, windowEnd, windowDays, lastUpdated,
     stale, staleReason,
   } = matrixData;
-
-  // Helper to get shared data point count for a pair
-  const getDataPoints = (t1, t2) => {
-    const dp = matrix._dataPoints;
-    if (!dp) return null;
-    return dp[t1]?.[t2] ?? dp[t2]?.[t1] ?? null;
-  };
 
   const byVerdict   = v => insights.filter(i => i.verdict === v);
   const recommends  = byVerdict('RECOMMEND');
@@ -385,11 +377,7 @@ const CorrelationHeatmap = () => {
           <span className="pin-val" style={{ color: pinnedTip.style.bandColor || '#6b6b65' }}>
             {pinnedTip.val.toFixed(2)}
           </span>
-          {pinnedTip.dataPoints != null && (
-            <span className="pin-n" title="Number of shared trading days used to compute this correlation">
-              n={pinnedTip.dataPoints}
-            </span>
-          )}
+
         </div>,
         document.body
       )}
