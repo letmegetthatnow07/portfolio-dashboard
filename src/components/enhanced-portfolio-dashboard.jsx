@@ -255,6 +255,84 @@ const FundRow = ({ label, value, hint, positive }) => {
   );
 };
 
+// ── Filing Narrative Card — shown in detail panel after new 10-K/10-Q ─────────
+const FilingNarrativeCard = ({ narrative }) => {
+  if (!narrative?.gemini) return null;
+  const g = narrative.gemini;
+
+  const statusColor = g.thesis_status === 'strengthening' ? '#059669'
+                    : g.thesis_status === 'stable'        ? '#2563eb'
+                    : g.thesis_status === 'weakening'     ? '#dc2626'
+                    : '#9ca3af';
+
+  const statusLabel = g.thesis_status === 'strengthening' ? '▲ Thesis Strengthening'
+                    : g.thesis_status === 'stable'        ? '→ Thesis Stable'
+                    : g.thesis_status === 'weakening'     ? '▼ Thesis Weakening'
+                    : '? Unclear';
+
+  return (
+    <div className="detail-section filing-narrative-card">
+      <div className="detail-section-head">
+        <span className="detail-section-title">📑 {narrative.form} Narrative · {narrative.period ?? narrative.filed}</span>
+        <span style={{
+          fontSize:10, fontFamily:'DM Mono,monospace', fontWeight:700,
+          padding:'2px 7px', borderRadius:4,
+          background: statusColor + '18', color: statusColor,
+          border: `1px solid ${statusColor}40`,
+        }}>{statusLabel}</span>
+      </div>
+
+      <p style={{ fontSize:12, color:'#3a3835', lineHeight:1.55, margin:0 }}>{g.summary}</p>
+
+      {/* Key changes */}
+      {g.key_changes?.length > 0 && (
+        <div>
+          <span style={{ fontSize:10, color:'#6b6b65', textTransform:'uppercase', letterSpacing:'0.06em', fontWeight:600 }}>Key Changes</span>
+          <div style={{ marginTop:4, display:'flex', flexDirection:'column', gap:3 }}>
+            {g.key_changes.map((c,i) => (
+              <span key={i} style={{ fontSize:11, color:'#3a3835', fontFamily:'DM Mono,monospace' }}>→ {c}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Thesis confirms */}
+      {g.thesis_confirms?.length > 0 && (
+        <div style={{ background:'#f0fdf4', border:'1px solid #bbf7d0', borderRadius:5, padding:'7px 10px', display:'flex', flexDirection:'column', gap:3 }}>
+          {g.thesis_confirms.map((c,i) => (
+            <span key={i} style={{ fontSize:11, color:'#166534', fontFamily:'DM Mono,monospace' }}>✓ {c}</span>
+          ))}
+        </div>
+      )}
+
+      {/* Thesis risks + new risks */}
+      {(g.thesis_risks?.length > 0 || g.new_risks?.length > 0) && (
+        <div style={{ background:'#fef2f2', border:'1px solid #fecaca', borderRadius:5, padding:'7px 10px', display:'flex', flexDirection:'column', gap:3 }}>
+          {g.thesis_risks?.map((r,i) => (
+            <span key={`r${i}`} style={{ fontSize:11, color:'#991b1b', fontFamily:'DM Mono,monospace' }}>⚠ {r}</span>
+          ))}
+          {g.new_risks?.map((r,i) => (
+            <span key={`n${i}`} style={{ fontSize:11, color:'#7f1d1d', fontFamily:'DM Mono,monospace', fontWeight:600 }}>🆕 {r}</span>
+          ))}
+        </div>
+      )}
+
+      {/* Guidance changes */}
+      {g.guidance_changes?.length > 0 && (
+        <div style={{ background:'#eff6ff', border:'1px solid #bfdbfe', borderRadius:5, padding:'7px 10px', display:'flex', flexDirection:'column', gap:3 }}>
+          {g.guidance_changes.map((c,i) => (
+            <span key={i} style={{ fontSize:11, color:'#1e40af', fontFamily:'DM Mono,monospace' }}>📋 {c}</span>
+          ))}
+        </div>
+      )}
+
+      <span style={{ fontSize:10, color:'#a0a09a', fontFamily:'DM Mono,monospace' }}>
+        {narrative.form} · Filed {new Date(narrative.filed).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}
+      </span>
+    </div>
+  );
+};
+
 // ── Earnings Event Card — shown in detail panel for 90 days after earnings ────
 const EarningsCard = ({ event }) => {
   if (!event?.gemini) return null;
@@ -323,17 +401,15 @@ const EarningsCard = ({ event }) => {
       {/* Summary */}
       <p style={{ fontSize:12, color:'#3a3835', lineHeight:1.55, margin:0 }}>{g.summary}</p>
 
-      {/* Tone bars */}
-      <div className="detail-rows" style={{ gap:6 }}>
-        <div className="fund-row">
-          <span className="fund-lbl">Guidance Tone</span>
-          <div style={{ flex:1 }}>{toneBar(g.guidance_tone)}</div>
+      {/* Confidence bar */}
+      {g.management_confidence != null && (
+        <div className="detail-rows" style={{ gap:6 }}>
+          <div className="fund-row">
+            <span className="fund-lbl">Mgmt Confidence</span>
+            <div style={{ flex:1 }}>{toneBar(g.management_confidence)}</div>
+          </div>
         </div>
-        <div className="fund-row">
-          <span className="fund-lbl">Mgmt Confidence</span>
-          <div style={{ flex:1 }}>{toneBar(g.management_tone)}</div>
-        </div>
-      </div>
+      )}
 
       {/* Thesis confirms */}
       {g.thesis_confirms?.length > 0 && (
@@ -370,14 +446,22 @@ const EarningsCard = ({ event }) => {
 // Shows all the new metrics that don't fit in the main table:
 // Moat breakdown, FCF Yield, EV/FCF, MaxDD, Rev Growth 3Y, Gross Margin, SBC, Filing Sentiment
 const DetailPanel = ({ stock }) => {
-  const [earningsEvent, setEarningsEvent] = useState(null);
+  const [earningsEvent,    setEarningsEvent]    = useState(null);
+  const [filingNarrative,  setFilingNarrative]  = useState(null);
 
-  // Fetch earnings event for this stock when the panel opens
-  // Stored in Redis with 90-day TTL — fast read, no extra cost
+  // Fetch earnings event (90-day TTL)
   useEffect(() => {
     fetch(`/api/portfolio/earnings-event/${stock.symbol}`)
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (d?.event) setEarningsEvent(d.event); })
+      .catch(() => {});
+  }, [stock.symbol]);
+
+  // Fetch 10-K/10-Q filing narrative (no TTL — most recent filing)
+  useEffect(() => {
+    fetch(`/api/portfolio/filing-narrative/${stock.symbol}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.narrative) setFilingNarrative(d.narrative); })
       .catch(() => {});
   }, [stock.symbol]);
 
@@ -557,6 +641,11 @@ const DetailPanel = ({ stock }) => {
                 )}
               </div>
             </div>
+          )}
+
+          {/* Filing Narrative card — stocks only, shown after new 10-K/10-Q */}
+          {!isETFInstrument && filingNarrative && (
+            <FilingNarrativeCard narrative={filingNarrative}/>
           )}
 
           {/* Earnings Event card — stocks only, shown for 90 days after earnings */}
