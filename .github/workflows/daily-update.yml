@@ -102,6 +102,20 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: ${{ env.SCRIPT_TO_RUN }}
 
+      - name: Run Earnings Event Analyser
+        # Runs only on EOD master days. Checks if any portfolio stock reports
+        # earnings today. If nothing reports, exits in ~3 seconds.
+        # || true means a Gemini failure or missing 8-K never blocks the main pipeline.
+        if: env.SCRIPT_TO_RUN == 'npm run update && npm run calculate-matrix'
+        working-directory: backend
+        env:
+          REDIS_URL:            ${{ secrets.REDIS_URL }}
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          FINNHUB_API_KEY:      ${{ secrets.FINNHUB_API_KEY }}
+          GEMINI_API_KEY:       ${{ secrets.GEMINI_API_KEY }}
+        run: npm run earnings-event || true
+
       - name: Configure git
         run: |
           git config --local user.email "action@github.com"
