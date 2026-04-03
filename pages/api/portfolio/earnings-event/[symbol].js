@@ -191,14 +191,13 @@ async function fetchEarningsPressRelease(symbol) {
 // Returns a guaranteed-schema object — no parsing errors possible.
 //
 // JSON schema:
-//   eps_beat:            true/false/null    — did EPS beat consensus estimate?
-//   revenue_beat:        true/false/null    — did revenue beat consensus?
-//   guidance_direction:  'raised'/'lowered'/'maintained'/'none'/null
-//   guidance_tone:       1-5               — 1=very bearish, 5=very bullish
-//   thesis_risks:        string[]          — specific risks mentioned (max 3)
-//   thesis_confirms:     string[]          — thesis-confirming signals (max 3)
-//   management_tone:     1-5               — hedging language analysis
-//   summary:             string            — 1-sentence plain English verdict
+//   eps_beat:              true/false/null  — did EPS beat consensus estimate?
+//   revenue_beat:          true/false/null  — did revenue beat consensus?
+//   guidance_direction:    'raised'/'lowered'/'maintained'/'none'
+//   thesis_confirms:       string[]         — thesis-confirming signals (max 3)
+//   thesis_risks:          string[]         — specific risks mentioned (max 3)
+//   management_confidence: 1-5             — 1=defensive/hedging, 5=very confident
+//   summary:               string          — 1-sentence verdict for long-term holder
 
 async function analyseWithGemini(symbol, pressReleaseText, earningsMetadata) {
   if (!process.env.GEMINI_API_KEY) {
@@ -322,14 +321,16 @@ async function logToSupabase(symbol, date, payload) {
       .upsert({
         symbol,
         date,
-        eps_beat:           payload.gemini?.eps_beat ?? null,
-        revenue_beat:       payload.gemini?.revenue_beat ?? null,
+        form:               '8-K-earnings',               // distinguishes from 10-K/10-Q records
+        quarter:            payload.quarter ?? null,
+        year:               payload.year    ?? null,
+        eps_beat:           payload.gemini?.eps_beat           ?? null,
+        revenue_beat:       payload.gemini?.revenue_beat       ?? null,
         guidance_direction: payload.gemini?.guidance_direction ?? null,
-        guidance_tone:      payload.gemini?.guidance_tone ?? null,
-        management_tone:    payload.gemini?.management_tone ?? null,
-        summary:            payload.gemini?.summary ?? null,
-        thesis_risks:       payload.gemini?.thesis_risks ?? [],
-        thesis_confirms:    payload.gemini?.thesis_confirms ?? [],
+        management_tone:    payload.gemini?.management_confidence ?? null,
+        summary:            payload.gemini?.summary            ?? null,
+        thesis_risks:       payload.gemini?.thesis_risks       ?? [],
+        thesis_confirms:    payload.gemini?.thesis_confirms    ?? [],
         raw_payload:        payload,
       }, { onConflict: 'symbol,date' });
 
