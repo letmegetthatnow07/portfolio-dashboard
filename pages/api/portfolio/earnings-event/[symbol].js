@@ -40,6 +40,38 @@ const { createClient: createSupabaseClient } = require('@supabase/supabase-js');
 const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent';
 const TTL_SECONDS     = 90 * 24 * 60 * 60;  // 90 days in Redis
 
+// ─── MARKET HOLIDAY GUARD — POLYGON CACHE ────────────────────────────────────
+// Reads the market status cached in Redis by daily-update.js (12h TTL).
+// If cache is empty (this script runs standalone), does a direct Polygon call.
+// Zero hardcoded dates — works for any exchange closure automatically.
+async function checkMarketOpen() {
+  const todayStr = new Date().toISOString().split('T')[0];
+  const _r = createRedisClient({ url: process.env.REDIS_URL });
+  _r.on('error', () => {});
+  await _r.connect().catch(() => {});
+  const cached = await _r.get(`market_open_${todayStr}`).catch(() => null);
+  if (cached === 'closed') { await _r.quit().catch(() => {}); return false; }
+  if (!cached) {
+    // Not cached — call Polygon directly
+    try {
+      const _axios = require('axios');
+      const res = await _axios.get(
+        `https://api.polygon.io/v1/marketstatus/now?apiKey=${process.env.POLYGON_API_KEY}`,
+        { timeout: 6000 }
+      );
+      const status = res.data?.market ?? 'open';
+      await _r.set(`market_open_${todayStr}`, status, { EX: 43200 }).catch(() => {});
+      await _r.quit().catch(() => {});
+      return status !== 'closed';
+    } catch (e) {
+      await _r.quit().catch(() => {});
+      return true; // fail open
+    }
+  }
+  await _r.quit().catch(() => {});
+  return true; // cached as open or extended-hours
+}
+
 // ─── CLIENTS ──────────────────────────────────────────────────────────────────
 
 const supabase = createSupabaseClient(
@@ -345,6 +377,13 @@ async function logToSupabase(symbol, date, payload) {
 // ─── MAIN ─────────────────────────────────────────────────────────────────────
 
 async function main() {
+    // Market holiday check
+  const _isOpen = await checkMarketOpen();
+  if (!_isOpen) {
+    console.log('🏖️  Market closed today — skipping earnings-event run.');
+    process.exit(0);
+  }
+
   console.log('═══════════════════════════════════════════════════════════');
   console.log(' EARNINGS EVENT ANALYSER');
   console.log(`  Date: ${new Date().toISOString().split('T')[0]}`);
