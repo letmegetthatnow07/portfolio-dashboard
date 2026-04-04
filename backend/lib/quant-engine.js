@@ -185,13 +185,45 @@ class QuantEngine {
       // ≥20% YoY capex surge + positive OCF = strategic reinvestment, not distress
       const capexException = (capexGrowthYoY !== null && capexGrowthYoY > 0.20 && latestOcf > 0);
 
+      // ── Profit vs Cash Flow Divergence ────────────────────────────────────
+      // GAAP net income positive + OCF negative = accrual earnings quality risk
+      // OCF > NetIncome * 1.5 = cash conversion exceeding reported profit (strong)
+      const netIncomeQ      = quarterlyOnly(gaap.NetIncomeLoss?.units?.USD);
+      const latestNetIncome = netIncomeQ[0]?.val ?? null;
+      let earningsQualityFlag = null;
+      if (latestNetIncome !== null) {
+        if (latestNetIncome > 0 && latestOcf < 0) {
+          earningsQualityFlag = 'risk';   // profits reported but burning cash
+        } else if (latestOcf > latestNetIncome * 1.5 && latestNetIncome > 0) {
+          earningsQualityFlag = 'strong'; // cash earnings far exceed GAAP profit
+        }
+      }
+
+      // ── Debt Maturity Wall ─────────────────────────────────────────────────
+      // LongTermDebtCurrent = long-term debt maturing within 12 months
+      // If >30% of total long-term debt is current → near-term refinancing risk
+      const ltdCurrentQ = quarterlyOnly(
+        gaap.LongTermDebtCurrent?.units?.USD ||
+        gaap.LongTermNotesPayableCurrent?.units?.USD
+      );
+      const ltdTotalQ = quarterlyOnly(gaap.LongTermDebt?.units?.USD);
+      let debtMaturityFlag = null;
+      if (ltdCurrentQ.length && ltdTotalQ.length && ltdTotalQ[0].val > 0) {
+        const pct = ltdCurrentQ[0].val / ltdTotalQ[0].val;
+        if      (pct > 0.30) debtMaturityFlag = 'wall';  // >30%: major refinancing risk
+        else if (pct > 0.15) debtMaturityFlag = 'watch'; // 15-30%: monitor
+      }
+
       return {
-        ocf:            latestOcf,
-        capex:          latestCapex,
-        fcf:            latestOcf - latestCapex,
+        ocf:                latestOcf,
+        capex:              latestCapex,
+        fcf:                latestOcf - latestCapex,
         capexException,
         capexGrowthYoY,
-        quarterEnd:     ocfQ[0].end,
+        quarterEnd:         ocfQ[0].end,
+        earningsQualityFlag,
+        debtMaturityFlag,
+        netIncome:          latestNetIncome,
       };
 
     } catch (e) {
@@ -232,9 +264,16 @@ class QuantEngine {
     // Use available window — at least need start and end points
     const qualityStart = quality63d[0].fund_score;
     const qualityNow   = quality63d[quality63d.length - 1].fund_score;
-    const qualityImproving = qualityNow > qualityStart;
+    // Two conditions for quality improvement:
+    //   1. Directional: score is trending up over 63 days
+    //   2. Absolute floor: current quality > 6.0 regardless of direction
+    // The absolute floor prevents formula changes (e.g. hypergrowth mode deployment)
+    // from generating false ADD signals during the ~63-day contamination window.
+    // CRWD at fundScore=5.1 (hypergrowth) → fails 6.0 floor → ADD suppressed.
+    // GEV at fundScore=9.6 → passes → ADD correctly fires.
+    const qualityImproving = qualityNow > qualityStart && qualityNow > 6.0;
 
-    // Core conditions — same as original
+    // Core conditions
     const crushingBeta   = excessReturnPct > 5.0;
     const notOverbought  = currentRsi < 70;
     const underMaxWeight = currentWeight < 0.10;
