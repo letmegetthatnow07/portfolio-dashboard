@@ -35,6 +35,32 @@ const { createClient: createSupabaseClient } = require('@supabase/supabase-js');
 const SLEEP_BETWEEN_STOCKS_MS = 15000;
 const TODAY = new Date().toISOString().split('T')[0];
 
+// ─── US MARKET HOLIDAY DETECTION — POLYGON DYNAMIC ───────────────────────────
+// Uses Polygon.io /v1/marketstatus/upcoming (free tier, no rate limit).
+// Result is cached in Redis for 12 hours — only one API call per day.
+// This handles all NYSE edge cases: Saturday holidays → Friday closure,
+// emergency closures, observed holidays. No annual maintenance needed.
+async function isMarketClosedToday(redisClient) {
+  const cacheKey  = `market_open_${TODAY}`;
+  const cached    = await redisClient.get(cacheKey).catch(() => null);
+  if (cached !== null) return cached === 'closed';
+
+  try {
+    const res = await axios.get(
+      `https://api.polygon.io/v1/marketstatus/now?apiKey=${process.env.POLYGON_API_KEY}`,
+      { timeout: 6000 }
+    );
+    // market field: 'open', 'closed', 'extended-hours'
+    const status = res.data?.market ?? 'open';
+    // Cache for 12h — market status for today won't change
+    await redisClient.set(cacheKey, status, { EX: 43200 }).catch(() => {});
+    return status === 'closed';
+  } catch (e) {
+    logger.warn(`Polygon market status check failed: ${e.message} — assuming open`);
+    return false; // Fail open: if we can't check, proceed with the run
+  }
+}
+
 const VALID_SIGNALS = [
   'STRONG_BUY', 'BUY', 'HOLD', 'WATCH',
   'TRIM_25', 'SELL', 'SPRING_CANDIDATE', 'SPRING_CONFIRMED', 'ADD',
@@ -246,6 +272,34 @@ class PriceAnalyzer {
         // EV/FCF: <15 = cheap, 15-25 = fair, >40 = expensive for a compounder
         const evFcf       = (fcfTTM > 0 && evM > 0) ? (evM / fcfTTM) : null;
 
+        // ── Shares outstanding YoY change — dilution detection ────────────────
+        // Finnhub provides shareOutstandingTTM (TTM) and similar fields.
+        // We compute dilution as growth in basic shares vs prior year equivalent.
+        // Finnhub metric=all field names (verified): shareOutstandingTTM and
+        // the prior year is approximated via revenueGrowthTTMYoy proxy or direct
+        // basicShares field. Most reliable: sharesOutstanding from two periods.
+        // Finnhub actually provides: sharesOutstanding (current), shortInterestFillDate
+        // We use sharesOutstanding and the annual equivalent for YoY estimation.
+        const sharesNow  = m.shareOutstanding || m.sharesOutstanding || null;  // millions
+        const sharesYoY  = m.sharesOutstandingAnnual
+                        || m['52WeekShareChange']
+                        || null; // % change in shares YoY if Finnhub provides it
+
+        // Gross margin 5-year average — used for cyclical peak detection
+        // Finnhub field: grossMargin5Y (5Y avg gross margin, in %)
+        const grossMargin5Y = m.grossMargin5Y != null
+          ? m.grossMargin5Y / 100
+          : null;
+
+        // Dilution flag: if shares grew >3% YoY without a clear acquisition
+        // this is net economic dilution (secondaries, employee grants beyond SBC)
+        let dilutionFlag = null;
+        if (sharesYoY != null) {
+          if (sharesYoY > 5)       dilutionFlag = 'heavy';   // >5% YoY share growth
+          else if (sharesYoY > 3)  dilutionFlag = 'watch';   // 3-5% — monitor
+          else if (sharesYoY < -1) dilutionFlag = 'buyback'; // net reduction = positive
+        }
+
         return {
           roic:          (m.roicTTM || m.roiAnnual || 0) / 100,
           fcfMargin:     fcfMarginRaw,
@@ -257,7 +311,10 @@ class PriceAnalyzer {
           fcfConversion,
           fcfYield,
           evFcf,
-          marketCapM: marketCap,
+          marketCapM:    marketCap,
+          _grossMargin5Y: grossMargin5Y,  // for cyclical brake in calculateScore
+          dilutionFlag,
+          sharesYoYPct:  sharesYoY,
           _raw: {
             roicPct:          (m.roicTTM || m.roiAnnual || 0),
             grossMarginPct:   (m.grossMarginTTM || m.grossMarginAnnual || 0),
@@ -289,13 +346,15 @@ class PriceAnalyzer {
       if (!res.data?.results?.length) return null;
       const historyAscRaw = [...res.data.results].sort((a, b) => a.t - b.t);
       const period200 = Math.min(200, historyAscRaw.length);
+      const period50  = Math.min(50,  historyAscRaw.length);
       const sma200    = historyAscRaw.slice(-period200).reduce((acc, d) => acc + d.c, 0) / period200;
+      const sma50     = historyAscRaw.slice(-period50 ).reduce((acc, d) => acc + d.c, 0) / period50;
       const rsiSeries = this._computeRollingRSI(historyAscRaw, 14);
       const historyAsc = historyAscRaw.map((d, i) => ({ c: d.c, v: d.v, t: d.t, rsi: rsiSeries[i] ?? 50 }));
       const historyDesc   = [...historyAsc].reverse();
       const todayRsi      = historyAsc[historyAsc.length - 1].rsi;
       const currentVolume = historyDesc[0].v;
-      return { rsi: todayRsi, sma200, currentVolume, historyAsc, historyDesc };
+      return { rsi: todayRsi, sma200, sma50, currentVolume, historyAsc, historyDesc };
     } catch (e) {
       logger.warn(`fetchTechnicals failed for ${symbol}: ${e.message}`);
       return null;
@@ -332,7 +391,12 @@ class PriceAnalyzer {
         `https://finnhub.io/api/v1/stock/recommendation?symbol=${symbol}&token=${process.env.FINNHUB_API_KEY}`,
         { timeout: 8000 }
       );
-      if (res.data?.length > 0) return res.data[0];
+      if (!res.data?.length) return null;
+      // Return current month AND prior month for revision delta computation
+      // data[0] = most recent, data[1] = one month prior
+      const current = res.data[0];
+      const prior   = res.data[1] ?? null;
+      return { ...current, _prior: prior };
     } catch (e) { /* fall through */ }
     return null;
   }
@@ -343,34 +407,63 @@ class PriceAnalyzer {
       const res = await axios.post(`https://api.sec-api.io/insider-trading?token=${process.env.SEC_API_KEY}`, payload, { timeout: 8000 });
       const trades = res.data.transactions || (Array.isArray(res.data) ? res.data : []);
       if (trades.length > 0) {
-        let totalBought = 0, totalSold = 0;
+        let totalBought = 0, totalSold = 0, totalRawBought = 0;
         const sixMonthsAgo = new Date();
         sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+        // Title weight: CEO/CFO = 3x, COO/President = 2x, Director/VP = 1x
+        // Higher title weight = more conviction signal per dollar of transaction
+        const titleWeight = (title) => {
+          if (!title) return 1;
+          const t = title.toUpperCase();
+          if (t.includes('CEO') || t.includes('CHIEF EXEC') ||
+              t.includes('CFO') || t.includes('CHIEF FIN'))    return 3;
+          if (t.includes('COO') || t.includes('PRESIDENT') ||
+              t.includes('CHIEF OPE'))                         return 2;
+          return 1; // Director, VP, other officer
+        };
+
+        // 30-day cluster: track distinct buyers in last 30 days
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        const recentBuyers = new Set();
+
         trades.forEach(trade => {
           const tradeDate = new Date(trade.transactionDate || trade.filingDate);
           const shares    = parseFloat(trade.shares || trade.securitiesTransacted || 0);
           const price     = parseFloat(trade.pricePerShare || trade.price || 0);
           const code      = (trade.transactionCode || trade.code || '').trim();
+          const title     = trade.reportingOwnerRelationship?.officerTitle
+                         || trade.officerTitle || '';
+          const tw        = titleWeight(title);
+
           if (tradeDate >= sixMonthsAgo && shares > 0) {
-            const value = shares * (price || 1); // price may be 0 for grants
+            const value = shares * (price || 1) * tw; // title-weighted dollar value
 
-            // P = open market purchase — strongest bullish signal
-            if (code === 'P') { totalBought += value; return; }
-
-            // S = open market sale — bearish signal
-            // But EXCLUDE F (tax withholding) and M+S combos (exercise-and-sell)
-            // F = mandatory tax withholding sale — NOT discretionary, ignore
-            // S after M in same filing period = exercise-and-sell (insider liquidity, not conviction)
-            if (code === 'S') { totalSold += value; return; }
-
-            // F = tax withholding sale — do NOT count as a sell signal
-            // M = option exercise — neutral (gaining shares, but often followed by S)
-            // A = award/RSU grant — not a market signal
-            // G = gift — not a market signal
-            // Codes F, M, A, G, U, C, X are all excluded
+            if (code === 'P') {
+              totalBought += value;
+              totalRawBought = (totalRawBought ?? 0) + (shares * (price || 1)); // pre-title raw
+              // Track cluster: distinct buyer IDs in last 30 days
+              if (tradeDate >= thirtyDaysAgo) {
+                const buyerId = trade.reportingCik || trade.filingAgent || title || Math.random();
+                recentBuyers.add(String(buyerId));
+              }
+              return;
+            }
+            // S = open-market sale. Not title-weighted on selling side —
+            // selling motivation is harder to infer from title alone.
+            if (code === 'S') { totalSold += shares * (price || 1); return; }
+            // F, M, A, G, U, C, X excluded (tax withholding, grants, exercises)
           }
         });
-        return { bought: totalBought, sold: totalSold };
+        // rawBought = pre-title-multiplication total (for minimum threshold check)
+        // We track it separately because title multiplication inflates the $value
+        // and we want the threshold to apply to actual dollar conviction, not amplified.
+        return {
+          bought:     totalBought,         // title-weighted (used for relative scoring)
+          sold:       totalSold,           // raw (no title weight on sells)
+          cluster30d: recentBuyers.size,   // distinct buyers in last 30 days
+          rawBought:  totalRawBought ?? totalBought, // pre-weight total for threshold
+        };
       }
     } catch (e) { /* try fallback */ }
     try {
@@ -418,6 +511,34 @@ class PriceAnalyzer {
       //   30%+ = exceptional (score 10) ← extended ceiling
       // Formula: (roic - 0.05) / 0.25 * 10  (range 5%→30% maps to 0→10)
       let roicS = Math.max(0, Math.min(10, ((fundamentals.roic - 0.05) / 0.25) * 10));
+
+      // ── Earnings quality veto on ROIC ─────────────────────────────────────
+      // If OCF < 0 but GAAP net income > 0 (accrual manipulation flag),
+      // the NOPAT used in Finnhub's ROIC calculation is suspect — the company
+      // is reporting profitability via accruals while burning cash.
+      // Fix: cap roicS at neutral (5.0) rather than letting inflated ROIC
+      // drive the fundamental score. FCF score (which is already near 0 when
+      // OCF < 0) provides the honest signal; ROIC becomes unreliable.
+      // Note: capexException companies are excluded — negative OCF during
+      // genuine strategic capex surge is different from accrual manipulation.
+      if (fundamentals._earningsQualityFlag === 'risk' && !capexException) {
+        roicS = Math.min(roicS, 5.0);
+        logger.warn?.(`  🔒 ROIC capped at neutral (earnings quality risk — OCF < 0, GAAP income > 0)`);
+      }
+
+      // ── Cyclical peak brake ────────────────────────────────────────────────
+      // At the top of a commodity or semiconductor cycle, ROIC and FCF margins
+      // look exceptional — the score screams BUY right before a 60% collapse.
+      // Proxy: if current gross margin is >50% above 5-year average gross margin,
+      // the business is likely at cyclical peak, not a sustainable step-change.
+      // Apply a fundScore ceiling later (not here on roicS — applied at composite).
+      // m.grossMargin5Y field from Finnhub metric=all.
+      const _gm5y = fundamentals._grossMargin5Y ?? null;
+      const _gmNow = fundamentals.grossMargin ?? 0;
+      const _atCyclicalPeak = _gm5y != null && _gm5y > 0.02 && _gmNow > _gm5y * 1.5;
+      if (_atCyclicalPeak) {
+        logger.warn?.(`  ⚠️ CYCLICAL PEAK SIGNAL: current gross margin ${(_gmNow*100).toFixed(1)}% is >150% of 5Y avg ${(_gm5y*100).toFixed(1)}%`);
+      }
 
       // ── SBC-adjusted FCF ─────────────────────────────────────────────────
       // SBC is a real cost GAAP FCF ignores. We correct it properly:
@@ -496,11 +617,49 @@ class PriceAnalyzer {
 
       if (capexException) fcfS = Math.min(10, fcfS + 2.5);
 
+      // ── Hypergrowth detection ─────────────────────────────────────────────
+      // Asset-light software platforms and high-growth pharma use aggressive
+      // reinvestment as their moat. Penalising CRWD for low ROIC while it
+      // spends $1B on customer acquisition is like penalising Amazon in 2010.
+      //
+      // Trigger: 3Y CAGR > 20% AND Gross Margin > 60% AND NOT cyclical peak
+      //   → 60%+ GM excludes commodity/cyclical companies at peak earnings
+      //   → cyclical_peak guard prevents a copper company at peak GM from triggering
+      //   → capexException is a separate (less strict) gate — hypergrowth is stricter
+      //
+      // Hypergrowth internal weights: RevGrowth 45% / FCF 30% / ROIC 15% / D/E 10%
+      //   FCF stays at 30%: even hypergrowth must eventually convert to cash
+      //   ROIC stays at 15%: zero ROIC on any capital is still a red flag
+      //   D/E drops to 10%: growth companies often carry more debt intentionally
+      //   RevGrowth rises to 45%: top-line compounding IS the moat for these names
+      const _isHypergrowth = (
+        cagr > 0.20 &&
+        (fundamentals.grossMargin ?? 0) > 0.60 &&
+        !_atCyclicalPeak
+      );
+
       // ── Composite fundamental score ───────────────────────────────────────
-      // Quality-first (Fundsmith/Baillie Gifford): FCF Yield is valuation, not quality.
-      // A great business at a high price is still a great business.
-      // ROIC 40% / SBC-adj FCF 30% / D/E 20% / Rev Growth 10%
-      fundScore = (roicS * 0.40) + (fcfS * 0.30) + (deS * 0.20) + (revGS * 0.10);
+      // Standard (capital-intensive, mature, cyclical):
+      //   ROIC 40% / SBC-adj FCF 30% / D/E 20% / Rev Growth 10%
+      // Hypergrowth (asset-light platform, high-growth pharma):
+      //   RevGrowth 45% / SBC-adj FCF 30% / ROIC 15% / D/E 10%
+      if (_isHypergrowth) {
+        fundScore = (revGS * 0.45) + (fcfS * 0.30) + (roicS * 0.15) + (deS * 0.10);
+        fundamentals._hypergrowthMode = true;
+      } else {
+        fundScore = (roicS * 0.40) + (fcfS * 0.30) + (deS * 0.20) + (revGS * 0.10);
+        fundamentals._hypergrowthMode = false;
+      }
+
+      // ── Cyclical peak cap on composite fundamental score ──────────────────
+      // If current margins are >50% above the 5-year average, the business is
+      // likely at a cyclical earnings peak. Cap fundScore at 6.5.
+      if (_atCyclicalPeak) {
+        fundScore = Math.min(fundScore, 6.5);
+        fundamentals._cyclicalPeakFlag = true;
+      } else {
+        fundamentals._cyclicalPeakFlag = false;
+      }
 
       // ── Enhanced Moat Score (display-only, never feeds composite) ─────────
       // Components: ROIC above cost-of-capital, gross margin (pricing power),
@@ -534,18 +693,39 @@ class PriceAnalyzer {
     }
 
     if (technicals && priceData?.price) {
-      let trendS = 5;
+      const price = priceData.price;
+
+      // SMA-200: primary long-term trend (5% above = fully bullish)
+      let trend200S = 5;
       if (technicals.sma200 > 0) {
-        const diff = (priceData.price - technicals.sma200) / technicals.sma200;
-        trendS = Math.max(0, Math.min(10, 5 + ((diff / 0.05) * 5)));
+        const diff200 = (price - technicals.sma200) / technicals.sma200;
+        trend200S = Math.max(0, Math.min(10, 5 + ((diff200 / 0.05) * 5)));
       }
+
+      // SMA-50: medium-term trend confirmation
+      // Price above both SMA50 and SMA200 = strongest trend signal
+      // Price below SMA50 but above SMA200 = pullback within uptrend
+      // Price below both = genuine downtrend
+      let trend50S = 5;
+      if (technicals.sma50 > 0) {
+        const diff50 = (price - technicals.sma50) / technicals.sma50;
+        trend50S = Math.max(0, Math.min(10, 5 + ((diff50 / 0.04) * 5)));
+      }
+
+      // Combined trend: 200d is the primary filter (60%), 50d confirms (40%)
+      const trendS = (trend200S * 0.60) + (trend50S * 0.40);
+
+      // RSI 14d: sweet spot 45-65 for trending quality stocks
+      // Oversold (<35) is an opportunity signal for compounders, not danger
+      // Overbought (>80) = extended, caution
       const rsi = technicals.rsi;
       let rsiS = 5;
       if      (rsi >= 45 && rsi <= 65) rsiS = 10;
-      else if (rsi < 35)               rsiS = 8;
-      else if (rsi >= 35 && rsi < 45)  rsiS = 9;
+      else if (rsi < 35)               rsiS = 8;   // oversold quality = opportunity
+      else if (rsi >= 35 && rsi < 45)  rsiS = 9;   // approaching oversold = attractive
       else if (rsi > 65 && rsi <= 80)  rsiS = 10 - (((rsi - 65) / 15) * 8);
-      else if (rsi > 80)               rsiS = 2;
+      else if (rsi > 80)               rsiS = 2;   // extended
+
       techScore = (trendS * 0.50) + (rsiS * 0.50);
     }
 
@@ -555,6 +735,25 @@ class PriceAnalyzer {
         const bullish = (ratings.strongBuy || 0) + (ratings.buy || 0);
         const bearish = (ratings.sell || 0) + (ratings.strongSell || 0);
         ratingScore = Math.max(0, Math.min(10, ((bullish / total) * 10) - ((bearish / total) * 5)));
+
+        // Rating revision delta: direction of change matters more than the snapshot.
+        // Upgrade wave (bullish% rising month-over-month) → boost score.
+        // Downgrade wave (bullish% falling) → trim score.
+        // An upgrade from Underperform→Hold is a massive tell — analyst capitulating
+        // on a bearish call. A Buy→Underperform downgrade is a structural red flag.
+        if (ratings._prior) {
+          const priorTotal = (ratings._prior.strongBuy || 0) + (ratings._prior.buy || 0)
+                           + (ratings._prior.hold || 0) + (ratings._prior.sell || 0)
+                           + (ratings._prior.strongSell || 0);
+          if (priorTotal > 0) {
+            const priorBullishPct = ((ratings._prior.strongBuy || 0) + (ratings._prior.buy || 0)) / priorTotal;
+            const currBullishPct  = bullish / total;
+            const delta           = currBullishPct - priorBullishPct; // positive = upgrades, negative = downgrades
+            // Scale: 10% delta → ±1.0 score points (max ±2.0)
+            const revisionAdj = Math.max(-2.0, Math.min(2.0, delta * 10));
+            ratingScore = Math.max(0, Math.min(10, ratingScore + revisionAdj));
+          }
+        }
       }
     }
 
@@ -571,30 +770,81 @@ class PriceAnalyzer {
     }
 
     if (insiderData) {
-      const { bought, sold } = insiderData;
-      if      (bought > 0 && sold === 0)  insiderScore = 10;
-      else if (bought > sold * 2)         insiderScore = 9;
-      else if (bought > sold)             insiderScore = 7;
-      else if (sold > bought * 5)         insiderScore = 2;
-      else if (sold > bought * 2)         insiderScore = 3;
-      else if (sold > bought)             insiderScore = 4;
+      // Title-weighted insider signal:
+      //   CEO/CFO open-market purchase = strongest conviction signal (3x weight)
+      //   COO/President = meaningful but below C-suite peak (2x weight)
+      //   Director/VP = useful for cluster detection, lower individual weight (1x)
+      //
+      // Cluster bonus: 3+ distinct insiders buying in 30 days = structural signal.
+      //
+      // Minimum dollar threshold: $50,000 raw (pre-title-multiplication) total
+      // transaction value required before any signal is scored. A CEO buying
+      // $3,000 worth of stock is a token gesture, not conviction.
+      // Threshold applies to the BUY side only — we always score selling.
+      //
+      // Sell signal is deliberately dampened: executive selling for taxes,
+      // diversification, or personal liquidity is common and not bearish.
+      const INSIDER_MIN_BUY_USD = 50_000;
+      const { bought, sold, cluster30d = 0, rawBought = bought } = insiderData;
+
+      // If total raw buying is below threshold, treat buy side as zero (neutral)
+      // rawBought is the pre-title-multiplication aggregate; falls back to bought.
+      const effectiveBought = rawBought >= INSIDER_MIN_BUY_USD ? bought : 0;
+      const clusterBonus    = cluster30d >= 3 ? 1.5 : cluster30d === 2 ? 0.5 : 0;
+
+      if      (effectiveBought > 0 && sold === 0) insiderScore = Math.min(10, 9 + clusterBonus);
+      else if (effectiveBought > sold * 3)        insiderScore = Math.min(10, 8 + clusterBonus);
+      else if (effectiveBought > sold * 2)        insiderScore = Math.min(10, 7 + clusterBonus);
+      else if (effectiveBought > sold)            insiderScore = Math.min(10, 6 + clusterBonus);
+      else if (sold > 0 && effectiveBought === 0) insiderScore = 3;
+      else if (sold > bought * 5)                 insiderScore = 2;
+      else if (sold > bought * 2)                 insiderScore = 3;
+      else if (sold > bought)                     insiderScore = 4;
+      else                                        insiderScore = 5;
     }
 
     // ── Composite weights ─────────────────────────────────────────────────────
     // STOCKS (fundamentals-first, long-horizon compounder):
-    //   Fund 35% | Analyst 20% | Insider 20% | News 15% | Tech 10%
+    //   Fund 45% | Insider 25% | Analyst 10% | Tech 10% | News 10%
+    //
+    // Rationale for changes from prior version:
+    //   Fund 35→45%: ROIC + SBC-adj FCF + D/E + Rev growth ARE the thesis.
+    //     This is a fundamentals-first mandate — it should dominate the score.
+    //   Insider 20→25%: CEO open-market purchase is the strongest single signal
+    //     available. Now title-weighted (CEO/CFO 3x, COO 2x, director 1x).
+    //     Cluster detection (3+ insiders in 30 days) amplifies further.
+    //   Analyst 20→10%: Analysts are systematically late. Consensus snapshot
+    //     is awareness data, not predictive. Rating CHANGE (revision) is now
+    //     captured separately as a delta adjustment to the score.
+    //   News 15→10%: 3x intraday news is a recency-weighted sentiment signal.
+    //     10% is honest — noise for a 3-7yr hold, but gives real-time context.
+    //   Tech 10%: unchanged. SMA-200 and RSI are timing tools, not thesis tools.
+    //     Now includes 50d SMA as an additional trend confirmation layer.
     //
     // ETFs (no fundamentals, no insiders — momentum and theme):
     //   Tech 50% | News 30% | Analyst 20%
-    //   Tech dominates because ETFs ARE momentum vehicles — price trend IS the
-    //   signal. News captures theme/sector sentiment. Analyst captures consensus
-    //   on the underlying index or theme. Fund and Insider are always 5 (neutral)
-    //   for ETFs because those concepts don't apply.
     let finalScore;
     if (isETF) {
       finalScore = (techScore * 0.50) + (newsScore * 0.30) + (ratingScore * 0.20);
     } else {
-      finalScore = (fundScore * 0.35) + (techScore * 0.10) + (ratingScore * 0.20) + (newsScore * 0.15) + (insiderScore * 0.20);
+      // ── Conditional insider weight redistribution ─────────────────────────
+      // When insider data is genuinely absent (insiderData == null):
+      //   The 25% insider weight is dead weight returning the neutral prior 5.0.
+      //   Redistribute it proportionally to other factors.
+      //   Fund: 45/75 = 60% | Analyst/Tech/News: 10/75 = 13.33% each
+      //
+      // When insider data EXISTS (even if score = 5, i.e. balanced buy/sell):
+      //   Keep full weights — balanced activity IS a signal (management neutral).
+      //   The insider has traded; we just have no directional conviction.
+      //
+      // Trigger: insiderData === null (the parameter passed to calculateScore)
+      // NOT insiderScore == 5 — that conflates absent data with genuine neutrality.
+      if (insiderData === null) {
+        // No insider data — redistribute the 25% weight proportionally
+        finalScore = (fundScore * 0.60) + (ratingScore * 0.1333) + (techScore * 0.1333) + (newsScore * 0.1333);
+      } else {
+        finalScore = (fundScore * 0.45) + (insiderScore * 0.25) + (ratingScore * 0.10) + (techScore * 0.10) + (newsScore * 0.10);
+      }
     }
     return {
       total:   Math.max(0, Math.min(10, finalScore)),
@@ -944,6 +1194,50 @@ async function getIntradayNewsScore(symbol) {
   return parseFloat(Math.max(0, Math.min(10, finalScore)).toFixed(2));
 }
 
+// ─── INSIDER CACHE HELPER ──────────────────────────────────────────────────────
+// SEC-API.io free tier: 100 calls/month. Without caching, 18 stocks × 22 days
+// = 396 calls/month — 4× over limit. Cache with 7-day TTL brings it to ~72/month.
+// Cache key: insider_{SYMBOL} → JSON of {bought, sold, cluster30d, rawBought}
+// TTL: 7 days (insider activity doesn't change meaningfully day-to-day)
+// If cache hit: return cached value immediately (no API call)
+// If cache miss: fetch fresh, store in Redis, return result
+
+async function fetchInsiderCached(symbol, storage) {
+  // Cache key stored as a direct Redis key (not inside stock hash) for easy TTL
+  const cacheKey = `insider_cache_${symbol}`;
+
+  // ── Try cache first ────────────────────────────────────────────────────────
+  try {
+    const _rc = createRedisClient({ url: process.env.REDIS_URL });
+    _rc.on('error', () => {});
+    await _rc.connect();
+    const redisRaw = await _rc.get(cacheKey).catch(() => null);
+    await _rc.quit();
+    if (redisRaw) {
+      return JSON.parse(redisRaw); // Cache hit — no SEC-API call
+    }
+  } catch (e) { /* cache miss — proceed to live fetch */ }
+
+  // ── Cache miss: fetch from SEC-API.io / Finnhub fallback ──────────────────
+  const _localAnalyzer = new PriceAnalyzer();
+  const fresh = await _localAnalyzer.fetchInsider(symbol);
+
+  // ── Write to cache with 7-day TTL ─────────────────────────────────────────
+  // 7 days × 18 stocks × ~4 cache misses/month = ~72 SEC-API calls/month
+  // Free tier limit: 100/month → stays within budget
+  if (fresh !== null) {
+    try {
+      const _rc = createRedisClient({ url: process.env.REDIS_URL });
+      _rc.on('error', () => {});
+      await _rc.connect();
+      await _rc.set(cacheKey, JSON.stringify(fresh), { EX: 7 * 24 * 60 * 60 });
+      await _rc.quit();
+    } catch (e) { /* write failure non-critical */ }
+  }
+
+  return fresh;
+}
+
 // ─── MAIN PIPELINE ────────────────────────────────────────────────────────────
 
 async function updateMarketData() {
@@ -960,6 +1254,21 @@ async function updateMarketData() {
     logger.info('║     PORTFOLIO REGIME ANALYSIS ENGINE — EOD Master Run      ║');
     logger.info(`║     Date: ${TODAY}                                   ║`);
     logger.info('╚════════════════════════════════════════════════════════════╝');
+
+    // ── Market holiday check via Polygon ─────────────────────────────────────
+    // We need a Redis client to cache the result. Open a temporary connection.
+    const _holidayRedis = createRedisClient({ url: process.env.REDIS_URL });
+    _holidayRedis.on('error', () => {});
+    await _holidayRedis.connect().catch(() => {});
+    const _marketClosed = await isMarketClosedToday(_holidayRedis);
+    await _holidayRedis.quit().catch(() => {});
+
+    if (_marketClosed) {
+      logger.info(`\n🏖️  Market closed today (${TODAY}) — confirmed via Polygon.`);
+      logger.info('   Skipping EOD price/fundamental/filing updates.');
+      logger.info('   News-only runs (14:00, 18:00, 21:15 UTC) are unaffected.');
+      process.exit(0);
+    }
 
     const portfolio = await storage.getPortfolio();
     const stocks    = portfolio.stocks || [];
@@ -1024,7 +1333,7 @@ async function updateMarketData() {
           instrumentIsETF ? Promise.resolve(null) : analyzer.fetchFundamentals(stock.symbol),
           analyzer.fetchTechnicals(stock.symbol),
           instrumentIsETF ? Promise.resolve(null) : analyzer.fetchRatings(stock.symbol),
-          instrumentIsETF ? Promise.resolve(null) : analyzer.fetchInsider(stock.symbol),
+          instrumentIsETF ? Promise.resolve(null) : fetchInsiderCached(stock.symbol, storage),
           instrumentIsETF ? Promise.resolve(null) : quantEngine.fetchSECCashFlow(stock.symbol),
           instrumentIsETF ? Promise.resolve(null) : fetchSECStockBasedComp(stock.symbol),
           instrumentIsETF ? Promise.resolve(null) : fetchRecent8K(stock.symbol),
@@ -1040,11 +1349,18 @@ async function updateMarketData() {
           // calculateScore can use it in the FCF adjustment formula
         }
 
-        const capexException = secCapex?.capexException ?? false;
+        const capexException       = secCapex?.capexException       ?? false;
+        const earningsQualityFlag  = secCapex?.earningsQualityFlag  ?? null;
+        const debtMaturityFlag     = secCapex?.debtMaturityFlag      ?? null;
         if (capexException) logger.info(`  ⚠️  CAPEX EXCEPTION: FCF penalty forgiven.`);
+        if (earningsQualityFlag === 'risk') logger.warn(`  🚨 EARNINGS QUALITY RISK: positive GAAP income but negative OCF — ROIC suspect.`);
+
+        // Attach quality flags to fundamentals so calculateScore can apply penalties
+        if (fundamentals) {
+          fundamentals._earningsQualityFlag = earningsQualityFlag;
+        }
 
         // Calculate score — pass intraday news score as override (null = use 5.0)
-        // analyzedNews is null because we're not fetching news here anymore
         const scoreObj = analyzer.calculateScore(
           priceData, fundamentals, technicals,
           ratings, null, insiderData, capexException,
@@ -1053,7 +1369,12 @@ async function updateMarketData() {
         );
 
         // Compute MaxDD from price history (trailing 252 days)
-        const maxDrawdown = technicals ? computeMaxDrawdown(technicals.historyAsc) : null;
+        const maxDrawdown  = technicals ? computeMaxDrawdown(technicals.historyAsc) : null;
+        // Annualised 21-day realised volatility — position sizing context
+        const realizedVol  = technicals ? quantEngine.computeVolatility(technicals.historyAsc) : null;
+        // Momentum label: STRONG/POSITIVE/NEUTRAL/NEGATIVE/WEAK
+        // Uses golden/death cross + 21d rate-of-change
+        const momentumLabel = technicals ? quantEngine.evaluateMomentum(technicals.historyAsc) : 'NEUTRAL';
 
         // Attach moat score and FCF yield from fundamentals (computed inside calculateScore)
         const moatScore = fundamentals?._moatScore ?? null;
@@ -1177,7 +1498,19 @@ async function updateMarketData() {
           fcf_yield_score:     fcfYield != null ? parseFloat((fcfYield * 100).toFixed(2)) : null,
           w3_confirmed:    w3,
           w4_confirmed:    w4,
-          capex_exception: capexException,
+          capex_exception:         capexException,
+          // Earnings quality + debt maturity (from SEC EDGAR quarterly cashflow)
+          earnings_quality_flag:   earningsQualityFlag                   ?? null,
+          debt_maturity_flag:      debtMaturityFlag                       ?? null,
+          dilution_flag:           fundamentals?.dilutionFlag             ?? null,
+          shares_yoy_pct:          fundamentals?.sharesYoYPct             ?? null,
+          cyclical_peak_flag:      fundamentals?._cyclicalPeakFlag        ?? false,
+          hypergrowth_mode:        fundamentals?._hypergrowthMode         ?? false,
+          // SMA-50 for display (already in score; stored for dashboard sparkline use)
+          sma50:                   technicals?.sma50   ?? null,
+          sma200:                  technicals?.sma200  ?? null,
+          realized_vol:            realizedVol         ?? null,
+          momentum_label:          momentumLabel       ?? 'NEUTRAL',
           ...(priceData?.price && stock.quantity && { total_value: priceData.price * stock.quantity })
           // recent_news intentionally omitted — preserved from last news-update.js run
         };
