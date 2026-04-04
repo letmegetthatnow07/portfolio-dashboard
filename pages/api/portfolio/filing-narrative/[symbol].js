@@ -324,32 +324,17 @@ async function save(symbol, filingMeta, geminiResult) {
     await client.quit();
   }
 
-  // Supabase — permanent record
-  try {
-    await supabase.from('earnings_events').upsert({
-      symbol,
-      date:               filingMeta.filed,
-      form:               filingMeta.form,               // '10-K' or '10-Q'
-      guidance_direction: 'none',                        // not applicable for 10-K/10-Q
-      thesis_status:      geminiResult?.thesis_status    ?? null,
-      management_tone:    geminiResult?.management_confidence ?? null,
-      summary:            geminiResult?.summary          ?? null,
-      thesis_risks:       geminiResult?.thesis_risks     ?? [],
-      thesis_confirms:    geminiResult?.thesis_confirms  ?? [],
-      raw_payload:        payload,
-    }, { onConflict: 'symbol,date' });
-  } catch (e) {
-    // Silently skip — non-critical
-  }
-}
-
-// ─── MAIN ─────────────────────────────────────────────────────────────────────
-
-async function main() {
   console.log('═══════════════════════════════════════════════════════════');
   console.log(' FILING NARRATIVE ANALYSER — 10-K / 10-Q MD&A');
   console.log(`  Date: ${new Date().toISOString().split('T')[0]}`);
   console.log('═══════════════════════════════════════════════════════════\n');
+
+  // Market holiday check — reads Polygon status from Redis cache
+  const _isOpen = await checkMarketOpen();
+  if (!_isOpen) {
+    console.log(`🏖️  Market closed today — skipping filing-narrative run.`);
+    process.exit(0);
+  }
 
   // Get portfolio symbols from Redis
   const redisClient = createRedisClient({ url: process.env.REDIS_URL });
