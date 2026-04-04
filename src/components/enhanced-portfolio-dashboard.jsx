@@ -581,7 +581,7 @@ const DetailPanel = ({ stock }) => {
           )}
 
           {/* Risk section — stocks only (MaxDD shown in ETF panel above) */}
-          {!isETFInstrument && (stock.max_drawdown != null || sbcPct != null) && (
+          {!isETFInstrument && (stock.max_drawdown != null || sbcPct != null || stock.earnings_quality_flag || stock.debt_maturity_flag) && (
             <div className="detail-section">
               <div className="detail-section-head">
                 <span className="detail-section-title">⚠️ Risk</span>
@@ -599,6 +599,54 @@ const DetailPanel = ({ stock }) => {
                   <FundRow label="SBC (annual)"
                     value={`$${stock.sbc_millions.toFixed(0)}M`}
                     hint="Annual stock-based compensation from most recent 10-K"/>
+                )}
+                {stock.earnings_quality_flag === 'risk' && (
+                  <FundRow label="Earnings Quality"
+                    value="⚠ Cash/Profit Divergence"
+                    hint="GAAP net income is positive but operating cash flow is negative — accrual earnings quality risk"
+                    positive={false}/>
+                )}
+                {stock.earnings_quality_flag === 'strong' && (
+                  <FundRow label="Earnings Quality"
+                    value="✓ Strong Cash Conversion"
+                    hint="Operating cash flow exceeds GAAP net income by >50% — high earnings quality"
+                    positive={true}/>
+                )}
+                {stock.debt_maturity_flag === 'wall' && (
+                  <FundRow label="Debt Maturity"
+                    value="⚠ Near-term Wall"
+                    hint=">30% of long-term debt matures within 12 months — refinancing risk in high-rate environment"
+                    positive={false}/>
+                )}
+                {stock.debt_maturity_flag === 'watch' && (
+                  <FundRow label="Debt Maturity"
+                    value="~ Watch"
+                    hint="15-30% of long-term debt matures within 12 months — monitor for refinancing conditions"
+                    positive={null}/>
+                )}
+                {stock.dilution_flag === 'heavy' && (
+                  <FundRow label="Share Dilution"
+                    value={`⚠ +${stock.shares_yoy_pct?.toFixed(1)}% YoY`}
+                    hint="Shares outstanding grew >5% YoY — economic dilution beyond SBC (possible secondary offering or M&A)"
+                    positive={false}/>
+                )}
+                {stock.dilution_flag === 'watch' && (
+                  <FundRow label="Share Dilution"
+                    value={`~ +${stock.shares_yoy_pct?.toFixed(1)}% YoY`}
+                    hint="Shares outstanding grew 3-5% YoY — monitor for secondary offerings or excessive equity grants"
+                    positive={null}/>
+                )}
+                {stock.dilution_flag === 'buyback' && (
+                  <FundRow label="Share Count"
+                    value={`✓ ${stock.shares_yoy_pct?.toFixed(1)}% YoY`}
+                    hint="Shares outstanding declining — net buyback program returning capital to owners"
+                    positive={true}/>
+                )}
+                {stock.cyclical_peak_flag && (
+                  <FundRow label="Cycle Position"
+                    value="⚠ Cyclical Peak Signal"
+                    hint="Current gross margin is >50% above 5-year average — likely at earnings cycle peak. Fundamental score capped at 6.5."
+                    positive={false}/>
                 )}
               </div>
             </div>
@@ -658,9 +706,19 @@ const DetailPanel = ({ stock }) => {
             <div className="detail-section">
               <div className="detail-section-head">
                 <span className="detail-section-title">📐 Score Breakdown</span>
-                <span className="detail-section-score" style={{ color: scoreCol(stock.latest_score) }}>
-                  {stock.latest_score?.toFixed(1)}/10
-                </span>
+                <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+                  {stock.hypergrowth_mode && (
+                    <span style={{
+                      fontSize:10, padding:'2px 6px', borderRadius:4,
+                      background:'#7c3aed18', color:'#7c3aed',
+                      border:'1px solid #7c3aed40', fontWeight:600,
+                      fontFamily:'DM Mono,monospace',
+                    }}>⚡ Hypergrowth</span>
+                  )}
+                  <span className="detail-section-score" style={{ color: scoreCol(stock.latest_score) }}>
+                    {stock.latest_score?.toFixed(1)}/10
+                  </span>
+                </div>
               </div>
               <div className="detail-rows">
                 {isETFInstrument ? (
@@ -680,31 +738,43 @@ const DetailPanel = ({ stock }) => {
                   </>
                 ) : (
                   <>
-                    <FundRow label="Fundamentals (35%)"
+                    <FundRow label="Fundamentals (45%)"
                       value={stock.score_fund != null ? `${stock.score_fund.toFixed(1)}/10` : null}
-                      hint="ROIC, SBC-adjusted FCF, D/E ratio, revenue growth durability"
+                      hint="ROIC (40%) · SBC-adj FCF (30%) · D/E (20%) · Revenue growth dual-window (10%)"
                       positive={stock.score_fund >= 6}/>
-                    <FundRow label="Analyst Rating (20%)"
-                      value={stock.score_rating != null ? `${stock.score_rating.toFixed(1)}/10` : null}
-                      hint="Weighted analyst consensus: Strong Buy → Sell"
-                      positive={stock.score_rating >= 6}/>
-                    <FundRow label="Insider (20%)"
+                    <FundRow label="Insider (25%)"
                       value={stock.score_insider != null ? `${stock.score_insider.toFixed(1)}/10` : null}
-                      hint="Open market buys vs sells (excludes tax withholding and option grants)"
+                      hint="CEO/CFO open-market buys (3× weight) · cluster detection · excludes tax withholding, grants, option exercises"
                       positive={stock.score_insider >= 6}/>
-                    <FundRow label="News (15%)"
-                      value={stock.score_news != null ? `${stock.score_news.toFixed(1)}/10` : null}
-                      hint="Intraday news sentiment — recency-weighted across 3 daily runs"
-                      positive={stock.score_news >= 6}/>
+                    <FundRow label="Analyst Rating (10%)"
+                      value={stock.score_rating != null ? `${stock.score_rating.toFixed(1)}/10` : null}
+                      hint="Snapshot consensus + revision delta — upgrades/downgrades vs prior month are amplified"
+                      positive={stock.score_rating >= 6}/>
                     <FundRow label="Technicals (10%)"
                       value={stock.score_tech != null ? `${stock.score_tech.toFixed(1)}/10` : null}
-                      hint="SMA-200 trend + RSI — confirmation signal for long-horizon compounders"
+                      hint="SMA-200 (60%) + SMA-50 (40%) trend confirmation · RSI sweet spot 45-65 · oversold <35 = opportunity"
                       positive={stock.score_tech >= 6}/>
+                    <FundRow label="News (10%)"
+                      value={stock.score_news != null ? `${stock.score_news.toFixed(1)}/10` : null}
+                      hint="Recency-weighted average of 3 intraday news runs — 9 AM, 1 PM, 4:15 PM ET"
+                      positive={stock.score_news >= 6}/>
                     {stock.fcf_yield_score != null && (
                       <FundRow label="FCF Yield (display)"
                         value={`${stock.fcf_yield_score.toFixed(1)}%`}
                         hint="Valuation context only — not in score. >5% attractive, <2% expensive."
                         positive={stock.fcf_yield_score > 3}/>
+                    )}
+                    {stock.momentum_label && stock.momentum_label !== 'NEUTRAL' && (
+                      <FundRow label="Price Momentum"
+                        value={stock.momentum_label}
+                        hint="SMA50/SMA200 trend cross + 21d rate-of-change. STRONG = golden cross + positive ROC."
+                        positive={['STRONG','POSITIVE'].includes(stock.momentum_label)}/>
+                    )}
+                    {stock.realized_vol != null && (
+                      <FundRow label="Realised Vol (ann.)"
+                        value={`${stock.realized_vol.toFixed(1)}%`}
+                        hint="Annualised 21-day realised volatility. Context for position sizing alongside beta."
+                        positive={stock.realized_vol < 30}/>
                     )}
                   </>
                 )}
