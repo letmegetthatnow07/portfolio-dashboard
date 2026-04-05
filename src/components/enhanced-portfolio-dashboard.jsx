@@ -1147,7 +1147,17 @@ const EnhancedPortfolioDashboard = () => {
                         {/* Total Value */}
                         <td>
                           <div className="price-value">{fmtUSD(tv)}</div>
-                          {totalVal > 0 && <div className="weight-pct">{((tv/totalVal)*100).toFixed(1)}%</div>}
+                          {totalVal > 0 && (() => {
+                            const wPct = (tv/totalVal)*100;
+                            const wColor = wPct > 15 ? '#dc2626' : wPct > 10 ? '#d97706' : '#6b6b65';
+                            return (
+                              <div title={`${wPct.toFixed(1)}% of portfolio${wPct > 15 ? ' — HIGH CONCENTRATION' : wPct > 10 ? ' — elevated' : ''}`}
+                                style={{ fontFamily:'var(--font-mono)', fontSize:11, color:wColor, marginTop:3, fontWeight: wPct > 10 ? 600 : 400 }}>
+                                {wPct.toFixed(1)}% weight
+                                {wPct > 15 && <span style={{marginLeft:4}}>⚠</span>}
+                              </div>
+                            );
+                          })()}
                         </td>
 
                         {/* Actions */}
