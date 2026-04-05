@@ -40,6 +40,38 @@ const { createClient: createSupabaseClient } = require('@supabase/supabase-js');
 const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent';
 const TTL_SECONDS     = 90 * 24 * 60 * 60;  // 90 days in Redis
 
+// ─── MARKET HOLIDAY GUARD — POLYGON CACHE ────────────────────────────────────
+// Reads the market status cached in Redis by daily-update.js (12h TTL).
+// If cache is empty (this script runs standalone), does a direct Polygon call.
+// Zero hardcoded dates — works for any exchange closure automatically.
+async function checkMarketOpen() {
+  const todayStr = new Date().toISOString().split('T')[0];
+  const _r = createRedisClient({ url: process.env.REDIS_URL });
+  _r.on('error', () => {});
+  await _r.connect().catch(() => {});
+  const cached = await _r.get(`market_open_${todayStr}`).catch(() => null);
+  if (cached === 'closed') { await _r.quit().catch(() => {}); return false; }
+  if (!cached) {
+    // Not cached — call Polygon directly
+    try {
+      const _axios = require('axios');
+      const res = await _axios.get(
+        `https://api.polygon.io/v1/marketstatus/now?apiKey=${process.env.POLYGON_API_KEY}`,
+        { timeout: 6000 }
+      );
+      const status = res.data?.market ?? 'open';
+      await _r.set(`market_open_${todayStr}`, status, { EX: 43200 }).catch(() => {});
+      await _r.quit().catch(() => {});
+      return status !== 'closed';
+    } catch (e) {
+      await _r.quit().catch(() => {});
+      return true; // fail open
+    }
+  }
+  await _r.quit().catch(() => {});
+  return true; // cached as open or extended-hours
+}
+
 // ─── CLIENTS ──────────────────────────────────────────────────────────────────
 
 const supabase = createSupabaseClient(
@@ -145,7 +177,7 @@ async function fetchEarningsPressRelease(symbol) {
     const cikNum = cik.replace(/^0+/, '');
 
     // Fetch the filing index to find the ex-99.1 document
-    const indexUrl = `https://www.sec.gov/Archives/edgar/${cikNum}/${accessionRaw}/${accessionFormatted}-index.htm`;
+    const indexUrl = `https://www.sec.gov/Archives/edgar/data/${cikNum}/${accessionRaw}/${accessionFormatted}-index.htm`;
     const indexRes = await axios.get(indexUrl, {
       headers: { 'User-Agent': 'AlphaDashboard/1.0 (portfolio@example.com)' },
       timeout: 8000,
@@ -162,7 +194,7 @@ async function fetchEarningsPressRelease(symbol) {
     }
 
     // Fetch the press release text
-    const docPath = ex991Match[1].startsWith('/') ? ex991Match[1] : `/Archives/edgar/${cikNum}/${accessionRaw}/${ex991Match[1]}`;
+    const docPath = ex991Match[1].startsWith('/') ? ex991Match[1] : `/Archives/edgar/data/${cikNum}/${accessionRaw}/${ex991Match[1]}`;
     const docRes = await axios.get(`https://www.sec.gov${docPath}`, {
       headers: { 'User-Agent': 'AlphaDashboard/1.0 (portfolio@example.com)' },
       timeout: 10000,
@@ -191,14 +223,13 @@ async function fetchEarningsPressRelease(symbol) {
 // Returns a guaranteed-schema object — no parsing errors possible.
 //
 // JSON schema:
-//   eps_beat:            true/false/null    — did EPS beat consensus estimate?
-//   revenue_beat:        true/false/null    — did revenue beat consensus?
-//   guidance_direction:  'raised'/'lowered'/'maintained'/'none'/null
-//   guidance_tone:       1-5               — 1=very bearish, 5=very bullish
-//   thesis_risks:        string[]          — specific risks mentioned (max 3)
-//   thesis_confirms:     string[]          — thesis-confirming signals (max 3)
-//   management_tone:     1-5               — hedging language analysis
-//   summary:             string            — 1-sentence plain English verdict
+//   eps_beat:              true/false/null  — did EPS beat consensus estimate?
+//   revenue_beat:          true/false/null  — did revenue beat consensus?
+//   guidance_direction:    'raised'/'lowered'/'maintained'/'none'
+//   thesis_confirms:       string[]         — thesis-confirming signals (max 3)
+//   thesis_risks:          string[]         — specific risks mentioned (max 3)
+//   management_confidence: 1-5             — 1=defensive/hedging, 5=very confident
+//   summary:               string          — 1-sentence verdict for long-term holder
 
 async function analyseWithGemini(symbol, pressReleaseText, earningsMetadata) {
   if (!process.env.GEMINI_API_KEY) {
@@ -206,24 +237,48 @@ async function analyseWithGemini(symbol, pressReleaseText, earningsMetadata) {
     return null;
   }
 
-  const prompt = `You are a buy-side analyst reviewing an earnings press release for a long-horizon compounder portfolio.
-Analyse this earnings release for ${symbol} and extract the information below. Be precise and conservative.
+  const epsStr = earningsMetadata.epsEstimate != null
+    ? `$${earningsMetadata.epsEstimate}`
+    : 'not available';
+  const revStr = earningsMetadata.revenueEstimate != null
+    ? `$${(earningsMetadata.revenueEstimate / 1e6).toFixed(0)}M`
+    : 'not available';
 
-EPS estimate: ${earningsMetadata.epsEstimate ?? 'unknown'}
-Revenue estimate: ${earningsMetadata.revenueEstimate != null ? `$${(earningsMetadata.revenueEstimate/1e6).toFixed(0)}M` : 'unknown'}
+  // No hardcoded thesis — Gemini already knows every public company.
+  // We give it the investor mandate and let it derive what matters from the filing.
+  // This works for any stock added or removed without any code change.
+  const prompt = `You are reviewing an earnings press release on behalf of a long-horizon equity investor.
+
+INVESTOR MANDATE:
+- Concentrated portfolio (15-20 stocks), targeting 22% CAGR
+- Holding period: 3-7 years minimum
+- Framework: fundamentals-first compounder — ROIC durability, FCF quality, revenue growth trajectory
+- Reading as a current HOLDER, not a prospective buyer
+
+STOCK: ${symbol}
+CONSENSUS EPS ESTIMATE: ${epsStr}
+CONSENSUS REVENUE ESTIMATE: ${revStr}
 
 EARNINGS PRESS RELEASE:
 ${pressReleaseText}
 
-Return ONLY a JSON object with these exact fields:
-- eps_beat: boolean or null (did reported EPS beat the consensus estimate? null if estimate unavailable)
-- revenue_beat: boolean or null (did reported revenue beat the consensus estimate? null if estimate unavailable)
-- guidance_direction: one of "raised", "lowered", "maintained", "none" (was forward guidance updated?)
-- guidance_tone: integer 1-5 (1=very bearish language, 3=neutral, 5=very bullish language in guidance)
-- thesis_risks: array of up to 3 short strings (specific risks or negatives mentioned — quote numbers where possible)
-- thesis_confirms: array of up to 3 short strings (thesis-confirming positives — quote numbers where possible)
-- management_tone: integer 1-5 (1=defensive/hedging heavily, 3=balanced, 5=confident/aggressive)
-- summary: single sentence verdict for a long-term investor (max 25 words)`;
+Analyse this through the lens of a long-term holder. Your job is to assess whether the long-term investment case is strengthening, stable, or weakening based on this result.
+
+Rules:
+- Cite specific numbers from the release (percentages, dollar figures, units)
+- Focus on what CHANGED vs prior expectations, not what was already known
+- Identify anything that threatens the multi-year thesis specifically
+- Ignore short-term noise (fx rates, one-time items) unless they indicate structural change
+- Be conservative — a miss that management explains away is still a miss
+
+Return ONLY a JSON object:
+- eps_beat: boolean or null (null if no estimate available)
+- revenue_beat: boolean or null (null if no estimate available)
+- guidance_direction: "raised", "lowered", "maintained", or "none"
+- thesis_confirms: up to 3 strings — evidence the long-term investment case is intact (cite numbers)
+- thesis_risks: up to 3 strings — evidence that threatens the multi-year thesis (cite numbers)
+- management_confidence: integer 1-5 (1=heavily hedging language, 3=balanced, 5=unusually confident)
+- summary: single sentence for a long-term holder, max 25 words, no filler phrases`;
 
   try {
     const res = await axios.post(
@@ -235,17 +290,16 @@ Return ONLY a JSON object with these exact fields:
           responseSchema: {
             type: 'object',
             properties: {
-              eps_beat:           { type: ['boolean', 'null'] },
-              revenue_beat:       { type: ['boolean', 'null'] },
-              guidance_direction: { type: 'string', enum: ['raised', 'lowered', 'maintained', 'none'] },
-              guidance_tone:      { type: 'integer', minimum: 1, maximum: 5 },
-              thesis_risks:       { type: 'array', items: { type: 'string' }, maxItems: 3 },
-              thesis_confirms:    { type: 'array', items: { type: 'string' }, maxItems: 3 },
-              management_tone:    { type: 'integer', minimum: 1, maximum: 5 },
-              summary:            { type: 'string' },
+              eps_beat:              { type: ['boolean', 'null'] },
+              revenue_beat:          { type: ['boolean', 'null'] },
+              guidance_direction:    { type: 'string', enum: ['raised', 'lowered', 'maintained', 'none'] },
+              thesis_confirms:       { type: 'array', items: { type: 'string' }, maxItems: 3 },
+              thesis_risks:          { type: 'array', items: { type: 'string' }, maxItems: 3 },
+              management_confidence: { type: 'integer', minimum: 1, maximum: 5 },
+              summary:               { type: 'string' },
             },
-            required: ['eps_beat', 'revenue_beat', 'guidance_direction', 'guidance_tone',
-                       'thesis_risks', 'thesis_confirms', 'management_tone', 'summary'],
+            required: ['eps_beat', 'revenue_beat', 'guidance_direction',
+                       'thesis_confirms', 'thesis_risks', 'management_confidence', 'summary'],
           },
           temperature: 0.1,   // very low temperature — we want factual extraction, not creativity
         },
@@ -299,14 +353,16 @@ async function logToSupabase(symbol, date, payload) {
       .upsert({
         symbol,
         date,
-        eps_beat:           payload.gemini?.eps_beat ?? null,
-        revenue_beat:       payload.gemini?.revenue_beat ?? null,
+        form:               '8-K-earnings',               // distinguishes from 10-K/10-Q records
+        quarter:            payload.quarter ?? null,
+        year:               payload.year    ?? null,
+        eps_beat:           payload.gemini?.eps_beat           ?? null,
+        revenue_beat:       payload.gemini?.revenue_beat       ?? null,
         guidance_direction: payload.gemini?.guidance_direction ?? null,
-        guidance_tone:      payload.gemini?.guidance_tone ?? null,
-        management_tone:    payload.gemini?.management_tone ?? null,
-        summary:            payload.gemini?.summary ?? null,
-        thesis_risks:       payload.gemini?.thesis_risks ?? [],
-        thesis_confirms:    payload.gemini?.thesis_confirms ?? [],
+        management_tone:    payload.gemini?.management_confidence ?? null,
+        summary:            payload.gemini?.summary            ?? null,
+        thesis_risks:       payload.gemini?.thesis_risks       ?? [],
+        thesis_confirms:    payload.gemini?.thesis_confirms    ?? [],
         raw_payload:        payload,
       }, { onConflict: 'symbol,date' });
 
@@ -321,6 +377,13 @@ async function logToSupabase(symbol, date, payload) {
 // ─── MAIN ─────────────────────────────────────────────────────────────────────
 
 async function main() {
+    // Market holiday check
+  const _isOpen = await checkMarketOpen();
+  if (!_isOpen) {
+    console.log('🏖️  Market closed today — skipping earnings-event run.');
+    process.exit(0);
+  }
+
   console.log('═══════════════════════════════════════════════════════════');
   console.log(' EARNINGS EVENT ANALYSER');
   console.log(`  Date: ${new Date().toISOString().split('T')[0]}`);
