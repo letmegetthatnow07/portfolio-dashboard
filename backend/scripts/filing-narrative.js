@@ -134,20 +134,8 @@ async function fetchMDA(symbol) {
       return null;
     }
 
-    // Fetch filing index
-    const indexUrl = `https://www.sec.gov/Archives/edgar/full-index/${filed.slice(0,4)}/${filed.slice(5,7)}/${accRaw}/${accFmt}-index.htm`;
-    let indexRes;
-    try {
-      indexRes = await axios.get(
-        `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${cikNum}&type=${form}&dateb=&owner=include&count=1&search_text=`,
-        { headers: { 'User-Agent': 'AlphaDashboard/1.0 (portfolio@example.com)' }, timeout: 8000 }
-      );
-    } catch (e) {
-      // Fallback: use the direct archive URL
-    }
-
     // Fetch the primary document from the filing
-    const docIndexUrl = `https://www.sec.gov/Archives/edgar/${cikNum}/${accRaw}/${accFmt}-index.htm`;
+    const docIndexUrl = `https://www.sec.gov/Archives/edgar/data/${cikNum}/${accRaw}/${accFmt}-index.htm`;
     const docIndex = await axios.get(docIndexUrl, {
       headers: { 'User-Agent': 'AlphaDashboard/1.0 (portfolio@example.com)' },
       timeout: 8000,
@@ -166,7 +154,7 @@ async function fetchMDA(symbol) {
     }
 
     const docPath = mainDocMatch[1].startsWith('/') ? mainDocMatch[1]
-      : `/Archives/edgar/${cikNum}/${accRaw}/${mainDocMatch[1]}`;
+      : `/Archives/edgar/data/${cikNum}/${accRaw}/${mainDocMatch[1]}`;
 
     const docRes = await axios.get(`https://www.sec.gov${docPath}`, {
       headers: { 'User-Agent': 'AlphaDashboard/1.0 (portfolio@example.com)' },
@@ -324,30 +312,17 @@ async function save(symbol, filingMeta, geminiResult) {
     await client.quit();
   }
 
-  // Supabase — permanent record (reuses earnings_events table with form type)
-  try {
-    await supabase.from('earnings_events').upsert({
-      symbol,
-      date:               filingMeta.filed,
-      guidance_direction: 'none',  // not applicable for 10-K/10-Q
-      summary:            geminiResult?.summary ?? null,
-      thesis_risks:       geminiResult?.thesis_risks ?? [],
-      thesis_confirms:    geminiResult?.thesis_confirms ?? [],
-      management_tone:    geminiResult?.management_confidence ?? null,
-      raw_payload:        payload,
-    }, { onConflict: 'symbol,date' });
-  } catch (e) {
-    // Silently skip — non-critical
-  }
-}
-
-// ─── MAIN ─────────────────────────────────────────────────────────────────────
-
-async function main() {
   console.log('═══════════════════════════════════════════════════════════');
   console.log(' FILING NARRATIVE ANALYSER — 10-K / 10-Q MD&A');
   console.log(`  Date: ${new Date().toISOString().split('T')[0]}`);
   console.log('═══════════════════════════════════════════════════════════\n');
+
+  // Market holiday check — reads Polygon status from Redis cache
+  const _isOpen = await checkMarketOpen();
+  if (!_isOpen) {
+    console.log(`🏖️  Market closed today — skipping filing-narrative run.`);
+    process.exit(0);
+  }
 
   // Get portfolio symbols from Redis
   const redisClient = createRedisClient({ url: process.env.REDIS_URL });
