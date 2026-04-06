@@ -498,7 +498,7 @@ class PriceAnalyzer {
    * @param {boolean}      capexException
    * @param {number|null}  newsScoreOverride   — pre-computed intraday average
    */
-  calculateScore(priceData, fundamentals, technicals, ratings, analyzedNews, insiderData, capexException = false, newsScoreOverride = null, isETF = false) {
+  calculateScore(priceData, fundamentals, technicals, ratings, analyzedNews, insiderData, capexException = false, newsScoreOverride = null, isETF = false, expenseRatio = null) {
     let fundScore = 5, techScore = 5, ratingScore = 5, newsScore = 5, insiderScore = 5;
 
     if (fundamentals) {
@@ -825,7 +825,35 @@ class PriceAnalyzer {
     //   Tech 50% | News 30% | Analyst 20%
     let finalScore;
     if (isETF) {
-      finalScore = (techScore * 0.50) + (newsScore * 0.30) + (ratingScore * 0.20);
+      // ── Conditional ETF weight redistribution ─────────────────────────────
+      // Most ETFs (SPMO, SMH, BNO, AVNV, SHLD) have no analyst ratings.
+      // When ratingScore is defaulted to 5.0 (no coverage), the Analyst 20%
+      // is dead weight — identical for every ETF regardless of momentum.
+      //   With analyst data:    Tech50 / News30 / Analyst20
+      //   Without analyst data: Tech65 / News35
+      if (ratings === null || ratings === undefined) {
+        finalScore = (techScore * 0.65) + (newsScore * 0.35);
+      } else {
+        finalScore = (techScore * 0.50) + (newsScore * 0.30) + (ratingScore * 0.20);
+      }
+
+      // ── Expense ratio penalty ─────────────────────────────────────────────
+      // Expense ratio IS a compounding drag — a 0.75% ETF must generate
+      // 0.75% more annual return than a free ETF just to break even.
+      // Applied as a post-composite subtraction (not a weight component).
+      // profileExpenseRatio is passed in as the 'expenseRatio' parameter.
+      // Scale calibrated to your actual ETF portfolio:
+      //   SPMO 0.13%: -0.2  |  SMH 0.35%: -0.5  |  BNO 0.88%: -1.2
+      //   AVNV 0.15%: -0.2  |  SHLD 0.35%: -0.5
+      const er = typeof expenseRatio === 'number' ? expenseRatio : null;
+      if (er != null) {
+        const erPenalty = er < 0.10 ? 0.0
+                        : er < 0.25 ? 0.2
+                        : er < 0.50 ? 0.5
+                        : er < 0.75 ? 0.8
+                        : 1.2;
+        finalScore = Math.max(0, finalScore - erPenalty);
+      }
     } else {
       // ── Conditional insider weight redistribution ─────────────────────────
       // When insider data is genuinely absent (insiderData == null):
@@ -1060,6 +1088,33 @@ async function writeSupabaseDailyMetrics(symbol, scoreObj, priceData, technicals
   if (error) logger.error(`daily_metrics write failed for ${symbol}: code=${error.code} msg=${error.message} details=${error.details}`);
 }
 
+// ─── QUARTERLY FUNDAMENTALS STORAGE ──────────────────────────────────────────
+// Stores the key fundamental metrics in Supabase daily (upsert = safe to rerun).
+// These values come from Finnhub metric=all + SEC EDGAR XBRL — already fetched.
+// After 4-8 quarters of accumulation, ROIC trend, gross margin trajectory,
+// and operating margin expansion/compression become computable from history.
+// No additional API calls. This is pure archival of data already in memory.
+async function writeSupabaseQuarterlyFundamentals(symbol, fundamentals, secCapex) {
+  if (!fundamentals) return; // ETFs and data-unavailable stocks skipped
+  const { error } = await supabase.rpc('upsert_fundamentals_snapshot', {
+    p_date:                TODAY,
+    p_symbol:              symbol,
+    p_roic_pct:            fundamentals.roic              != null ? parseFloat((fundamentals.roic * 100).toFixed(4))       : null,
+    p_fcf_margin_pct:      fundamentals.fcfMargin         != null ? parseFloat((fundamentals.fcfMargin * 100).toFixed(4))   : null,
+    p_gross_margin_pct:    fundamentals.grossMargin       != null ? parseFloat((fundamentals.grossMargin * 100).toFixed(4)) : null,
+    p_operating_margin_pct:(fundamentals._raw?.fcfMarginPct != null ? parseFloat(fundamentals._raw.fcfMarginPct.toFixed(4)) : null),
+    p_de_ratio:            fundamentals.debtToEquity      != null ? parseFloat(fundamentals.debtToEquity.toFixed(4))        : null,
+    p_revenue_growth_yoy:  fundamentals.revenueGrowthYoY != null ? parseFloat((fundamentals.revenueGrowthYoY * 100).toFixed(4)) : null,
+    p_revenue_growth_3y:   fundamentals.revenueGrowth3Y  != null ? parseFloat((fundamentals.revenueGrowth3Y * 100).toFixed(4))  : null,
+    p_sbc_millions:        fundamentals.sbcMillions       ?? null,
+    p_shares_outstanding_m:null, // populated from Finnhub sharesOutstanding when available
+    p_capex_millions:      secCapex?.capex                != null ? Math.abs(secCapex.capex)   : null,
+    p_ocf_millions:        secCapex?.ocf                  != null ? secCapex.ocf               : null,
+    p_net_income_millions: secCapex?.netIncome            != null ? secCapex.netIncome          : null,
+  });
+  if (error) logger.warn(`fundamentals_snapshot write failed for ${symbol}: ${error.message}`);
+}
+
 async function writeSupabaseRegimeFlags({ symbol, w1, w2, w3, w4, beta, excessReturn, regimeStatus, action, springDays, capexException, qualityScore, rsi }) {
   const { error } = await supabase.rpc('upsert_regime_flags', {
     p_date:              TODAY,
@@ -1280,7 +1335,44 @@ async function updateMarketData() {
 
     const spyReturn21d = compute21dReturn(spyTechnicals.historyAsc);
     const spyPrice     = spyTechnicals.historyDesc[0].c;
-    logger.info(`  SPY 21d return: ${spyReturn21d.toFixed(2)}% | Price: $${spyPrice}`);
+
+    // ── Market-level regime classification ────────────────────────────────────
+    // Uses BOTH point-to-point 21d return AND max drawdown within the 21d window.
+    // Point-to-point alone misses recovering crashes: SPY falls 9% then recovers 5%
+    // → point-to-point = -4% (STRESSED) but the market experienced -9% (BEAR).
+    // We take the WORST of the two signals so regime stays elevated until
+    // both the peak-to-trough AND the endpoint have genuinely healed.
+    //
+    // Peak-to-trough within 21d window (worst intra-period drawdown):
+    const spy21dSlice = spyTechnicals.historyAsc.slice(-21);
+    let _spyPeak = spy21dSlice[0]?.c || 1;
+    let spyMaxDD21d = 0;
+    for (const bar of spy21dSlice) {
+      if (bar.c > _spyPeak) _spyPeak = bar.c;
+      const dd = ((bar.c - _spyPeak) / _spyPeak) * 100; // as %
+      if (dd < spyMaxDD21d) spyMaxDD21d = dd;
+    }
+    // Regime = worst of point-to-point and max drawdown in window
+    const spyWorstSignal = Math.min(spyReturn21d, spyMaxDD21d);
+    const marketRegime = spyWorstSignal > -3 ? 'NORMAL'
+                       : spyWorstSignal > -8 ? 'STRESSED'
+                       : 'BEAR';
+    logger.info(`  SPY 21d return: ${spyReturn21d.toFixed(2)}% | 21d MaxDD: ${spyMaxDD21d.toFixed(2)}% | Market Regime: ${marketRegime}`);
+
+    // Store market regime once per run as a portfolio-level key
+    // Dashboard reads this to apply regime-aware position sizing caps
+    try {
+      const _mrc = createRedisClient({ url: process.env.REDIS_URL });
+      _mrc.on('error', () => {});
+      await _mrc.connect();
+      await _mrc.set('market_regime', JSON.stringify({
+        regime:      marketRegime,
+        spy21d:      parseFloat(spyReturn21d.toFixed(2)),
+        spyMaxDD21d: parseFloat(spyMaxDD21d.toFixed(2)),
+        date:        TODAY,
+      }), { EX: 28 * 60 * 60 }); // 28 hours TTL — refreshed daily
+      await _mrc.quit();
+    } catch (e) { /* non-critical */ }
 
     const totalPortfolioValue = stocks.reduce(
       (sum, s) => sum + ((s.current_price || 0) * (s.quantity || 0)), 0
@@ -1365,7 +1457,8 @@ async function updateMarketData() {
           priceData, fundamentals, technicals,
           ratings, null, insiderData, capexException,
           intradayNewsScore ?? 5.0,
-          instrumentIsETF   // ETFs use different composite weights
+          instrumentIsETF,     // ETFs use different composite weights
+          instrumentIsETF ? (profileExpenseRatio ?? null) : null  // expense ratio for ETF penalty
         );
 
         // Compute MaxDD from price history (trailing 252 days)
@@ -1401,6 +1494,7 @@ async function updateMarketData() {
         let regimeStatus = 'HOLD', action = 'HOLD';
         let springSignal = false, springDays = 0, addSignal = false;
         let w1 = false, w2 = false, w3 = false, w4 = false;
+        let sharpDrop = false, scoreDelta = 0; // hoisted for Redis write scope
 
         if (technicals && spyTechnicals) {
           beta = quantEngine.calculateBeta(technicals.historyAsc, spyTechnicals.historyAsc);
@@ -1418,12 +1512,62 @@ async function updateMarketData() {
           if (supError) logger.warn(`Supabase history fetch failed: ${supError.message}`);
           const history252d = (supData || []).reverse();
 
+          // ── Moat-adjusted cascade window sizes ────────────────────────────
+          // regulatory_moat_strength (1-5) read from Redis filing narrative.
+          // High-moat stocks (strength 5) need more days of sustained decline
+          // before W1 fires — their thesis is structurally durable.
+          // Low-moat stocks (strength 1, expiring exclusivity) fire faster —
+          // the market prices in competitive threat before financials reflect it.
+          // Only W1 and W2 are adjusted. W3/W4 remain at 63/252 — structural
+          // decay is structural regardless of moat runway.
+          let _moatStrength = null;
+          try {
+            // Read moat strength from Redis filing narrative (written quarterly)
+            const _rc2 = createRedisClient({ url: process.env.REDIS_URL });
+            _rc2.on('error', () => {});
+            await _rc2.connect();
+            const _fnRaw = await _rc2.get(`filing_narrative_${stock.symbol}`).catch(() => null);
+            await _rc2.quit();
+            if (_fnRaw) {
+              const _fn = JSON.parse(_fnRaw);
+              const _ms = _fn?.gemini?.regulatory_moat_strength;
+              if (typeof _ms === 'number' && _ms >= 1 && _ms <= 5) _moatStrength = _ms;
+            }
+          } catch (e) { /* moat strength unavailable — use defaults */ }
+
+          // Window size map: [w1Days, w2Days]
+          // strength 5 →  11d / 32d  (slowest — structural moat, noise-resistant)
+          // strength 4 →   9d / 27d
+          // strength 3 →   7d / 21d  (default — same as before)
+          // strength 2 →   5d / 15d
+          // strength 1 →   4d / 12d  (fastest — expiring moat, act quickly)
+          // null / 0   →   7d / 21d  (default when no moat data)
+          const _moatWindows = {
+            5: [11, 32], 4: [9, 27], 3: [7, 21], 2: [5, 15], 1: [4, 12]
+          };
+          const [_w1Days, _w2Days] = _moatWindows[_moatStrength] ?? [7, 21];
+          logger.info(`  🏛️  Moat strength: ${_moatStrength ?? 'none'} → W1 window: ${_w1Days}d, W2 window: ${_w2Days}d`);
+
           regimeStatus = quantEngine.evaluateFractalDecay(history252d, noiseDecay);
 
-          w1 = history252d.length >= 7   ? quantEngine._w1Trigger(history252d.slice(-7))   : false;
-          w2 = history252d.length >= 21  ? quantEngine._w2Trigger(history252d.slice(-21))  : false;
-          w3 = history252d.length >= 63  ? quantEngine._w3Trigger(history252d.slice(-63))  : false;
-          w4 = history252d.length >= 252 ? quantEngine._w4Trigger(history252d)             : false;
+          w1 = history252d.length >= _w1Days ? quantEngine._w1Trigger(history252d.slice(-_w1Days)) : false;
+          w2 = history252d.length >= _w2Days ? quantEngine._w2Trigger(history252d.slice(-_w2Days)) : false;
+          w3 = history252d.length >= 63      ? quantEngine._w3Trigger(history252d.slice(-63))      : false;
+          w4 = history252d.length >= 252     ? quantEngine._w4Trigger(history252d)                 : false;
+
+          // ── Sharp score drop detection ─────────────────────────────────────
+          // If fundScore drops ≥1.0 point vs yesterday (earnings miss, guidance cut,
+          // sudden deterioration), flag immediately — same EOD run, same night.
+          // This enables the dashboard to alert on oversized positions instantly.
+          // Uses yesterday's stored fund_score from Supabase (history252d[-1] = yesterday).
+          const prevFundScore = history252d.length >= 1
+            ? history252d[history252d.length - 1].fund_score
+            : null;
+          scoreDelta = prevFundScore != null ? scoreObj.fund - prevFundScore : 0;
+          sharpDrop  = scoreDelta <= -1.0; // ≥1 point drop in a single day
+          if (sharpDrop) {
+            logger.warn(`  ⚡ SHARP SCORE DROP: ${stock.symbol} fund ${prevFundScore?.toFixed(1)} → ${scoreObj.fund.toFixed(1)} (Δ${scoreDelta.toFixed(1)})`);
+          }
 
           const history20d     = technicals.historyAsc.slice(-20);
           const prevSpringDays = await getPreviousSpringDays(stock.symbol);
@@ -1452,6 +1596,9 @@ async function updateMarketData() {
 
         await writeSupabaseDailyMetrics(stock.symbol, scoreObj, priceData, technicals, spyPrice, action);
         await writeSupabaseRegimeFlags({ symbol: stock.symbol, w1, w2, w3, w4, beta, excessReturn, regimeStatus: noiseDecay, action, springDays, capexException, qualityScore: scoreObj.fund, rsi: technicals?.rsi ?? null });
+        // Write fundamental snapshot for historical trend analysis
+        // Upsert is safe — re-runs same day just overwrite with same data
+        if (!instrumentIsETF) await writeSupabaseQuarterlyFundamentals(stock.symbol, fundamentals, secCapex);
 
         // Redis update — note: recent_news is NOT overwritten here
         // The news-update.js runs maintain the headlines in Redis throughout the day
@@ -1506,6 +1653,8 @@ async function updateMarketData() {
           shares_yoy_pct:          fundamentals?.sharesYoYPct             ?? null,
           cyclical_peak_flag:      fundamentals?._cyclicalPeakFlag        ?? false,
           hypergrowth_mode:        fundamentals?._hypergrowthMode         ?? false,
+          sharp_score_drop:        sharpDrop    ?? false,
+          score_delta_1d:          scoreDelta != null ? parseFloat(scoreDelta.toFixed(2)) : null,
           // SMA-50 for display (already in score; stored for dashboard sparkline use)
           sma50:                   technicals?.sma50   ?? null,
           sma200:                  technicals?.sma200  ?? null,
