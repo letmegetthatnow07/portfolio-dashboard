@@ -4,21 +4,21 @@ import './enhanced-portfolio-dashboard.css';
 import CorrelationHeatmap from './CorrelationHeatmap';
 
 const SIGNAL_CFG = {
-  ADD:                 { color: '#059669', label: 'Add',           tier: 'bull' },
-  SPRING_CONFIRMED:    { color: '#047857', label: 'Spring ✓',      tier: 'bull' },
-  SPRING_CANDIDATE:    { color: '#10b981', label: 'Spring ~',      tier: 'bull' },
+  ADD:                 { color: '#059669', label: 'Add',            tier: 'bull' },
+  SPRING_CONFIRMED:    { color: '#047857', label: 'Spring ✓',       tier: 'bull' },
+  SPRING_CANDIDATE:    { color: '#10b981', label: 'Spring ~',       tier: 'bull' },
   STRONG_BUY:          { color: '#2563eb', label: 'Strong Buy',    tier: 'bull' },
-  BUY:                 { color: '#3b82f6', label: 'Buy',           tier: 'bull' },
-  HOLD:                { color: '#6b7280', label: 'Hold',          tier: 'flat' },
+  BUY:                 { color: '#3b82f6', label: 'Buy',            tier: 'bull' },
+  HOLD:                { color: '#6b7280', label: 'Hold',           tier: 'flat' },
   HOLD_NOISE:          { color: '#9ca3af', label: 'Hold · Noise',  tier: 'flat' },
-  NORMAL:              { color: '#6b7280', label: 'Normal',        tier: 'flat' },
-  MARKET_NOISE:        { color: '#9ca3af', label: 'Mkt Noise',     tier: 'flat' },
-  WATCH:               { color: '#d97706', label: 'Watch',         tier: 'bear' },
-  TRIM_25:             { color: '#ea580c', label: 'Trim 25%',      tier: 'bear' },
-  REDUCE:              { color: '#dc2626', label: 'Reduce',        tier: 'bear' },
-  SELL:                { color: '#b91c1c', label: 'Sell',          tier: 'bear' },
-  IDIOSYNCRATIC_DECAY: { color: '#7f1d1d', label: 'Decay',         tier: 'bear' },
-  INSUFFICIENT_DATA:   { color: '#9ca3af', label: 'No Data',       tier: 'flat' },
+  NORMAL:              { color: '#6b7280', label: 'Normal',         tier: 'flat' },
+  MARKET_NOISE:        { color: '#9ca3af', label: 'Mkt Noise',      tier: 'flat' },
+  WATCH:               { color: '#d97706', label: 'Watch',          tier: 'bear' },
+  TRIM_25:             { color: '#ea580c', label: 'Trim 25%',       tier: 'bear' },
+  REDUCE:              { color: '#dc2626', label: 'Reduce',         tier: 'bear' },
+  SELL:                { color: '#b91c1c', label: 'Sell',           tier: 'bear' },
+  IDIOSYNCRATIC_DECAY: { color: '#7f1d1d', label: 'Decay',          tier: 'bear' },
+  INSUFFICIENT_DATA:   { color: '#9ca3af', label: 'No Data',        tier: 'flat' },
 };
 const REGIME_CFG = {
   MARKET_NOISE:        { color: '#9ca3af', label: 'Market Noise'        },
@@ -54,7 +54,7 @@ const moatCol = s => {
   return '#dc2626';
 };
 
-// ── Canvas Neural Network Background ─────────────────────────────────────────
+// ── Canvas Neural Background ─────────────────────────────────────────
 const _nodes = [];
 let _nodesReady = false;
 
@@ -300,7 +300,7 @@ const FilingNarrativeCard = ({ narrative }) => {
                 color:      g.regulatory_moat_strength >= 4 ? '#15803d' : g.regulatory_moat_strength >= 3 ? '#854d0e' : '#dc2626',
               }}>
                 {'★'.repeat(g.regulatory_moat_strength)}{' '}
-                ({[,'<2yr','2-5yr','5-10yr','10-20yr','>20yr'][g.regulatory_moat_strength]})
+                ({['', '<2yr','2-5yr','5-10yr','10-20yr','>20yr'][g.regulatory_moat_strength]})
               </span>
             )}
           </div>
