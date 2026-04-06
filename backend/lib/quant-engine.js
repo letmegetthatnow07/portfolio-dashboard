@@ -72,21 +72,50 @@ class QuantEngine {
 
   // ─── 3. FRACTAL DECAY CASCADE (W1 → W4) ───────────────────────────────────
   // history arrays: [{ fund_score: number }] sorted OLDEST→NEWEST
+  //
+  // STATELESS WINDOW EVALUATION — important for understanding moat-adjusted windows:
+  //
+  // _w1Trigger and _w2Trigger evaluate the SHAPE of whatever array they receive.
+  // They do not track how many days a decline has been in progress.
+  // The caller (daily-update.js) determines window size by slicing history252d.
+  //
+  // When regulatory_moat_strength changes (e.g. null → 4 after first Gemini filing),
+  // the W1 window changes from 7 to 9 days on the next EOD run. This is safe:
+  //   - If a stock already has 5 days of decline under the 7-day window,
+  //     switching to a 9-day window does NOT reset progress.
+  //   - history252d.slice(-9) contains the same 5 days of decline, plus 4 earlier days.
+  //   - _w1Trigger evaluates recent[3] vs older[3] — the 5-day decline slope is
+  //     still visible in the new window. W1 fires if decline persists 4 more days.
+  //   - No state is lost. The function simply now requires the decline to span
+  //     a wider period before firing — consistent with a higher-moat thesis.
+  //
+  // Similarly, a strength=1 stock switching to 4-day W1: if it has 3 days of
+  // decline already, W1 fires on day 4 with the 4-day window.
+  // (The 4-day window uses arr[2]/arr[3] as recent and arr[0]/arr[1] as older.)
 
-  // W1: Score is DECLINING within a 7-day window (delta, not absolute)
+  // W1: Score is DECLINING within the provided window (delta, not absolute level).
+  // Window size is set by the caller — default 7 days, moat-adjusted in daily-update.js.
+  // Fires when the average of the LAST 3 entries is 0.5+ points below the FIRST 3.
   _w1Trigger(arr7) {
-    if (!arr7 || arr7.length < 7) return false;
-    const recent = (arr7[4].fund_score + arr7[5].fund_score + arr7[6].fund_score) / 3;
-    const older  = (arr7[0].fund_score + arr7[1].fund_score + arr7[2].fund_score) / 3;
+    if (!arr7 || arr7.length < 3) return false; // need at least 3 points to evaluate slope
+    const len    = arr7.length;
+    // For any window size: compare last 3 vs first 3 (or fewer if window < 6)
+    const recentCount = Math.min(3, Math.floor(len / 2));
+    const olderCount  = recentCount;
+    const recent = arr7.slice(-recentCount).reduce((s, d) => s + d.fund_score, 0) / recentCount;
+    const older  = arr7.slice(0, olderCount).reduce((s, d) => s + d.fund_score, 0) / olderCount;
     return (recent - older) < -0.5; // declining 0.5+ points = bearish
   }
 
-  // W2: ≥ 2 of 3 seven-day blocks within 21 days triggered W1
+  // W2: ≥ 2 of 3 equal-size blocks within the provided window triggered W1.
+  // Window size is set by the caller — default 21 days, moat-adjusted in daily-update.js.
+  // Blocks are always one-third of the window size so the structure scales correctly.
   _w2Trigger(arr21) {
-    if (!arr21 || arr21.length < 21) return false;
-    const b1 = this._w1Trigger(arr21.slice(0,  7));
-    const b2 = this._w1Trigger(arr21.slice(7,  14));
-    const b3 = this._w1Trigger(arr21.slice(14, 21));
+    if (!arr21 || arr21.length < 9) return false; // need at least 3 blocks of 3
+    const blockSize = Math.floor(arr21.length / 3);
+    const b1 = this._w1Trigger(arr21.slice(0,           blockSize));
+    const b2 = this._w1Trigger(arr21.slice(blockSize,   blockSize * 2));
+    const b3 = this._w1Trigger(arr21.slice(blockSize * 2));
     return [b1, b2, b3].filter(Boolean).length >= 2;
   }
 
