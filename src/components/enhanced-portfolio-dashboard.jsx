@@ -284,6 +284,41 @@ const FilingNarrativeCard = ({ narrative }) => {
 
       <p style={{ fontSize:12, color:'#3a3835', lineHeight:1.55, margin:0 }}>{g.summary}</p>
 
+      {/* Regulatory moat badge */}
+      {g.has_regulatory_moat && g.regulatory_moat_type && (
+        <div style={{ marginTop:8, padding:'6px 10px', background:'#f0fdf4', borderRadius:6,
+          borderLeft:'3px solid #16a34a', display:'flex', alignItems:'flex-start', gap:6 }}>
+          <span style={{fontSize:12, flexShrink:0}}>🏛️</span>
+          <div style={{flex:1}}>
+            <span style={{ fontSize:10, color:'#15803d', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.05em' }}>Regulatory Moat · </span>
+            <span style={{ fontSize:11, color:'#14532d' }}>{g.regulatory_moat_type}</span>
+            {g.regulatory_moat_strength > 0 && (
+              <span style={{
+                marginLeft:8, padding:'1px 6px', borderRadius:3, fontSize:10,
+                fontFamily:'DM Mono,monospace', fontWeight:700,
+                background: g.regulatory_moat_strength >= 4 ? '#bbf7d0' : g.regulatory_moat_strength >= 3 ? '#fef9c3' : '#fee2e2',
+                color:      g.regulatory_moat_strength >= 4 ? '#15803d' : g.regulatory_moat_strength >= 3 ? '#854d0e' : '#dc2626',
+              }}>
+                {'★'.repeat(g.regulatory_moat_strength)}{' '}
+                ({[,'<2yr','2-5yr','5-10yr','10-20yr','>20yr'][g.regulatory_moat_strength]})
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Dual-class share structure warning */}
+      {g.dual_class_warning && (
+        <div style={{ marginTop:8, padding:'6px 10px', background:'#fff7ed', borderRadius:6,
+          borderLeft:'3px solid #ea580c', display:'flex', alignItems:'flex-start', gap:6 }}>
+          <span style={{fontSize:12, flexShrink:0}}>⚠️</span>
+          <div>
+            <span style={{ fontSize:10, color:'#c2410c', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.05em' }}>Dual-Class Structure · </span>
+            <span style={{ fontSize:11, color:'#7c2d12' }}>{g.dual_class_warning}</span>
+          </div>
+        </div>
+      )}
+
       {/* Key changes */}
       {g.key_changes?.length > 0 && (
         <div>
@@ -804,6 +839,7 @@ const Modal = ({ onClose, children, wide = false }) =>
 const EnhancedPortfolioDashboard = () => {
   const [portfolio,      setPortfolio]      = useState([]);
   const [stats,          setStats]          = useState(null);
+  const [marketRegime,   setMarketRegime]   = useState({ regime: 'NORMAL', spy21d: 0 });
   const [loading,        setLoading]        = useState(true);
   const [lastUpdate,     setLastUpdate]     = useState(null);
   const [sortBy,         setSortBy]         = useState('score');
@@ -828,6 +864,14 @@ const EnhancedPortfolioDashboard = () => {
         setPortfolio(sorted);
         setStats(data.stats);
         setLastUpdate(new Date(data.timestamp));
+        // Fetch market regime (SPY 21d classification stored by daily-update.js)
+        try {
+          const mr = await fetch('/api/portfolio/market-regime');
+          if (mr.ok) {
+            const mrData = await mr.json();
+            if (mrData?.regime) setMarketRegime(mrData);
+          }
+        } catch (e) { /* non-critical — defaults to NORMAL */ }
       }
     } catch (err) {
       console.error('Error fetching portfolio:', err);
@@ -953,7 +997,23 @@ const EnhancedPortfolioDashboard = () => {
       <div className="dashboard-header">
         <div>
           <h1>Alpha Compounder</h1>
-          <p className="subtitle">Regime-Aware · Long-Horizon · Fundamentals-First</p>
+          <div style={{display:'flex', alignItems:'center', gap:10, flexWrap:'wrap'}}>
+            <p className="subtitle" style={{margin:0}}>Regime-Aware · Long-Horizon · Fundamentals-First</p>
+            {marketRegime?.regime && marketRegime.regime !== 'NORMAL' && (
+              <span style={{
+                padding:'2px 8px', borderRadius:4, fontSize:10,
+                fontFamily:'DM Mono,monospace', fontWeight:700,
+                background: marketRegime.regime === 'BEAR' ? '#fef2f2' : '#fff7ed',
+                color:      marketRegime.regime === 'BEAR' ? '#dc2626'  : '#c2410c',
+                border:    `1px solid ${marketRegime.regime === 'BEAR' ? '#fca5a5' : '#fdba74'}`,
+              }}>
+                {marketRegime.regime === 'BEAR' ? '🐻 BEAR MARKET' : '⚠ STRESSED'}
+                {' · SPY '}{marketRegime.spy21d >= 0 ? '+' : ''}{(marketRegime.spy21d||0).toFixed(1)}%
+                {marketRegime.spyMaxDD21d != null && marketRegime.spyMaxDD21d < marketRegime.spy21d
+                  && <span style={{opacity:0.75}}>{' (peak DD: '}{(marketRegime.spyMaxDD21d||0).toFixed(1)}{'%)'}</span>}
+              </span>
+            )}
+          </div>
         </div>
         <div className="header-actions">
           {lastUpdate && (
@@ -1140,6 +1200,14 @@ const EnhancedPortfolioDashboard = () => {
                             sCfg.tier === 'bear' ? 'signal-bear-hard' :
                             'signal-neutral'
                           }`}>{sCfg.label}</span>
+                          {stock.sharp_score_drop && (
+                            <div title={`Sharp quality drop: ${stock.score_delta_1d > 0 ? '+' : ''}${stock.score_delta_1d?.toFixed(1)} pts vs yesterday — review thesis immediately`}
+                              style={{ display:'inline-block', marginLeft:4, padding:'1px 5px', fontSize:9, fontWeight:700,
+                                background:'#fef2f2', color:'#dc2626', border:'1px solid #fca5a5', borderRadius:3,
+                                fontFamily:'DM Mono,monospace', verticalAlign:'middle' }}>
+                              ⚡ −{Math.abs(stock.score_delta_1d||0).toFixed(1)}
+                            </div>
+                          )}
                           <SpringBar days={stock.spring_days}/>
                           <CascadePips w1={stock.w1_signal} w2={stock.w2_confirmed} w3={stock.w3_confirmed} w4={stock.w4_confirmed}/>
                         </td>
@@ -1149,12 +1217,38 @@ const EnhancedPortfolioDashboard = () => {
                           <div className="price-value">{fmtUSD(tv)}</div>
                           {totalVal > 0 && (() => {
                             const wPct = (tv/totalVal)*100;
-                            const wColor = wPct > 15 ? '#dc2626' : wPct > 10 ? '#d97706' : '#6b6b65';
+                            // Score-based thresholds: the same weight % means
+                            // different things depending on conviction level.
+                            // High conviction (fund>=8 + ADD/SPRING): flag at 25%
+                            // Standard (fund>=6.5 + HOLD): flag at 15%
+                            // Weak/declining (fund<6.5 or WATCH/DECAY): flag at 8%
+                            const sig = stock.signal || '';
+                            const fnd = stock.score_fund ?? 5;
+                            const isHighConviction = fnd >= 8.0 && ['ADD','SPRING_CONFIRMED','SPRING_CANDIDATE','STRONG_BUY'].includes(sig);
+                            const isWeak = fnd < 6.5 || ['WATCH','REDUCE','TRIM_25','SELL','IDIOSYNCRATIC_DECAY'].includes(sig);
+                            // Market regime caps override individual conviction thresholds:
+                            //   BEAR (SPY -8%+ over 21d): max 15% regardless of quality
+                            //   STRESSED (SPY -3% to -8%): high-conviction capped at 20%
+                            //   NORMAL: use score-based thresholds
+                            // Exception: Spring signals are NOT capped — oversold quality
+                            // stocks in bear markets are exactly when to add, not reduce.
+                            const isSpring = ['SPRING_CONFIRMED','SPRING_CANDIDATE'].includes(sig);
+                            const mr = marketRegime?.regime || 'NORMAL';
+                            const rawThreshold = isHighConviction ? 25 : isWeak ? 8 : 15;
+                            const threshold = isSpring ? rawThreshold  // Spring: no regime cap
+                              : mr === 'BEAR'     ? Math.min(rawThreshold, 15)
+                              : mr === 'STRESSED' ? Math.min(rawThreshold, 20)
+                              : rawThreshold;
+                            const overweight = wPct > threshold;
+                            const wColor = overweight ? '#dc2626' : wPct > threshold * 0.8 ? '#d97706' : '#6b6b65';
+                            const hint = overweight
+                              ? `${wPct.toFixed(1)}% — OVERSIZED for current conviction (threshold: ${threshold}%)`
+                              : `${wPct.toFixed(1)}% of portfolio (threshold: ${threshold}% for this conviction level)`;
                             return (
-                              <div title={`${wPct.toFixed(1)}% of portfolio${wPct > 15 ? ' — HIGH CONCENTRATION' : wPct > 10 ? ' — elevated' : ''}`}
-                                style={{ fontFamily:'var(--font-mono)', fontSize:11, color:wColor, marginTop:3, fontWeight: wPct > 10 ? 600 : 400 }}>
+                              <div title={hint}
+                                style={{ fontFamily:'var(--font-mono)', fontSize:11, color:wColor, marginTop:3, fontWeight: overweight ? 700 : 400 }}>
                                 {wPct.toFixed(1)}% weight
-                                {wPct > 15 && <span style={{marginLeft:4}}>⚠</span>}
+                                {overweight && <span style={{marginLeft:4}}>⚠</span>}
                               </div>
                             );
                           })()}
