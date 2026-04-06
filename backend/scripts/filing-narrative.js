@@ -234,6 +234,7 @@ Rules:
 - Flag any new risk factors or risks that have intensified
 - Ignore one-time items unless they signal structural change
 - Be precise and conservative — management spin is noted but not accepted
+- Use BOTH the filing text and your training knowledge about this company
 
 Return ONLY a JSON object:
 - thesis_status: "strengthening", "stable", "weakening", or "unclear"
@@ -243,7 +244,11 @@ Return ONLY a JSON object:
 - guidance_changes: up to 2 strings — specific forward metric changes management flagged
 - management_confidence: integer 1-5 (1=heavily hedging, 3=balanced, 5=unusually confident)
 - new_risks: up to 2 strings — risks appearing for the first time or notably intensifying
-- summary: single sentence for a long-term holder, max 30 words, cite one key number`;
+- summary: single sentence for a long-term holder, max 30 words, cite one key number
+- has_regulatory_moat: boolean — does this company hold an exclusive regulatory license, permit, or government-granted monopoly? (FDA exclusivity, NRC nuclear operating license, FCC spectrum license, FERC pipeline permit, exclusive mining rights, FAA certification, or similar). Use filing text AND your training knowledge.
+- regulatory_moat_type: string — if has_regulatory_moat is true, name the specific license or permit type and the protection it provides. Empty string if false.
+- dual_class_warning: string or null — if this company has dual-class or multi-class share structures where founders/insiders hold shares with superior voting rights (e.g. 10 votes per share Class B vs 1 vote Class A), output a one-sentence warning describing the structure and entrenchment risk. Null if standard single-class structure. Use filing text AND your training knowledge.
+- regulatory_moat_strength: integer 1-5 — if has_regulatory_moat is true, rate the durability of the moat: 5=>20yr runway (NRC nuclear license, permanent mining rights, indefinite spectrum), 4=10-20yr (long FERC permit, multi-decade concession), 3=5-10yr (active FDA approval, current FAA certification), 2=2-5yr (expiring exclusivity, permit renewal due soon), 1=<2yr (imminent expiry or at-risk of non-renewal). Use 0 if has_regulatory_moat is false. Use your training knowledge of approximate expiry timelines.`;
 
   try {
     const res = await axios.post(
@@ -263,9 +268,14 @@ Return ONLY a JSON object:
               management_confidence: { type: 'integer', minimum: 1, maximum: 5 },
               new_risks:             { type: 'array', items: { type: 'string' }, maxItems: 2 },
               summary:               { type: 'string' },
+              has_regulatory_moat:   { type: 'boolean' },
+              regulatory_moat_strength: { type: 'integer', minimum: 0, maximum: 5 },
+              regulatory_moat_type:  { type: 'string' },
+              dual_class_warning:    { type: ['string', 'null'] },
             },
             required: ['thesis_status', 'key_changes', 'thesis_confirms', 'thesis_risks',
-                       'guidance_changes', 'management_confidence', 'new_risks', 'summary'],
+                       'guidance_changes', 'management_confidence', 'new_risks', 'summary',
+                       'has_regulatory_moat', 'regulatory_moat_type', 'dual_class_warning', 'regulatory_moat_strength'],
           },
           temperature: 0.1,
         },
