@@ -316,15 +316,16 @@ class PriceAnalyzer {
           dilutionFlag,
           sharesYoYPct:  sharesYoY,
           _raw: {
-            roicPct:          (m.roicTTM || m.roiAnnual || 0),
-            grossMarginPct:   (m.grossMarginTTM || m.grossMarginAnnual || 0),
-            revenueGrowthPct: revenueGrowth3Y !== 0
+            roicPct:            (m.roicTTM || m.roiAnnual || 0),
+            grossMarginPct:     (m.grossMarginTTM || m.grossMarginAnnual || 0),
+            revenueGrowthPct:   revenueGrowth3Y !== 0
               ? m['revenueGrowth3Y'] || 0
               : (m.revenueGrowthTTMYoy || 0),
             revenueGrowth3YPct: m['revenueGrowth3Y'] || 0,
-            fcfMarginPct:     (m.freeCashFlowMarginTTM || m.operatingMarginTTM || 0),
-            fcfYieldPct:      fcfYield != null ? (fcfYield * 100) : null,
-            evFcf:            evFcf,
+            fcfMarginPct:       (m.freeCashFlowMarginTTM || m.operatingMarginTTM || 0),
+            fcfYieldPct:        fcfYield != null ? (fcfYield * 100) : null,
+            evFcf:              evFcf,
+            sharesOutstandingM: sharesNow,  // millions — for quarterly snapshot storage
           }
         };
       }
@@ -1094,23 +1095,24 @@ async function writeSupabaseDailyMetrics(symbol, scoreObj, priceData, technicals
 // After 4-8 quarters of accumulation, ROIC trend, gross margin trajectory,
 // and operating margin expansion/compression become computable from history.
 // No additional API calls. This is pure archival of data already in memory.
-async function writeSupabaseQuarterlyFundamentals(symbol, fundamentals, secCapex) {
+async function writeSupabaseQuarterlyFundamentals(symbol, fundamentals, secCapex, fiscalPeriod = null, sharesOutstandingM = null) {
   if (!fundamentals) return; // ETFs and data-unavailable stocks skipped
   const { error } = await supabase.rpc('upsert_fundamentals_snapshot', {
     p_date:                TODAY,
     p_symbol:              symbol,
-    p_roic_pct:            fundamentals.roic              != null ? parseFloat((fundamentals.roic * 100).toFixed(4))       : null,
-    p_fcf_margin_pct:      fundamentals.fcfMargin         != null ? parseFloat((fundamentals.fcfMargin * 100).toFixed(4))   : null,
-    p_gross_margin_pct:    fundamentals.grossMargin       != null ? parseFloat((fundamentals.grossMargin * 100).toFixed(4)) : null,
-    p_operating_margin_pct:(fundamentals._raw?.fcfMarginPct != null ? parseFloat(fundamentals._raw.fcfMarginPct.toFixed(4)) : null),
-    p_de_ratio:            fundamentals.debtToEquity      != null ? parseFloat(fundamentals.debtToEquity.toFixed(4))        : null,
+    p_fiscal_period:       fiscalPeriod ?? null,           // e.g. "Q1-2025"
+    p_roic_pct:            fundamentals.roic              != null ? parseFloat((fundamentals.roic * 100).toFixed(4))            : null,
+    p_fcf_margin_pct:      fundamentals.fcfMargin         != null ? parseFloat((fundamentals.fcfMargin * 100).toFixed(4))        : null,
+    p_gross_margin_pct:    fundamentals.grossMargin       != null ? parseFloat((fundamentals.grossMargin * 100).toFixed(4))      : null,
+    p_operating_margin_pct:fundamentals._raw?.fcfMarginPct != null ? parseFloat(fundamentals._raw.fcfMarginPct.toFixed(4))      : null,
+    p_de_ratio:            fundamentals.debtToEquity      != null ? parseFloat(fundamentals.debtToEquity.toFixed(4))             : null,
     p_revenue_growth_yoy:  fundamentals.revenueGrowthYoY != null ? parseFloat((fundamentals.revenueGrowthYoY * 100).toFixed(4)) : null,
     p_revenue_growth_3y:   fundamentals.revenueGrowth3Y  != null ? parseFloat((fundamentals.revenueGrowth3Y * 100).toFixed(4))  : null,
     p_sbc_millions:        fundamentals.sbcMillions       ?? null,
-    p_shares_outstanding_m:null, // populated from Finnhub sharesOutstanding when available
-    p_capex_millions:      secCapex?.capex                != null ? Math.abs(secCapex.capex)   : null,
-    p_ocf_millions:        secCapex?.ocf                  != null ? secCapex.ocf               : null,
-    p_net_income_millions: secCapex?.netIncome            != null ? secCapex.netIncome          : null,
+    p_shares_outstanding_m:sharesOutstandingM             ?? null, // diluted weighted avg shares (millions)
+    p_capex_millions:      secCapex?.capex                != null ? parseFloat(Math.abs(secCapex.capex).toFixed(2))             : null,
+    p_ocf_millions:        secCapex?.ocf                  != null ? parseFloat(secCapex.ocf.toFixed(2))                         : null,
+    p_net_income_millions: secCapex?.netIncome            != null ? parseFloat(secCapex.netIncome.toFixed(2))                   : null,
   });
   if (error) logger.warn(`fundamentals_snapshot write failed for ${symbol}: ${error.message}`);
 }
@@ -1598,7 +1600,23 @@ async function updateMarketData() {
         await writeSupabaseRegimeFlags({ symbol: stock.symbol, w1, w2, w3, w4, beta, excessReturn, regimeStatus: noiseDecay, action, springDays, capexException, qualityScore: scoreObj.fund, rsi: technicals?.rsi ?? null });
         // Write fundamental snapshot for historical trend analysis
         // Upsert is safe — re-runs same day just overwrite with same data
-        if (!instrumentIsETF) await writeSupabaseQuarterlyFundamentals(stock.symbol, fundamentals, secCapex);
+        if (!instrumentIsETF) {
+          // Derive fiscal_period from secCapex.quarterEnd for deduplication
+          // quarterEnd = "2025-03-31" → Q = ceil(month/3) → "Q1-2025"
+          const _qEnd      = secCapex?.quarterEnd ?? null;
+          const _fiscalPeriod = _qEnd
+            ? (() => {
+                const _d = new Date(_qEnd);
+                const _q = Math.ceil((_d.getMonth() + 1) / 3);
+                return `Q${_q}-${_d.getFullYear()}`;
+              })()
+            : null;
+          await writeSupabaseQuarterlyFundamentals(
+            stock.symbol, fundamentals, secCapex, _fiscalPeriod,
+            // shares_outstanding from fundamentals object (Finnhub m.shareOutstanding)
+            fundamentals?._raw?.sharesOutstandingM ?? null
+          );
+        }
 
         // Redis update — note: recent_news is NOT overwritten here
         // The news-update.js runs maintain the headlines in Redis throughout the day
