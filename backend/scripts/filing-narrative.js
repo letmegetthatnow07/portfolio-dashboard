@@ -271,7 +271,7 @@ Return ONLY a JSON object:
               has_regulatory_moat:   { type: 'boolean' },
               regulatory_moat_strength: { type: 'integer', minimum: 0, maximum: 5 },
               regulatory_moat_type:  { type: 'string' },
-              dual_class_warning:    { type: ['string', 'null'] },
+              dual_class_warning:    { type: 'string', nullable: true },
             },
             required: ['thesis_status', 'key_changes', 'thesis_confirms', 'thesis_risks',
                        'guidance_changes', 'management_confidence', 'new_risks', 'summary',
@@ -296,7 +296,9 @@ Return ONLY a JSON object:
   }
 }
 
-// ─── SAVE TO REDIS AND SUPABASE ────────────────────────────────────────────────
+// ─── SAVE TO REDIS (pure utility — no side effects) ──────────────────────────
+// Writes the Gemini analysis payload to Redis under filing_narrative_{symbol}.
+// No portfolio loading, no market checks, no iteration — just write and return.
 
 async function save(symbol, filingMeta, geminiResult) {
   const payload = {
@@ -309,32 +311,56 @@ async function save(symbol, filingMeta, geminiResult) {
     processedAt:     new Date().toISOString(),
   };
 
-  // Redis — no TTL (overwritten when next filing comes in)
   const client = createRedisClient({ url: process.env.REDIS_URL });
   client.on('error', err => console.warn('Redis error:', err.message));
   await client.connect();
   try {
     await client.set(`filing_narrative_${symbol}`, JSON.stringify(payload));
-    // Store accession number so we don't re-process the same filing
     await client.set(`filing_narrative_acc_${symbol}`, filingMeta.accessionNumber);
     console.log(`  ✅ Saved filing_narrative_${symbol} to Redis`);
   } finally {
     await client.quit();
   }
+}
 
+// ─── MARKET OPEN CHECK ────────────────────────────────────────────────────────
+// Reads the cached Polygon market status written by daily-update.js (12h TTL).
+// Fails open (returns true) if cache is absent — prefer running over silent skip.
+
+async function checkMarketOpen() {
+  const todayStr = new Date().toISOString().split('T')[0];
+  try {
+    const _rc = createRedisClient({ url: process.env.REDIS_URL });
+    _rc.on('error', () => {});
+    await _rc.connect();
+    const cached = await _rc.get(`market_open_${todayStr}`).catch(() => null);
+    await _rc.quit();
+    if (cached === 'closed') return false;
+    return true;
+  } catch (e) {
+    return true; // fail open
+  }
+}
+
+// ─── MAIN ENTRY POINT ─────────────────────────────────────────────────────────
+// Structure: market check → portfolio load → loop → fetchMDA → Gemini → save()
+// Market check runs FIRST so we never write to Redis on a closed market day.
+
+async function main() {
   console.log('═══════════════════════════════════════════════════════════');
   console.log(' FILING NARRATIVE ANALYSER — 10-K / 10-Q MD&A');
   console.log(`  Date: ${new Date().toISOString().split('T')[0]}`);
-  console.log('═══════════════════════════════════════════════════════════\n');
+  console.log('═══════════════════════════════════════════════════════════');
+  console.log('');
 
-  // Market holiday check — reads Polygon status from Redis cache
-  const _isOpen = await checkMarketOpen();
-  if (!_isOpen) {
-    console.log(`🏖️  Market closed today — skipping filing-narrative run.`);
+  // Market check FIRST — before any API calls or Redis writes
+  const isOpen = await checkMarketOpen();
+  if (!isOpen) {
+    console.log('🏖️  Market closed today — skipping filing-narrative run.');
     process.exit(0);
   }
 
-  // Get portfolio symbols from Redis
+  // Load portfolio from Redis
   const redisClient = createRedisClient({ url: process.env.REDIS_URL });
   redisClient.on('error', () => {});
   await redisClient.connect();
@@ -347,18 +373,18 @@ async function save(symbol, filingMeta, geminiResult) {
   }
 
   const portfolio = JSON.parse(raw);
-  // Keep full stock objects — name and sector go into the Gemini prompt
-  // so it can use its knowledge of the company without any hardcoded thesis
   const stocks = (portfolio.stocks || [])
     .filter(s => s.type !== 'ETF' && s.instrument_type !== 'ETF');
 
-  console.log(`Portfolio stocks (excluding ETFs): ${stocks.map(s => s.symbol).join(', ')}\n`);
+  console.log(`Portfolio stocks (excluding ETFs): ${stocks.map(s => s.symbol).join(', ')}
+`);
 
   let processed = 0;
 
   for (const stock of stocks) {
     const symbol = stock.symbol.toUpperCase();
-    console.log(`\n─── ${symbol} ──────────────────────────────────────────`);
+    console.log(`
+─── ${symbol} ──────────────────────────────────────────`);
 
     const filing = await fetchMDA(symbol);
     if (!filing) {
@@ -372,11 +398,12 @@ async function save(symbol, filingMeta, geminiResult) {
       processed++;
     }
 
-    // Pace requests to SEC EDGAR — respect rate limits
+    // Pace SEC EDGAR requests — respect rate limits
     await new Promise(r => setTimeout(r, 1500));
   }
 
-  console.log(`\n✅ Filing Narrative Analyser complete. Processed: ${processed} new filings.`);
+  console.log(`
+✅ Filing Narrative Analyser complete. Processed: ${processed} new filings.`);
   process.exit(0);
 }
 
