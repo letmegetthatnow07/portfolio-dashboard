@@ -318,6 +318,7 @@ class PriceAnalyzer {
           _raw: {
             roicPct:            (m.roicTTM || m.roiAnnual || 0),
             grossMarginPct:     (m.grossMarginTTM || m.grossMarginAnnual || 0),
+            operatingMarginPct: (m.operatingMarginTTM || 0),  // dedicated field — avoids FCF fallback confusion
             revenueGrowthPct:   revenueGrowth3Y !== 0
               ? m['revenueGrowth3Y'] || 0
               : (m.revenueGrowthTTMYoy || 0),
@@ -547,21 +548,23 @@ class PriceAnalyzer {
       // SBC is in millions from EDGAR. Revenue = FCF / fcfMargin when available.
       let adjFcfMargin = fundamentals.fcfMargin;
       const rawFcfMargin = fundamentals.fcfMargin;
+      // ── SBC adjustment — CORRECTED formula ───────────────────────────────
+      // BUG FIX: fcfMargin × marketCapM = (FCF/Revenue) × MarketCap = FCF × P/S ratio
+      // This is NOT FCF in dollars. For CRWD (P/S≈20), it overestimates FCF by 20×,
+      // making the SBC penalty far too gentle for high P/S tech and pharma stocks.
+      //
+      // CORRECT: fcfYield × marketCapM = (FCF/MarketCap) × MarketCap = actual FCF $M
+      // If fcfYield is unavailable, skip adjustment (don't use wrong proxy).
       if (fundamentals.sbcMillions != null && fundamentals.sbcMillions > 0
-          && fundamentals.marketCapM > 0 && fundamentals.fcfMargin > 0) {
-        // Revenue proxy: use P/S ratio approach via market cap
-        // If FCF margin is 20% and market cap is $100B, revenue ≈ unknown
-        // Better: use the Finnhub revenue data directly if available
-        // Fallback: assume revenue = FCF / fcfMargin (circular but bounded)
-        // Most accurate available: SBC as fraction of FCF (not revenue)
-        // SBC/FCF tells you how much of your FCF is being handed to employees
-        const fcfMillions = fundamentals.fcfMargin * fundamentals.marketCapM;
+          && fundamentals.fcfYield != null && fundamentals.fcfYield > 0
+          && fundamentals.marketCapM > 0) {
+        const fcfMillions = fundamentals.fcfYield * fundamentals.marketCapM; // ✓ true FCF
         if (fcfMillions > 0) {
           const sbcAsFcfFraction = fundamentals.sbcMillions / fcfMillions;
-          // Subtract SBC fraction from FCF margin
+          // sbcAsFcfFraction > 1.0 means SBC exceeds FCF entirely → adjFcfMargin = 0
           adjFcfMargin = Math.max(0, fundamentals.fcfMargin * (1 - sbcAsFcfFraction));
           if (Math.abs(adjFcfMargin - rawFcfMargin) > 0.005) {
-            logger.info(`  💰 SBC adj: FCF ${(rawFcfMargin*100).toFixed(1)}% → ${(adjFcfMargin*100).toFixed(1)}% (SBC ${(sbcAsFcfFraction*100).toFixed(0)}% of FCF)`);
+            logger.info(`  💰 SBC adj: FCF ${(rawFcfMargin*100).toFixed(1)}% → ${(adjFcfMargin*100).toFixed(1)}% (SBC ${(sbcAsFcfFraction*100).toFixed(0)}% of true FCF)`);
           }
         }
       }
@@ -1104,7 +1107,7 @@ async function writeSupabaseQuarterlyFundamentals(symbol, fundamentals, secCapex
     p_roic_pct:            fundamentals.roic              != null ? parseFloat((fundamentals.roic * 100).toFixed(4))            : null,
     p_fcf_margin_pct:      fundamentals.fcfMargin         != null ? parseFloat((fundamentals.fcfMargin * 100).toFixed(4))        : null,
     p_gross_margin_pct:    fundamentals.grossMargin       != null ? parseFloat((fundamentals.grossMargin * 100).toFixed(4))      : null,
-    p_operating_margin_pct:fundamentals._raw?.fcfMarginPct != null ? parseFloat(fundamentals._raw.fcfMarginPct.toFixed(4))      : null,
+    p_operating_margin_pct:fundamentals._raw?.operatingMarginPct != null ? parseFloat(fundamentals._raw.operatingMarginPct.toFixed(4)) : null,
     p_de_ratio:            fundamentals.debtToEquity      != null ? parseFloat(fundamentals.debtToEquity.toFixed(4))             : null,
     p_revenue_growth_yoy:  fundamentals.revenueGrowthYoY != null ? parseFloat((fundamentals.revenueGrowthYoY * 100).toFixed(4)) : null,
     p_revenue_growth_3y:   fundamentals.revenueGrowth3Y  != null ? parseFloat((fundamentals.revenueGrowth3Y * 100).toFixed(4))  : null,
@@ -1144,7 +1147,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 function ensureCsv(csvPath) {
   if (!fs.existsSync(csvPath)) {
     fs.writeFileSync(csvPath,
-      'Date,Symbol,Final_Score,Regime,Action,Price,SpyPrice,Fundamentals,Technicals,Analysts,News,Insiders,Beta,ExcessReturn,W1,W2,W3,W4,SpringDays,CapexException\n'
+      'Date,Symbol,Final_Score,Regime,Action,Price,SpyPrice,Fundamentals,Technicals,Analysts,News,Insiders,Beta,ExcessReturn,W1,W2,W3,W4,SpringDays,CapexException,SharpDrop,ScoreDelta\n'
     );
   }
 }
@@ -1158,7 +1161,8 @@ function appendCsvRow(csvPath, symbol, scoreObj, priceData, spyPrice, regimeStat
     scoreObj.rating.toFixed(2), scoreObj.news.toFixed(2), scoreObj.insider.toFixed(2),
     (beta ?? 1).toFixed(4), (excessReturn ?? 0).toFixed(4),
     w1 ? 1 : 0, w2 ? 1 : 0, w3 ? 1 : 0, w4 ? 1 : 0,
-    springDays ?? 0, capexException ? 1 : 0
+    springDays ?? 0, capexException ? 1 : 0,
+    sharpDrop ? 1 : 0, (scoreDelta ?? 0).toFixed(2)
   ].join(',') + '\n';
   fs.appendFileSync(csvPath, line);
 }
@@ -1263,15 +1267,12 @@ async function fetchInsiderCached(symbol, storage) {
   // Cache key stored as a direct Redis key (not inside stock hash) for easy TTL
   const cacheKey = `insider_cache_${symbol}`;
 
-  // ── Try cache first ────────────────────────────────────────────────────────
+  // ── Try cache first using pooled connection ────────────────────────────────
   try {
-    const _rc = createRedisClient({ url: process.env.REDIS_URL });
-    _rc.on('error', () => {});
-    await _rc.connect();
-    const redisRaw = await _rc.get(cacheKey).catch(() => null);
-    await _rc.quit();
-    if (redisRaw) {
-      return JSON.parse(redisRaw); // Cache hit — no SEC-API call
+    const rc = await getRedisClient();
+    if (rc) {
+      const redisRaw = await rc.get(cacheKey).catch(() => null);
+      if (redisRaw) return JSON.parse(redisRaw); // Cache hit — no SEC-API call
     }
   } catch (e) { /* cache miss — proceed to live fetch */ }
 
@@ -1279,16 +1280,11 @@ async function fetchInsiderCached(symbol, storage) {
   const _localAnalyzer = new PriceAnalyzer();
   const fresh = await _localAnalyzer.fetchInsider(symbol);
 
-  // ── Write to cache with 7-day TTL ─────────────────────────────────────────
-  // 7 days × 18 stocks × ~4 cache misses/month = ~72 SEC-API calls/month
-  // Free tier limit: 100/month → stays within budget
+  // ── Write to cache with 7-day TTL using pooled connection ─────────────────
   if (fresh !== null) {
     try {
-      const _rc = createRedisClient({ url: process.env.REDIS_URL });
-      _rc.on('error', () => {});
-      await _rc.connect();
-      await _rc.set(cacheKey, JSON.stringify(fresh), { EX: 7 * 24 * 60 * 60 });
-      await _rc.quit();
+      const rc = await getRedisClient();
+      if (rc) await rc.set(cacheKey, JSON.stringify(fresh), { EX: 604800 }); // 7 days
     } catch (e) { /* write failure non-critical */ }
   }
 
@@ -1361,19 +1357,15 @@ async function updateMarketData() {
                        : 'BEAR';
     logger.info(`  SPY 21d return: ${spyReturn21d.toFixed(2)}% | 21d MaxDD: ${spyMaxDD21d.toFixed(2)}% | Market Regime: ${marketRegime}`);
 
-    // Store market regime once per run as a portfolio-level key
-    // Dashboard reads this to apply regime-aware position sizing caps
+    // Store market regime once per run using pooled connection
     try {
-      const _mrc = createRedisClient({ url: process.env.REDIS_URL });
-      _mrc.on('error', () => {});
-      await _mrc.connect();
-      await _mrc.set('market_regime', JSON.stringify({
+      const _mrc = await getRedisClient();
+      if (_mrc) await _mrc.set('market_regime', JSON.stringify({
         regime:      marketRegime,
         spy21d:      parseFloat(spyReturn21d.toFixed(2)),
         spyMaxDD21d: parseFloat(spyMaxDD21d.toFixed(2)),
         date:        TODAY,
-      }), { EX: 28 * 60 * 60 }); // 28 hours TTL — refreshed daily
-      await _mrc.quit();
+      }), { EX: 100800 }); // 28h TTL
     } catch (e) { /* non-critical */ }
 
     const totalPortfolioValue = stocks.reduce(
@@ -1550,7 +1542,14 @@ async function updateMarketData() {
           const [_w1Days, _w2Days] = _moatWindows[_moatStrength] ?? [7, 21];
           logger.info(`  🏛️  Moat strength: ${_moatStrength ?? 'none'} → W1 window: ${_w1Days}d, W2 window: ${_w2Days}d`);
 
-          regimeStatus = quantEngine.evaluateFractalDecay(history252d, noiseDecay);
+          // Pass moat-adjusted window sizes so evaluateFractalDecay's internal
+          // W1/W2 evaluation matches the displayed W1/W2 flags exactly.
+          // Without this, a strength=1 stock shows W1=true (4-day window) on
+          // the dashboard but the action says HOLD (needs 7 days internally) — contradiction.
+          regimeStatus = quantEngine.evaluateFractalDecay(history252d, noiseDecay, {
+            w1: _w1Days,
+            w2: _w2Days,
+          });
 
           w1 = history252d.length >= _w1Days ? quantEngine._w1Trigger(history252d.slice(-_w1Days)) : false;
           w2 = history252d.length >= _w2Days ? quantEngine._w2Trigger(history252d.slice(-_w2Days)) : false;
