@@ -138,20 +138,25 @@ class QuantEngine {
     return [b1, b2, b3, b4].filter(Boolean).length >= 3;
   }
 
-  evaluateFractalDecay(history252d, regime) {
+  evaluateFractalDecay(history252d, regime, moatWindows = {}) {
     // Market noise overrides cascade — hold regardless of window signals
     if (regime === 'MARKET_NOISE') return 'HOLD_NOISE';
 
-    // Need sufficient history for cascade signals
-    if (!history252d || history252d.length < 7) return 'INSUFFICIENT_DATA';
+    // Moat-adjusted window sizes (from daily-update.js, sourced from Redis filing narrative).
+    // Defaults to 7/21 (standard) when no moat data exists.
+    const w1Days = moatWindows.w1 || 7;
+    const w2Days = moatWindows.w2 || 21;
+
+    // Need sufficient history for W1 at minimum
+    if (!history252d || history252d.length < w1Days) return 'INSUFFICIENT_DATA';
 
     const len = history252d.length;
 
-    // Compute only the windows we have enough data for
-    const w1 = len >= 7   ? this._w1Trigger(history252d.slice(-7))   : false;
-    const w2 = len >= 21  ? this._w2Trigger(history252d.slice(-21))  : false;
-    const w3 = len >= 63  ? this._w3Trigger(history252d.slice(-63))  : false;
-    const w4 = len >= 252 ? this._w4Trigger(history252d)             : false;
+    // W1/W2 use moat-adjusted windows; W3/W4 fixed (structural regardless of moat)
+    const w1 = len >= w1Days ? this._w1Trigger(history252d.slice(-w1Days)) : false;
+    const w2 = len >= w2Days ? this._w2Trigger(history252d.slice(-w2Days)) : false;
+    const w3 = len >= 63     ? this._w3Trigger(history252d.slice(-63))     : false;
+    const w4 = len >= 252    ? this._w4Trigger(history252d)                : false;
 
     // Escalation ladder — only trigger if regime also confirms deterioration
     if (w4 && regime === 'IDIOSYNCRATIC_DECAY') return 'SELL';
@@ -303,11 +308,11 @@ class QuantEngine {
     const qualityImproving = qualityNow > qualityStart && qualityNow > 6.0;
 
     // Core conditions
-    const crushingBeta   = excessReturnPct > 5.0;
+    const alphaCrushing  = excessReturnPct > 5.0;  // measures excess return (alpha), not beta
     const notOverbought  = currentRsi < 70;
     const underMaxWeight = currentWeight < 0.10;
 
-    return qualityImproving && crushingBeta && notOverbought && underMaxWeight;
+    return qualityImproving && alphaCrushing && notOverbought && underMaxWeight;
   }
 
   // ─── 7. REALISED VOLATILITY (new) ─────────────────────────────────────────
@@ -325,7 +330,8 @@ class QuantEngine {
     }
     if (logReturns.length < 5) return null;
     const mean = logReturns.reduce((a, b) => a + b, 0) / logReturns.length;
-    const variance = logReturns.reduce((s, r) => s + (r - mean) ** 2, 0) / logReturns.length;
+    // Sample variance with Bessel's correction (N-1) — industry standard for vol estimation
+    const variance = logReturns.reduce((s, r) => s + (r - mean) ** 2, 0) / (logReturns.length - 1);
     const annualised = Math.sqrt(variance * 252) * 100; // as percentage
     return parseFloat(annualised.toFixed(1));
   }
