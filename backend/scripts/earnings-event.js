@@ -54,8 +54,7 @@ async function checkMarketOpen() {
   if (!cached) {
     // Not cached — call Polygon directly
     try {
-      const _axios = require('axios');
-      const res = await _axios.get(
+      const res = await axios.get(
         `https://api.polygon.io/v1/marketstatus/now?apiKey=${process.env.POLYGON_API_KEY}`,
         { timeout: 6000 }
       );
@@ -119,6 +118,9 @@ async function getEarningsToday(symbols) {
     } catch (e) {
       console.warn(`⚠ Finnhub earnings check failed for ${symbol}: ${e.message}`);
     }
+    // Pace to stay within Finnhub free-tier rate limit (60/min)
+    // 1s sleep + ~200ms latency = ~1.2s per symbol — safe at 30+ stocks
+    await new Promise(r => setTimeout(r, 1000));
   }
   return reportingToday;
 }
@@ -165,7 +167,10 @@ async function fetchEarningsPressRelease(symbol) {
 
     // Find today's 8-K filing
     const idx = filings.form?.findIndex(
-      (form, i) => form === '8-K' && filings.filingDate[i] === today
+      (form, i) => form === '8-K' &&
+        (filings.filingDate[i] === today || filings.filingDate[i] === (() => {
+          const y = new Date(); y.setDate(y.getDate() - 1); return y.toISOString().split('T')[0];
+        })())  // after-hours 8-Ks get next-day EDGAR filingDate — accept both
     );
     if (idx === -1 || idx == null) {
       console.log(`  ${symbol}: No 8-K filed today`);
@@ -185,8 +190,10 @@ async function fetchEarningsPressRelease(symbol) {
 
     // Find ex-99.1 link (earnings press release attachment)
     const html = indexRes.data;
-    const ex991Match = html.match(/href="([^"]+ex-?99\.?1[^"]*\.htm[^"]*)"[^>]*>/i)
-      || html.match(/href="([^"]+ex99[^"]*\.htm[^"]*)"[^>]*>/i);
+    // Matches: ex-99.1, ex991, ex99-1, exhibit99_1, ex-99_1, item99_1, exhibit-99.1, etc.
+    const ex991Match = html.match(
+      /href="([^"]*(?:ex-?99[-_.]?1|exhibit[-_]?99[-_.]?1|ex99[-_.]1|item99[-_.]?1)[^"]*\.htm[^"]*)"[^>]*>/i
+    );
 
     if (!ex991Match) {
       console.log(`  ${symbol}: 8-K filed but no ex-99.1 press release found`);
