@@ -41,14 +41,18 @@ function toISO(dateStr) {
 }
 
 // ── Returns-based Pearson correlation ────────────────────────────────────────
-// Minimum 3 shared return observations required (was 5 — lowered to handle
-// ETFs that have been in the portfolio fewer than 5 trading days).
-// With very few points the correlation is noisy, but it's still more honest
-// than showing 0.00 which implies no relationship when there's no data.
-// The UI shows the window days count so users can judge data quality themselves.
+// Minimum 30 shared return observations required for statistical validity.
+//
+// Why 30? With n < 30, a spurious correlation of 0.90+ between two completely
+// unrelated stocks has a ~28% probability with n=3, ~4% with n=5.
+// At n=30, the probability of |r| > 0.50 by random chance is < 0.5%.
+// Below 30 data points the number is shown as null (displayed as '—') so the
+// matrix is honest about data quality rather than showing misleading values.
+//
+// Returns: { r, n } where r is the correlation (or null) and n is shared points.
 function calculatePearson(x, y) {
   const n = x.length;
-  if (n < 3 || n !== y.length) return null;
+  if (n < 30 || n !== y.length) return { r: null, n };
   const mean = arr => arr.reduce((a, b) => a + b, 0) / arr.length;
   const mx = mean(x), my = mean(y);
   let num = 0, dx2 = 0, dy2 = 0;
@@ -57,7 +61,8 @@ function calculatePearson(x, y) {
     num += ex * ey; dx2 += ex * ex; dy2 += ey * ey;
   }
   const denom = Math.sqrt(dx2 * dy2);
-  return denom === 0 ? null : num / denom;  // null not 0 when zero variance
+  const r = denom === 0 ? null : num / denom;
+  return { r, n };
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -182,8 +187,14 @@ async function runCorrelationEngine() {
         }
       }
 
-      const corr = calculatePearson(r1, r2);
-      matrix[t1][t2] = corr !== null ? parseFloat(corr.toFixed(3)) : null;
+      const { r, n: sharedN } = calculatePearson(r1, r2);
+      matrix[t1][t2] = r !== null ? parseFloat(r.toFixed(3)) : null;
+      // Store data point count for the upper triangle only (used for data quality display)
+      if (i < j) {
+        if (!matrix._dataPoints) matrix._dataPoints = {};
+        if (!matrix._dataPoints[t1]) matrix._dataPoints[t1] = {};
+        matrix._dataPoints[t1][t2] = sharedN;
+      }
     }
   }
   console.log('✓ Matrix complete');
@@ -206,9 +217,16 @@ async function runCorrelationEngine() {
   cutoff63d.setDate(cutoff63d.getDate() - 90);  // ~63 trading days in calendar days
 
   // Fetch all rows from the 63d window (includes the 21d window too)
+  // Filter to current portfolio symbols — prevents unbounded row growth as table accumulates.
+  // tickers is the list of symbols with price data (computed in STEP 4 above).
+  // Falls back to all portfolio symbols if tickers is empty.
+  const querySymbols = tickers.length > 0 ? tickers
+    : portfolioSymbols ? [...portfolioSymbols] : [];
+
   const { data: regimeRows, error: regimeError } = await supabase
     .from('regime_flags')
     .select('symbol, date, excess_return_pct, quality_score, action, regime_status, w2_confirmed, w3_confirmed, w4_confirmed')
+    .in('symbol', querySymbols)
     .gte('date', cutoff63d.toISOString().split('T')[0])
     .order('date', { ascending: false });
 
@@ -368,9 +386,16 @@ async function runCorrelationEngine() {
 
         // 63d confirms 21d (both windows agree)
         const alphaEdge63 = (s.alpha63 ?? 0) - (oS.alpha63 ?? 0);
-        if (alphaEdge63 > 0 && alphaEdge21 > 0) {
+        // Three-tier 63d confirmation: strong (+2), marginal (+1), none (0)
+        // alphaEdge63 > 0.01% was trivially satisfied — even a near-tie got full +2 pts.
+        // Require the 63d edge to be material (MIN_ALPHA_EDGE/2 = 1.0%) for strong confirmation.
+        // A 21d spike that compresses to 0.01% quarterly is noise, not structural outperformance.
+        if (alphaEdge63 > MIN_ALPHA_EDGE / 2 && alphaEdge21 > MIN_ALPHA_EDGE) {
           score += 2;
           reasons.push(`confirmed over 63d (+${alphaEdge63.toFixed(1)}%)`);
+        } else if (alphaEdge63 > 0 && alphaEdge21 > 0) {
+          score += 1; // marginal confirmation — both windows positive but 63d edge is thin
+          reasons.push(`weak 63d confirmation (+${alphaEdge63.toFixed(1)}%)`);
         }
 
         // Quality score higher over 63d
@@ -487,7 +512,7 @@ async function runCorrelationEngine() {
       lastUpdated: new Date().toISOString(),
       windowStart: sortedDates[0],
       windowEnd:   sortedDates[sortedDates.length - 1],
-      windowDays:  sortedDates.length,
+      windowDays:  sortedDates.length, // unique trading days with price data (not calendar days)
       tickers,
       matrix,
       insights,
