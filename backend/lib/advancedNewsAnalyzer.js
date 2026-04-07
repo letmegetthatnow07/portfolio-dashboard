@@ -53,16 +53,17 @@ const FINANCE_OVERRIDES = {
   'subpoena':         -3,
   'lawsuit':          -2,
   'litigation':       -2,
-  'class action':     -3,
+  'class_action':     -3,
   'fraud':            -3,
   'restatement':      -3,
-  'material weakness':-3,
+  'material_weakness':-3,
   'recall':           -2,
   'downgrade':        -2,
-  'guidance cut':     -3,
-  'going concern':    -4,
+  'guidance_cut':     -3,
+  'guidance_cuts':    -3,
+  'going_concern':    -4,
   'bankruptcy':       -4,
-  'chapter 11':       -4,
+  'chapter_11':       -4,
   'insolvency':       -4,
   'writedown':        -2,
   'impairment':       -2,
@@ -75,17 +76,17 @@ const FINANCE_OVERRIDES = {
   // High-signal positive — AFINN under-scores
   'beats':             3,
   'beat':              2,
-  'raises guidance':   3,
+  'raises_guidance':   3,
   'raises':            1,
   'buyback':           2,
-  'share repurchase':  2,
+  'share_repurchase':  2,
   'dividend':          1,
-  'special dividend':  2,
-  'contract win':      3,
-  'contract awarded':  3,
+  'special_dividend':  2,
+  'contract_win':      3,
+  'contract_awarded':  3,
   'awarded':           2,
   'backlog':           1,
-  'record revenue':    3,
+  'record_revenue':    3,
   'record':            1,
   'breakthrough':      2,
   'outperform':        2,
@@ -101,12 +102,12 @@ const FINANCE_OVERRIDES = {
   // Macro noise — zero out so broad economy articles don't move stock scores
   'tariff':            0,
   'tariffs':           0,
-  'trade war':         0,
+  'trade_war':         0,
   'inflation':         0,
   'recession':         0,
   'fed':               0,
   'rates':             0,
-  'interest rate':     0,
+  'interest_rate':     0,
   'gdp':               0,
   'unemployment':      0,
   'payrolls':          0,
@@ -439,13 +440,45 @@ class AdvancedNewsAnalyzer {
 
   // ── Sentiment ──────────────────────────────────────────────────────────────
   _rawSentiment(article, relevance) {
-    const headlineResult = this.sentiment.analyze(article.headline, { language: 'finance' });
+    // ── Phrase normalisation ───────────────────────────────────────────────
+    // The sentiment library tokenizes on whitespace, so "guidance cut" becomes
+    // ["guidance", "cut"] — never matching the 'guidance_cut' dictionary key.
+    // We replace known compound phrases with underscore-joined tokens BEFORE
+    // tokenization, so "guidance_cut" stays as a single token and matches.
+    // Order matters: longer phrases first to prevent partial matches.
+    const normalisePhrases = (text) => {
+      if (!text) return text;
+      const phrases = [
+        ['material weakness', 'material_weakness'],
+        ['class action',      'class_action'],
+        ['going concern',     'going_concern'],
+        ['chapter 11',        'chapter_11'],
+        ['guidance cuts',     'guidance_cuts'],
+        ['guidance cut',      'guidance_cut'],
+        ['raises guidance',   'raises_guidance'],
+        ['record revenue',    'record_revenue'],
+        ['share repurchase',  'share_repurchase'],
+        ['special dividend',  'special_dividend'],
+        ['contract awarded',  'contract_awarded'],
+        ['contract win',      'contract_win'],
+        ['trade war',         'trade_war'],
+        ['interest rate',     'interest_rate'],
+      ];
+      let t = text;
+      phrases.forEach(([search, replace]) => {
+        // Use \s+ to match any whitespace (including double spaces); case-insensitive
+        t = t.replace(new RegExp(search.replace(/ /g, '\\s+'), 'gi'), replace);
+      });
+      return t;
+    };
+
+    const headlineResult = this.sentiment.analyze(normalisePhrases(article.headline), { language: 'finance' });
     const descResult     = article.description
-      ? this.sentiment.analyze(article.description, { language: 'finance' })
+      ? this.sentiment.analyze(normalisePhrases(article.description), { language: 'finance' })
       : { score: 0 };
 
     // Check for universal thesis killers
-    const fullText = `${article.headline} ${article.description || ''}`.toLowerCase();
+    const fullText = normalisePhrases(`${article.headline} ${article.description || ''}`).toLowerCase();
     const isThesisKiller = UNIVERSAL_SIGNALS.thesis_killers.some(k => fullText.includes(k));
 
     if (isThesisKiller) {
@@ -471,7 +504,16 @@ class AdvancedNewsAnalyzer {
     const fullText = `${article.headline} ${article.description || ''}`.toLowerCase();
 
     // Direct mention of ticker → full relevance
-    if (fullText.includes(symbol.toLowerCase())) return 1.0;
+    // Short tickers (≤3 chars) use word-boundary match to prevent false positives.
+    // "MS" matches inside "CMS", "WhatsApp", "GMAT" with naive substring match.
+    // Longer tickers (4+ chars) are safe with substring — "CRWD" won't appear in unrelated text.
+    const symLower = symbol.toLowerCase();
+    if (symLower.length <= 3) {
+      const escaped = symLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (new RegExp(`\\b${escaped}\\b`, 'i').test(fullText)) return 1.0;
+    } else {
+      if (fullText.includes(symLower)) return 1.0;
+    }
 
     // Fundamental signal → high relevance
     if (UNIVERSAL_SIGNALS.fundamental.some(k => fullText.includes(k))) return 0.85;
@@ -506,7 +548,10 @@ class AdvancedNewsAnalyzer {
     // Age penalty applies only to the earned bonus
     const base  = 4.0;
     const bonus = score - base;
-    score = base + (bonus * ageFactor);
+    // Decay earned bonus aggressively; decay base gently.
+    // Even real events lose urgency as they age beyond the trading day.
+    // sqrt(ageFactor) decays slower than ageFactor — base stays meaningful longer.
+    score = (base * Math.sqrt(ageFactor)) + (bonus * ageFactor);
 
     return Math.max(0, Math.min(10, parseFloat(score.toFixed(2))));
   }
