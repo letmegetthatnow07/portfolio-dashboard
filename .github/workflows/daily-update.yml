@@ -1,17 +1,25 @@
 name: Market & News Data Pipeline
 
-on:
-  schedule:
-    - cron: '0 14 * * 1-5'   # 9:00 AM ET  — News Slot 1
-    - cron: '0 18 * * 1-5'   # 1:00 PM ET  — News Slot 2
-    - cron: '15 21 * * 1-5'  # 4:15 PM ET  — News Slot 3
-    - cron: '0 22 * * 1-5'   # 5:00 PM ET  — EOD Master
-    - cron: '30 22 * * 1-5'  # 5:30 PM ET  — Correlation Matrix
+# ─── TWO SEPARATE JOBS — eliminates the delay vulnerability ────────────────────
+#
+# PROBLEM WITH THE OLD DESIGN:
+#   One job used HOUR=$(date -u +"%H") to decide master vs news.
+#   GitHub Actions delays scheduled runs 15-60 min during high load.
+#   If the 22:00 UTC cron started at 23:05 UTC, HOUR="23" → fell into
+#   the 'else' branch → ran the news script instead of the master script.
+#   This is why Supabase and GitHub CSV stopped receiving data after April 3.
+#   The pipeline appeared to run 5x/day correctly, but master never fired.
+#
+# FIX:
+#   Split into two completely separate jobs with their own cron schedules.
+#   Each job knows its own purpose — no clock detection needed.
+#   Even a 90-minute GitHub delay can't misroute a job.
 
+on:
   workflow_dispatch:
     inputs:
       run_type:
-        description: 'Which engine to run?'
+        description: 'Which engine to run manually?'
         required: true
         default: 'master'
         type: choice
@@ -26,70 +34,30 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+# ══════════════════════════════════════════════════════════════════════════════
+# JOB 1: EOD MASTER — runs once daily, scores all stocks, writes Supabase + CSV
+# Cron: 22:00 UTC = 5:00 PM ET (well after US close at 4 PM ET + 45 min)
+# Even with a 90-min GitHub delay, this still processes the correct trading day.
+# ══════════════════════════════════════════════════════════════════════════════
 jobs:
-  update-pipeline:
+  eod-master:
+    name: EOD Master Run
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    if: >
+      github.event_name == 'schedule' && github.event.schedule == '0 22 * * 1-5' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_type == 'master')
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Install backend dependencies
+      - name: Install dependencies
         working-directory: backend
         run: npm install
 
-      # ── Task routing ──────────────────────────────────────────────────────────
-      # IMPORTANT: We do NOT use clock time to decide the task.
-      # GitHub Actions schedules can be delayed by 15-60+ minutes — using
-      # minute-based splits meant the 22:00 EOD cron, when delayed past 22:20,
-      # ran calculate-matrix instead of npm run update, silently skipping EOD.
-      #
-      # Fix: each cron is identified by its HOUR only (each hour is unique).
-      # The two 22:xx crons are disambiguated by the GITHUB_RUN_NUMBER being
-      # even/odd — actually simpler: we identify them by checking which of
-      # the two 22:xx crons triggered. Since GitHub runs them as separate
-      # workflow triggers, we check the trigger minute at schedule time.
-      # Even better: use SEPARATE named cron entries with env vars.
-      #
-      # The cleanest solution: check only the scheduled HOUR.
-      # Since we only have ONE cron per hour (14, 18, 21, 22 EOD, 22:30 matrix),
-      # and 22:00 vs 22:30 differ only by minute — we instead just run BOTH
-      # update and calculate-matrix in the 22:xx block, sequentially.
-      # This means the matrix always runs on fresh data. Zero ambiguity.
-
-      - name: Determine Run Type
-        id: run-logic
-        run: |
-          HOUR=$(date -u +"%H")
-
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            TYPE="${{ github.event.inputs.run_type }}"
-            if [ "$TYPE" == "master" ]; then
-              echo "SCRIPT_TO_RUN=npm run update && npm run calculate-matrix" >> $GITHUB_ENV
-            elif [ "$TYPE" == "matrix" ]; then
-              echo "SCRIPT_TO_RUN=npm run calculate-matrix" >> $GITHUB_ENV
-            else
-              echo "SCRIPT_TO_RUN=npm run update:news" >> $GITHUB_ENV
-            fi
-
-          elif [ "$HOUR" == "22" ]; then
-            # Both the 22:00 and 22:30 crons land here.
-            # Run BOTH update AND matrix every time — no minute-based split.
-            # update is idempotent (upserts), matrix runs in ~2min after fresh data.
-            # Even if GitHub delays 22:00 past 22:30, update still runs first,
-            # then matrix runs on the fresh data. Correct result either way.
-            echo "SCRIPT_TO_RUN=npm run update && npm run calculate-matrix" >> $GITHUB_ENV
-
-          else
-            # Hours 14, 18, 21 — all news slots
-            echo "SCRIPT_TO_RUN=npm run update:news" >> $GITHUB_ENV
-          fi
-
-      - name: Execute Pipeline
+      - name: Run master update + correlation matrix
         working-directory: backend
         env:
           REDIS_URL:            ${{ secrets.REDIS_URL }}
@@ -100,13 +68,10 @@ jobs:
           SEC_API_KEY:          ${{ secrets.SEC_API_KEY }}
           SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: ${{ env.SCRIPT_TO_RUN }}
+          GEMINI_API_KEY:       ${{ secrets.GEMINI_API_KEY }}
+        run: npm run update && npm run calculate-matrix
 
       - name: Run Earnings Event Analyser
-        # Runs only on EOD master days. Checks if any portfolio stock reports
-        # earnings today. If nothing reports, exits in ~3 seconds.
-        # || true means a Gemini failure or missing 8-K never blocks the main pipeline.
-        if: env.SCRIPT_TO_RUN == 'npm run update && npm run calculate-matrix'
         working-directory: backend
         env:
           REDIS_URL:            ${{ secrets.REDIS_URL }}
@@ -117,10 +82,6 @@ jobs:
         run: npm run earnings-event || true
 
       - name: Run Filing Narrative Analyser
-        # Runs on EOD master days. Checks for new 10-K/10-Q filings since last run.
-        # Skips stocks with no new filing (accession number unchanged in Redis).
-        # Runs at most 4x/year per stock — negligible Gemini usage.
-        if: env.SCRIPT_TO_RUN == 'npm run update && npm run calculate-matrix'
         working-directory: backend
         env:
           REDIS_URL:            ${{ secrets.REDIS_URL }}
@@ -134,9 +95,77 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
 
-      - name: Commit CSV History
+      - name: Commit score history CSV
         run: |
           git add backend/data/score_history.csv || true
-          git commit -m "📊 Auto: EOD History $(date)" || true
+          git commit -m "📊 EOD History $(date -u +%Y-%m-%d)" || true
           git pull --rebase origin main || true
           git push || true
+
+  # ══════════════════════════════════════════════════════════════════════════════
+  # JOB 2: INTRADAY NEWS — runs 3x daily, updates news scores only
+  # 9 AM ET, 1 PM ET, 4:15 PM ET = 14:00, 18:00, 21:15 UTC
+  # ══════════════════════════════════════════════════════════════════════════════
+  intraday-news:
+    name: Intraday News Update
+    runs-on: ubuntu-latest
+    if: >
+      (github.event_name == 'schedule' && (
+        github.event.schedule == '0 14 * * 1-5' ||
+        github.event.schedule == '0 18 * * 1-5' ||
+        github.event.schedule == '15 21 * * 1-5'
+      )) ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_type == 'news')
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: backend
+        run: npm install
+
+      - name: Run intraday news update
+        working-directory: backend
+        env:
+          REDIS_URL:            ${{ secrets.REDIS_URL }}
+          NEWSDATA_API_KEY:     ${{ secrets.NEWSDATA_API_KEY }}
+          FINNHUB_API_KEY:      ${{ secrets.FINNHUB_API_KEY }}
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: npm run update:news
+
+  # ══════════════════════════════════════════════════════════════════════════════
+  # JOB 3: MATRIX ONLY — manual trigger for recalculating correlation
+  # ══════════════════════════════════════════════════════════════════════════════
+  correlation-matrix:
+    name: Correlation Matrix Only
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'workflow_dispatch' && github.event.inputs.run_type == 'matrix'
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: backend
+        run: npm install
+
+      - name: Run correlation matrix
+        working-directory: backend
+        env:
+          REDIS_URL:            ${{ secrets.REDIS_URL }}
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: npm run calculate-matrix
+
+# ─── CRON SCHEDULE SUMMARY ────────────────────────────────────────────────────
+# 0 14 * * 1-5   = 9:00 AM ET   — intraday news (job 2)
+# 0 18 * * 1-5   = 1:00 PM ET   — intraday news (job 2)
+# 15 21 * * 1-5  = 4:15 PM ET   — intraday news (job 2)
+# 0 22 * * 1-5   = 5:00 PM ET   — EOD master (job 1)
