@@ -1152,7 +1152,7 @@ function ensureCsv(csvPath) {
   }
 }
 
-function appendCsvRow(csvPath, symbol, scoreObj, priceData, spyPrice, regimeStatus, action, beta, excessReturn, w1, w2, w3, w4, springDays, capexException) {
+function appendCsvRow(csvPath, symbol, scoreObj, priceData, spyPrice, regimeStatus, action, beta, excessReturn, w1, w2, w3, w4, springDays, capexException, sharpDrop = false, scoreDelta = 0) {
   const line = [
     TODAY, symbol,
     scoreObj.total.toFixed(2), regimeStatus, action,
@@ -1388,6 +1388,39 @@ async function updateMarketData() {
         const instrumentProfile  = await fetchInstrumentType(stock.symbol, process.env.FINNHUB_API_KEY);
         const profileExpenseRatio = instrumentProfile.expenseRatio;
 
+        // ── Auto-refresh sector/name for stocks showing 'Unknown' ────────────
+        // add.js calls FMP profile to get sector/name at add time.
+        // If FMP_API_KEY wasn't set in Vercel env vars, sector='Unknown' is stored.
+        // On the next EOD run, we detect this and try Finnhub profile2 as fallback.
+        // This doesn't use FMP (wrong environment) — uses Finnhub which IS available here.
+        if ((stock.sector === 'Unknown' || !stock.sector || stock.name === stock.symbol) && !instrumentIsETF) {
+          try {
+            const fhProfile = await axios.get(
+              `https://finnhub.io/api/v1/stock/profile2?symbol=${stock.symbol}&token=${process.env.FINNHUB_API_KEY}`,
+              { timeout: 6000 }
+            );
+            const p = fhProfile.data;
+            if (p?.name || p?.finnhubIndustry) {
+              const portfolio = await storage.getPortfolio();
+              const idx = portfolio.stocks.findIndex(s => s.symbol === stock.symbol);
+              if (idx >= 0) {
+                if (p.name && portfolio.stocks[idx].name === stock.symbol) {
+                  portfolio.stocks[idx].name = p.name;
+                  logger.info(`  📛 Name auto-fixed: ${stock.symbol} → "${p.name}"`);
+                }
+                if (p.finnhubIndustry && portfolio.stocks[idx].sector === 'Unknown') {
+                  portfolio.stocks[idx].sector = p.finnhubIndustry;
+                  logger.info(`  🏭 Sector auto-fixed: ${stock.symbol} → "${p.finnhubIndustry}"`);
+                }
+                await storage.savePortfolio(portfolio);
+                // Update local stock object for this run
+                stock.name   = portfolio.stocks[idx].name;
+                stock.sector = portfolio.stocks[idx].sector;
+              }
+            }
+          } catch (e) { /* non-critical enrichment — skip if API unavailable */ }
+        }
+
         // Three-source ETF classification — fully dynamic, no hardcoded list:
         //   1. Finnhub profile2 type field (covers most ETFs directly)
         //   2. FMP isEtf/isFund field (catches Finnhub misclassifications e.g. SPMO, SMH)
@@ -1516,16 +1549,15 @@ async function updateMarketData() {
           // decay is structural regardless of moat runway.
           let _moatStrength = null;
           try {
-            // Read moat strength from Redis filing narrative (written quarterly)
-            const _rc2 = createRedisClient({ url: process.env.REDIS_URL });
-            _rc2.on('error', () => {});
-            await _rc2.connect();
-            const _fnRaw = await _rc2.get(`filing_narrative_${stock.symbol}`).catch(() => null);
-            await _rc2.quit();
-            if (_fnRaw) {
-              const _fn = JSON.parse(_fnRaw);
-              const _ms = _fn?.gemini?.regulatory_moat_strength;
-              if (typeof _ms === 'number' && _ms >= 1 && _ms <= 5) _moatStrength = _ms;
+            // Read moat strength from Redis filing narrative using pooled connection
+            const _rc2 = await getRedisClient();
+            if (_rc2) {
+              const _fnRaw = await _rc2.get(`filing_narrative_${stock.symbol}`).catch(() => null);
+              if (_fnRaw) {
+                const _fn = JSON.parse(_fnRaw);
+                const _ms = _fn?.gemini?.regulatory_moat_strength;
+                if (typeof _ms === 'number' && _ms >= 1 && _ms <= 5) _moatStrength = _ms;
+              }
             }
           } catch (e) { /* moat strength unavailable — use defaults */ }
 
@@ -1682,7 +1714,7 @@ async function updateMarketData() {
         };
         await storage.updateStock(stock.symbol, redisUpdates);
 
-        appendCsvRow(csvPath, stock.symbol, scoreObj, priceData, spyPrice, noiseDecay, action, beta, excessReturn, w1, w2, w3, w4, springDays, capexException);
+        appendCsvRow(csvPath, stock.symbol, scoreObj, priceData, spyPrice, noiseDecay, action, beta, excessReturn, w1, w2, w3, w4, springDays, capexException, sharpDrop, scoreDelta);
 
         logger.info(`  ✅ ${stock.symbol} complete → ${action}`);
 
