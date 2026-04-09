@@ -52,7 +52,17 @@ function toISO(dateStr) {
 // Returns: { r, n } where r is the correlation (or null) and n is shared points.
 function calculatePearson(x, y) {
   const n = x.length;
-  if (n < 30 || n !== y.length) return { r: null, n };
+  if (n !== y.length) return { r: null, n };
+  // Minimum 30 shared trading days for a statistically meaningful correlation.
+  // Below 30, the 95% confidence interval is too wide to be actionable for
+  // position sizing decisions — empty cells are better than noisy numbers.
+  // Once Supabase daily_metrics accumulates 30+ days per stock (~6 weeks),
+  // all cells will populate. Do not lower this threshold.
+  if (n < 30) return { r: null, n };
+  return { r: _pearson(x, y, n), n, lowConfidence: false };
+}
+
+function _pearson(x, y, n) {
   const mean = arr => arr.reduce((a, b) => a + b, 0) / arr.length;
   const mx = mean(x), my = mean(y);
   let num = 0, dx2 = 0, dy2 = 0;
@@ -61,8 +71,7 @@ function calculatePearson(x, y) {
     num += ex * ey; dx2 += ex * ex; dy2 += ey * ey;
   }
   const denom = Math.sqrt(dx2 * dy2);
-  const r = denom === 0 ? null : num / denom;
-  return { r, n };
+  return denom === 0 ? null : num / denom;
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -187,8 +196,14 @@ async function runCorrelationEngine() {
         }
       }
 
-      const { r, n: sharedN } = calculatePearson(r1, r2);
+      const { r, n: sharedN, lowConfidence } = calculatePearson(r1, r2);
       matrix[t1][t2] = r !== null ? parseFloat(r.toFixed(3)) : null;
+      // Tag low-confidence pairs (15-29 shared points) so dashboard can shade them
+      if (r !== null && lowConfidence) {
+        if (!matrix._lowConfidence) matrix._lowConfidence = {};
+        if (!matrix._lowConfidence[t1]) matrix._lowConfidence[t1] = {};
+        matrix._lowConfidence[t1][t2] = true;
+      }
       // Store data point count for the upper triangle only (used for data quality display)
       if (i < j) {
         if (!matrix._dataPoints) matrix._dataPoints = {};
@@ -217,18 +232,28 @@ async function runCorrelationEngine() {
   cutoff63d.setDate(cutoff63d.getDate() - 90);  // ~63 trading days in calendar days
 
   // Fetch all rows from the 63d window (includes the 21d window too)
-  // Filter to current portfolio symbols — prevents unbounded row growth as table accumulates.
-  // tickers is the list of symbols with price data (computed in STEP 4 above).
-  // Falls back to all portfolio symbols if tickers is empty.
+  // Filter to current portfolio symbols where possible.
+  // SAFEGUARD: if querySymbols is empty (no price data loaded yet),
+  // skip the .in() filter entirely to avoid Supabase returning 0 rows
+  // on a PostgREST empty-array .in() call — which varies by version.
   const querySymbols = tickers.length > 0 ? tickers
     : portfolioSymbols ? [...portfolioSymbols] : [];
 
-  const { data: regimeRows, error: regimeError } = await supabase
+  let regimeFlagsQuery = supabase
     .from('regime_flags')
     .select('symbol, date, excess_return_pct, quality_score, action, regime_status, w2_confirmed, w3_confirmed, w4_confirmed')
-    .in('symbol', querySymbols)
     .gte('date', cutoff63d.toISOString().split('T')[0])
     .order('date', { ascending: false });
+
+  // Only apply symbol filter when we have a non-empty list to filter against.
+  // Empty .in() would return 0 rows on most PostgREST versions.
+  if (querySymbols.length > 0) {
+    regimeFlagsQuery = regimeFlagsQuery.in('symbol', querySymbols);
+  } else {
+    console.warn('⚠ No portfolio symbols available — fetching all regime_flags (unfiltered)');
+  }
+
+  const { data: regimeRows, error: regimeError } = await regimeFlagsQuery;
 
   if (regimeError) console.warn(`⚠ Regime flags warning: ${regimeError.message}`);
 
@@ -508,15 +533,19 @@ async function runCorrelationEngine() {
 
   try {
     await redisClient.connect();
+    // Remove the internal _lowConfidence metadata before saving the matrix itself
+    const { _lowConfidence, ...cleanMatrix } = matrix;
+
     await redisClient.set('portfolio_correlation', JSON.stringify({
       lastUpdated: new Date().toISOString(),
       windowStart: sortedDates[0],
       windowEnd:   sortedDates[sortedDates.length - 1],
       windowDays:  sortedDates.length, // unique trading days with price data (not calendar days)
       tickers,
-      matrix,
+      matrix:        cleanMatrix,
+      lowConfidence: _lowConfidence || {},  // pairs with 15-29 shared data points
       insights,
-      threshold:   THRESHOLD,
+      threshold:     THRESHOLD,
     }));
     console.log(`\n✅ Saved to Redis — ${tickers.length} tickers · ${insights.length} insights`);
   } catch (err) {
