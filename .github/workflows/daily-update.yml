@@ -1,21 +1,24 @@
 name: Market & News Data Pipeline
 
-# ─── TWO SEPARATE JOBS — eliminates the delay vulnerability ────────────────────
+# ─── WHY TWO JOBS INSTEAD OF ONE ──────────────────────────────────────────────
 #
-# PROBLEM WITH THE OLD DESIGN:
-#   One job used HOUR=$(date -u +"%H") to decide master vs news.
-#   GitHub Actions delays scheduled runs 15-60 min during high load.
-#   If the 22:00 UTC cron started at 23:05 UTC, HOUR="23" → fell into
-#   the 'else' branch → ran the news script instead of the master script.
-#   This is why Supabase and GitHub CSV stopped receiving data after April 3.
-#   The pipeline appeared to run 5x/day correctly, but master never fired.
+# The old design had ONE job that used HOUR=$(date -u +"%H") to decide whether
+# to run the master pipeline or the news update. GitHub Actions frequently delays
+# scheduled runs by 15-90 minutes under high load. If the 22:00 UTC cron started
+# at 23:05 UTC, HOUR="23" → fell into the else branch → ran the news script
+# instead of the master. This is why Supabase and GitHub CSV had no new data
+# after April 3 — the master run silently never fired.
 #
-# FIX:
-#   Split into two completely separate jobs with their own cron schedules.
-#   Each job knows its own purpose — no clock detection needed.
-#   Even a 90-minute GitHub delay can't misroute a job.
+# FIX: Two jobs with separate schedule triggers. Each job knows its own purpose.
+# No clock detection. A 90-minute GitHub delay cannot misroute a job.
 
 on:
+  schedule:
+    - cron: '0 14 * * 1-5'   # 9:00 AM ET  — intraday news (job: intraday-news)
+    - cron: '0 18 * * 1-5'   # 1:00 PM ET  — intraday news (job: intraday-news)
+    - cron: '15 21 * * 1-5'  # 4:15 PM ET  — intraday news (job: intraday-news)
+    - cron: '0 22 * * 1-5'   # 5:00 PM ET  — EOD master + matrix (job: eod-master)
+
   workflow_dispatch:
     inputs:
       run_type:
@@ -34,17 +37,19 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-# ══════════════════════════════════════════════════════════════════════════════
-# JOB 1: EOD MASTER — runs once daily, scores all stocks, writes Supabase + CSV
-# Cron: 22:00 UTC = 5:00 PM ET (well after US close at 4 PM ET + 45 min)
-# Even with a 90-min GitHub delay, this still processes the correct trading day.
-# ══════════════════════════════════════════════════════════════════════════════
 jobs:
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 1: EOD MASTER
+  # Runs at 22:00 UTC (5 PM ET) — after US market close + EOD processing.
+  # Scores all 18 stocks, writes Supabase, updates Redis, commits score CSV.
+  # Immediately followed by correlation matrix recalculation.
+  # ════════════════════════════════════════════════════════════════════════════
   eod-master:
-    name: EOD Master Run
+    name: EOD Master + Matrix
     runs-on: ubuntu-latest
-    if: >
-      github.event_name == 'schedule' && github.event.schedule == '0 22 * * 1-5' ||
+    if: >-
+      (github.event_name == 'schedule' && github.event.schedule == '0 22 * * 1-5') ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.run_type == 'master')
 
     steps:
@@ -53,7 +58,7 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install dependencies
+      - name: Install backend dependencies
         working-directory: backend
         run: npm install
 
@@ -98,18 +103,20 @@ jobs:
       - name: Commit score history CSV
         run: |
           git add backend/data/score_history.csv || true
-          git commit -m "📊 EOD History $(date -u +%Y-%m-%d)" || true
+          git commit -m "📊 EOD $(date -u +%Y-%m-%d)" || true
           git pull --rebase origin main || true
           git push || true
 
-  # ══════════════════════════════════════════════════════════════════════════════
-  # JOB 2: INTRADAY NEWS — runs 3x daily, updates news scores only
-  # 9 AM ET, 1 PM ET, 4:15 PM ET = 14:00, 18:00, 21:15 UTC
-  # ══════════════════════════════════════════════════════════════════════════════
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 2: INTRADAY NEWS
+  # Runs 3x daily at 9 AM, 1 PM, 4:15 PM ET.
+  # Updates news sentiment scores in Redis. Does NOT touch Supabase scores
+  # or the CSV. EOD master reads intraday news log at 5 PM to build final score.
+  # ════════════════════════════════════════════════════════════════════════════
   intraday-news:
     name: Intraday News Update
     runs-on: ubuntu-latest
-    if: >
+    if: >-
       (github.event_name == 'schedule' && (
         github.event.schedule == '0 14 * * 1-5' ||
         github.event.schedule == '0 18 * * 1-5' ||
@@ -123,7 +130,7 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install dependencies
+      - name: Install backend dependencies
         working-directory: backend
         run: npm install
 
@@ -137,13 +144,15 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: npm run update:news
 
-  # ══════════════════════════════════════════════════════════════════════════════
-  # JOB 3: MATRIX ONLY — manual trigger for recalculating correlation
-  # ══════════════════════════════════════════════════════════════════════════════
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 3: MATRIX ONLY (manual trigger)
+  # Recalculates correlation matrix without running the full master pipeline.
+  # Use when you've added/removed stocks and want updated correlations immediately.
+  # ════════════════════════════════════════════════════════════════════════════
   correlation-matrix:
     name: Correlation Matrix Only
     runs-on: ubuntu-latest
-    if: >
+    if: >-
       github.event_name == 'workflow_dispatch' && github.event.inputs.run_type == 'matrix'
 
     steps:
@@ -152,7 +161,7 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install dependencies
+      - name: Install backend dependencies
         working-directory: backend
         run: npm install
 
@@ -164,8 +173,8 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: npm run calculate-matrix
 
-# ─── CRON SCHEDULE SUMMARY ────────────────────────────────────────────────────
-# 0 14 * * 1-5   = 9:00 AM ET   — intraday news (job 2)
-# 0 18 * * 1-5   = 1:00 PM ET   — intraday news (job 2)
-# 15 21 * * 1-5  = 4:15 PM ET   — intraday news (job 2)
-# 0 22 * * 1-5   = 5:00 PM ET   — EOD master (job 1)
+# ─── SCHEDULE SUMMARY ─────────────────────────────────────────────────────────
+# 0 14 * * 1-5  = Mon-Fri 9:00 AM ET  → intraday-news
+# 0 18 * * 1-5  = Mon-Fri 1:00 PM ET  → intraday-news
+# 15 21 * * 1-5 = Mon-Fri 4:15 PM ET  → intraday-news
+# 0 22 * * 1-5  = Mon-Fri 5:00 PM ET  → eod-master (scores + matrix + CSV)
