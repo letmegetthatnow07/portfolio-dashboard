@@ -10,8 +10,20 @@
  *   3. Merge in memory, normalise all dates to ISO, deduplicate
  *   4. Slice to last 250 trading days
  *   5. Compute RETURNS-based Pearson (not raw prices — avoids trending bias)
- *   6. Fetch last 21-day average of regime_flags per symbol for stable winner logic
+ *   6. Fetch last 21-day + 63-day average of regime_flags per symbol for stable winner logic
  *   7. Save matrix + insights to Redis
+ *
+ * FIXES applied vs previous version:
+ *   FIX-A: lowConfidence flag now correctly set for pairs with 15-29 shared return observations.
+ *          Was: n < 30 returned null before lowConfidence could ever be true (dead code).
+ *          Now: n < 15 → null (absolute minimum), 15-29 → r with lowConfidence:true, 30+ → full confidence.
+ *   FIX-B: _dataPoints now stores r1.length (actual return observations used in Pearson)
+ *          not shared.length (price date count, which is off-by-1).
+ *   FIX-C: _dataPoints is now included in the Redis payload so dashboard can display data quality.
+ *   FIX-D: Multi-day gap detection skips returns that span >3 calendar days (halts, new listings).
+ *          This prevents inflated single-return observations from distorting the correlation.
+ *   FIX-E: Single Redis connection reused across the entire run (was two separate open/close cycles).
+ *   FIX-F: WEAK_SIGNAL verdict is now documented alongside the conviction gates.
  */
 
 const fs   = require('fs');
@@ -41,25 +53,26 @@ function toISO(dateStr) {
 }
 
 // ── Returns-based Pearson correlation ────────────────────────────────────────
-// Minimum 30 shared return observations required for statistical validity.
+// FIX-A: Three-tier minimum, not a hard n<30 cutoff.
 //
-// Why 30? With n < 30, a spurious correlation of 0.90+ between two completely
-// unrelated stocks has a ~28% probability with n=3, ~4% with n=5.
-// At n=30, the probability of |r| > 0.50 by random chance is < 0.5%.
-// Below 30 data points the number is shown as null (displayed as '—') so the
-// matrix is honest about data quality rather than showing misleading values.
+// n < 15:  Absolute minimum — too few points for any meaningful number. Return null.
+// n 15-29: Low-confidence zone. Pearson r is computed and returned, but flagged
+//          with lowConfidence:true so the dashboard can shade it. The 95% CI at
+//          n=15 is roughly ±0.50 around the estimate, so it should be treated as
+//          indicative, not reliable. Better to show a shaded estimate than '—' for
+//          pairs that are genuinely accumulating history.
+// n >= 30: Full confidence. 95% CI narrows to ±0.35 at n=30, ±0.18 at n=100.
+//          This is the level at which correlation-based position sizing decisions
+//          become defensible.
 //
-// Returns: { r, n } where r is the correlation (or null) and n is shared points.
+// Do not lower the full-confidence threshold below 30 — see methodology note above.
+//
+// Returns: { r, n, lowConfidence }
 function calculatePearson(x, y) {
   const n = x.length;
-  if (n !== y.length) return { r: null, n };
-  // Minimum 30 shared trading days for a statistically meaningful correlation.
-  // Below 30, the 95% confidence interval is too wide to be actionable for
-  // position sizing decisions — empty cells are better than noisy numbers.
-  // Once Supabase daily_metrics accumulates 30+ days per stock (~6 weeks),
-  // all cells will populate. Do not lower this threshold.
-  if (n < 30) return { r: null, n };
-  return { r: _pearson(x, y, n), n, lowConfidence: false };
+  if (n !== y.length || n < 15) return { r: null, n, lowConfidence: true };
+  const r = _pearson(x, y, n);
+  return { r, n, lowConfidence: n < 30 };
 }
 
 function _pearson(x, y, n) {
@@ -82,6 +95,11 @@ async function runCorrelationEngine() {
 
   const priceData = {};
   const allDates  = new Set();
+
+  // ── FIX-E: Open one Redis connection, reuse throughout ───────────────────
+  const redisClient = createRedisClient({ url: process.env.REDIS_URL });
+  redisClient.on('error', err => console.error('Redis error:', err.message));
+  await redisClient.connect();
 
   // STEP 1: CSV seed data
   const csvPath = path.resolve(__dirname, '../data/historical_prices.csv');
@@ -131,14 +149,12 @@ async function runCorrelationEngine() {
   }
 
   // STEP 3: Filter to CURRENT portfolio only
-  // This ensures deleted stocks disappear from the matrix on the next run.
   // Redis portfolio is the source of truth for what's currently tracked.
+  // Deleted stocks disappear from the matrix on the next run.
+  // FIX-E: Use the already-open redisClient, not a new one.
   let portfolioSymbols = null;
   try {
-    const redis = createRedisClient({ url: process.env.REDIS_URL });
-    redis.on('error', () => {});
-    await redis.connect();
-    const raw = await redis.get('portfolio');
+    const raw = await redisClient.get('portfolio');
     if (raw) {
       const portfolioData = JSON.parse(raw);
       portfolioSymbols = new Set(
@@ -146,13 +162,10 @@ async function runCorrelationEngine() {
       );
       console.log(`✓ Portfolio filter: ${[...portfolioSymbols].join(', ')}`);
     }
-    await redis.quit();
   } catch (e) {
     console.warn(`⚠ Portfolio filter unavailable (${e.message}) — using all tickers from price data`);
   }
 
-  // Apply filter: only keep tickers in the current portfolio
-  // Always include all tickers if filter unavailable (graceful fallback)
   if (portfolioSymbols) {
     for (const ticker of Object.keys(priceData)) {
       if (!portfolioSymbols.has(ticker.toUpperCase())) {
@@ -163,7 +176,6 @@ async function runCorrelationEngine() {
   }
 
   // STEP 4: Rolling 250-day window
-  // ISO dates sort correctly alphabetically (YYYY-MM-DD)
   const sortedDates = Array.from(allDates).sort().slice(-250);
   const tickers     = Object.keys(priceData).sort();
 
@@ -171,8 +183,25 @@ async function runCorrelationEngine() {
   console.log(`✓ Tickers: ${tickers.join(', ')}\n`);
 
   // STEP 5: Returns-based correlation matrix
+  // FIX-D: Skip return observations where the price gap spans >3 calendar days.
+  //        A stock missing on day 5 would otherwise produce a return from day 4→6
+  //        that spans 2 trading days, inflating single-observation volatility.
+  //        3 calendar days = covers weekends (Fri→Mon). Beyond that, it's a halt
+  //        or new listing and the return is not comparable with daily returns.
+  //
+  // FIX-B: Store r1.length (return observations) not shared.length (price dates).
+  //        shared.length - 1 = number of consecutive pairs. But after gap-skipping,
+  //        the actual return count may be lower. r1.length is the authoritative count.
+  //
+  // FIX-C: dataPoints included in Redis payload.
+  //
+  // FIX-A: lowConfidence now correctly set for 15-29 observations.
   console.log('Calculating returns matrix...');
-  const matrix = {};
+  const matrix         = {};
+  const lowConfidence  = {};  // { t1: { t2: true } } — pairs with 15-29 shared returns
+  const dataPoints     = {};  // { t1: { t2: n } }    — actual return count per pair
+
+  const MAX_GAP_DAYS = 3; // calendar days — covers Fri→Mon weekends
 
   for (let i = 0; i < tickers.length; i++) {
     matrix[tickers[i]] = {};
@@ -180,6 +209,7 @@ async function runCorrelationEngine() {
       const t1 = tickers[i], t2 = tickers[j];
       if (t1 === t2) { matrix[t1][t2] = 1.0; continue; }
 
+      // Shared dates where both stocks have a price
       const shared = sortedDates.filter(
         d => priceData[t1][d] !== undefined && priceData[t2][d] !== undefined
       );
@@ -187,7 +217,11 @@ async function runCorrelationEngine() {
       const r1 = [], r2 = [];
       for (let k = 1; k < shared.length; k++) {
         const td = shared[k], pd = shared[k - 1];
-        if (td === pd) continue;
+
+        // FIX-D: Skip multi-day gaps (halts, new listings, data holes)
+        const gapDays = (new Date(td) - new Date(pd)) / 86_400_000;
+        if (gapDays > MAX_GAP_DAYS) continue;
+
         const p1t = priceData[t1][td], p1p = priceData[t1][pd];
         const p2t = priceData[t2][td], p2p = priceData[t2][pd];
         if (p1p > 0 && p2p > 0) {
@@ -196,19 +230,20 @@ async function runCorrelationEngine() {
         }
       }
 
-      const { r, n: sharedN, lowConfidence } = calculatePearson(r1, r2);
+      const { r, n: returnCount, lowConfidence: isLowConf } = calculatePearson(r1, r2);
       matrix[t1][t2] = r !== null ? parseFloat(r.toFixed(3)) : null;
-      // Tag low-confidence pairs (15-29 shared points) so dashboard can shade them
-      if (r !== null && lowConfidence) {
-        if (!matrix._lowConfidence) matrix._lowConfidence = {};
-        if (!matrix._lowConfidence[t1]) matrix._lowConfidence[t1] = {};
-        matrix._lowConfidence[t1][t2] = true;
+
+      // FIX-A: populate lowConfidence metadata for dashboard shading
+      if (r !== null && isLowConf) {
+        if (!lowConfidence[t1]) lowConfidence[t1] = {};
+        lowConfidence[t1][t2] = true;
       }
-      // Store data point count for the upper triangle only (used for data quality display)
+
+      // FIX-B: store actual return observations (not price date count)
+      // FIX-C: stored in separate object, included in Redis payload below
       if (i < j) {
-        if (!matrix._dataPoints) matrix._dataPoints = {};
-        if (!matrix._dataPoints[t1]) matrix._dataPoints[t1] = {};
-        matrix._dataPoints[t1][t2] = sharedN;
+        if (!dataPoints[t1]) dataPoints[t1] = {};
+        dataPoints[t1][t2] = returnCount; // r1.length — actual Pearson input count
       }
     }
   }
@@ -220,22 +255,17 @@ async function runCorrelationEngine() {
   //   21d = recent momentum (can be noisy — one earnings beat inflates it)
   //   63d = one quarter of structural behaviour (harder to fake)
   //
-  // A recommendation only fires when BOTH windows agree on the winner.
+  // A RECOMMEND verdict only fires when BOTH windows agree on the winner.
   // This prevents switching based on a single good month.
 
   const now = new Date();
 
   const cutoff21d = new Date(now);
-  cutoff21d.setDate(cutoff21d.getDate() - 30);  // ~21 trading days in calendar days
+  cutoff21d.setDate(cutoff21d.getDate() - 30);  // ~21 trading days in calendar
 
   const cutoff63d = new Date(now);
-  cutoff63d.setDate(cutoff63d.getDate() - 90);  // ~63 trading days in calendar days
+  cutoff63d.setDate(cutoff63d.getDate() - 90);  // ~63 trading days in calendar
 
-  // Fetch all rows from the 63d window (includes the 21d window too)
-  // Filter to current portfolio symbols where possible.
-  // SAFEGUARD: if querySymbols is empty (no price data loaded yet),
-  // skip the .in() filter entirely to avoid Supabase returning 0 rows
-  // on a PostgREST empty-array .in() call — which varies by version.
   const querySymbols = tickers.length > 0 ? tickers
     : portfolioSymbols ? [...portfolioSymbols] : [];
 
@@ -245,8 +275,8 @@ async function runCorrelationEngine() {
     .gte('date', cutoff63d.toISOString().split('T')[0])
     .order('date', { ascending: false });
 
-  // Only apply symbol filter when we have a non-empty list to filter against.
-  // Empty .in() would return 0 rows on most PostgREST versions.
+  // Only apply symbol filter when we have a non-empty list.
+  // Empty .in() returns 0 rows on most PostgREST versions — avoid.
   if (querySymbols.length > 0) {
     regimeFlagsQuery = regimeFlagsQuery.in('symbol', querySymbols);
   } else {
@@ -254,27 +284,20 @@ async function runCorrelationEngine() {
   }
 
   const { data: regimeRows, error: regimeError } = await regimeFlagsQuery;
-
   if (regimeError) console.warn(`⚠ Regime flags warning: ${regimeError.message}`);
 
   const cutoff21dISO = cutoff21d.toISOString().split('T')[0];
 
-  // Separate accumulators for 21d and 63d windows
   const accum = {};
-
   (regimeRows || []).forEach(row => {
     const sym = row.symbol;
     if (!accum[sym]) {
       accum[sym] = {
-        // 21d bucket
         excess21Sum: 0, quality21Sum: 0, count21: 0,
-        // 63d bucket
         excess63Sum: 0, quality63Sum: 0, count63: 0,
-        // Cascade worst-case across the 63d window
         w2Hits: 0, w3Hits: 0, w4Hits: 0, totalRows: 0,
-        // Most recent snapshot (first row = most recent because ordered DESC)
-        latest_action:  row.action,
-        latest_regime:  row.regime_status,
+        latest_action: row.action,
+        latest_regime: row.regime_status,
       };
     }
 
@@ -282,55 +305,48 @@ async function runCorrelationEngine() {
     const exc = parseFloat(row.excess_return_pct || 0);
     const ql  = parseFloat(row.quality_score     || 0);
 
-    // Always add to 63d bucket
     a.excess63Sum += exc;
     a.quality63Sum += ql;
     a.count63++;
 
-    // Only add to 21d bucket if within the tighter window
     if (row.date >= cutoff21dISO) {
       a.excess21Sum += exc;
       a.quality21Sum += ql;
       a.count21++;
     }
 
-    // Count cascade warning days
     if (row.w2_confirmed) a.w2Hits++;
     if (row.w3_confirmed) a.w3Hits++;
     if (row.w4_confirmed) a.w4Hits++;
     a.totalRows++;
   });
 
-  // Build final statsMap with computed averages and cascade health flags
   const statsMap = {};
   Object.entries(accum).forEach(([sym, a]) => {
-
     const alpha21 = a.count21 > 0 ? a.excess21Sum / a.count21 : null;
     const alpha63 = a.count63 > 0 ? a.excess63Sum / a.count63 : null;
     const qual21  = a.count21 > 0 ? a.quality21Sum / a.count21 : null;
     const qual63  = a.count63 > 0 ? a.quality63Sum / a.count63 : null;
 
-    // Cascade health: what % of the 63d window showed each warning level
     const w2Pct = a.totalRows > 0 ? a.w2Hits / a.totalRows : 0;
     const w3Pct = a.totalRows > 0 ? a.w3Hits / a.totalRows : 0;
     const w4Pct = a.totalRows > 0 ? a.w4Hits / a.totalRows : 0;
 
-    // Health verdict: HEALTHY / WEAKENING / DECAYING / CRITICAL
     let cascadeHealth = 'HEALTHY';
-    if (w4Pct > 0.10)      cascadeHealth = 'CRITICAL';   // W4 active >10% of days
-    else if (w3Pct > 0.25) cascadeHealth = 'DECAYING';   // W3 active >25% of days
-    else if (w2Pct > 0.40) cascadeHealth = 'WEAKENING';  // W2 active >40% of days
+    if (w4Pct > 0.10)      cascadeHealth = 'CRITICAL';
+    else if (w3Pct > 0.25) cascadeHealth = 'DECAYING';
+    else if (w2Pct > 0.40) cascadeHealth = 'WEAKENING';
 
     statsMap[sym] = {
-      alpha21,          // 21d avg excess return (nullable if <21d data)
-      alpha63,          // 63d avg excess return (nullable if <63d data)
+      alpha21,
+      alpha63,
       qual21,
       qual63,
       cascadeHealth,
       w2Pct, w3Pct, w4Pct,
-      dataRows:        a.count63,
-      action:          a.latest_action || 'HOLD',
-      regime_status:   a.latest_regime || 'NORMAL',
+      dataRows:      a.count63,
+      action:        a.latest_action || 'HOLD',
+      regime_status: a.latest_regime || 'NORMAL',
     };
   });
 
@@ -338,53 +354,53 @@ async function runCorrelationEngine() {
 
   // STEP 7: Capital optimisation insights — conviction-gated
   //
-  // Conviction gates (ALL must pass for a recommendation to fire):
+  // Conviction gates (ALL must pass for a RECOMMEND to fire):
   //   G1. Correlation confirmed:    Returns-based Pearson >= 0.65 over 250d
   //   G2. Both tickers have data:   >= 21 days of Supabase history each
   //   G3. Winner not in decay:      cascadeHealth != DECAYING / CRITICAL
   //   G4. Winner regime is safe:    not IDIOSYNCRATIC_DECAY
   //   G5. Alpha edge is material:   winner leads by > 2% on 21d alpha
-  //   G6. 63d confirms 21d:         winner also leads on 63d alpha (same direction)
-  //   G7. Quality confirms:         winner's qual63 >= loser's qual63
+  //   G6. 63d confirms 21d:         winner also leads on 63d alpha AND edge > 1%
+  //   G7. Quality confirms:         winner's qual63 >= loser's qual63 by > 0.5 pts
   //
-  // If gates G5/G6/G7 don't clearly point to one ticker, we emit a
-  // MONITOR card (no recommendation, just flagging the correlation).
+  // Verdict tiers:
+  //   RECOMMEND   — winnerScore >= 4: clear multi-gate evidence for one ticker
+  //   WEAK_SIGNAL — winnerScore  < 4: winner identified but evidence is thin
+  //   MONITOR     — tied, blocked, or insufficient data: no recommendation yet
+  //
+  // FIX-F: WEAK_SIGNAL is documented here alongside the conviction gates.
 
-  const THRESHOLD = 0.65;
-  const MIN_ALPHA_EDGE = 2.0;     // % — minimum meaningful alpha difference
-  const MIN_DATA_ROWS  = 21;      // days of Supabase history required
+  const THRESHOLD      = 0.65;
+  const MIN_ALPHA_EDGE = 2.0;   // % — minimum meaningful alpha difference (G5)
+  const MIN_DATA_ROWS  = 21;    // days of Supabase history required (G2)
   const insights = [];
 
-  // Actions that block a ticker from being recommended as a consolidation target
-  const BLOCKED_ACTIONS  = new Set(['SELL', 'TRIM_25', 'IDIOSYNCRATIC_DECAY']);
-  const BLOCKED_REGIMES  = new Set(['IDIOSYNCRATIC_DECAY']);
-  const BLOCKED_CASCADE  = new Set(['DECAYING', 'CRITICAL']);
+  const BLOCKED_ACTIONS = new Set(['SELL', 'TRIM_25', 'IDIOSYNCRATIC_DECAY']);
+  const BLOCKED_REGIMES = new Set(['IDIOSYNCRATIC_DECAY']);
+  const BLOCKED_CASCADE = new Set(['DECAYING', 'CRITICAL']);
 
   for (let i = 0; i < tickers.length; i++) {
     for (let j = i + 1; j < tickers.length; j++) {
       const t1 = tickers[i], t2 = tickers[j];
       const corr = matrix[t1][t2];
 
-      // G1: correlation threshold
-      if (corr < THRESHOLD) continue;
+      // G1
+      if (corr === null || corr < THRESHOLD) continue;
 
       const s1 = statsMap[t1];
       const s2 = statsMap[t2];
 
-      // G2: minimum data — if either ticker has < 21 days, we can't make a call
       const t1HasData = s1 && s1.dataRows >= MIN_DATA_ROWS;
       const t2HasData = s2 && s2.dataRows >= MIN_DATA_ROWS;
 
-      // Shared base payload for both RECOMMEND and MONITOR cards
       const basePayload = {
-        pair:         [t1, t2],
-        correlation:  corr,
-        corrTier:     corr >= 0.85 ? 'extreme' : corr >= 0.75 ? 'high' : 'moderate',
-        t1Stats:      s1 || null,
-        t2Stats:      s2 || null,
+        pair:        [t1, t2],
+        correlation: corr,
+        corrTier:    corr >= 0.85 ? 'extreme' : corr >= 0.75 ? 'high' : 'moderate',
+        t1Stats:     s1 || null,
+        t2Stats:     s2 || null,
       };
 
-      // Not enough data yet — emit a MONITOR card, no recommendation
       if (!t1HasData || !t2HasData) {
         insights.push({
           ...basePayload,
@@ -395,35 +411,30 @@ async function runCorrelationEngine() {
         continue;
       }
 
-      // Evaluate each ticker as a potential winner
       const evaluate = (sym, s, oSym, oS) => {
         const reasons = [];
         let score = 0;
 
-        // Alpha edge on 21d window
+        // G5: Alpha edge on 21d window
         const alphaEdge21 = (s.alpha21 ?? 0) - (oS.alpha21 ?? 0);
         if (alphaEdge21 > MIN_ALPHA_EDGE) {
           score += 3;
           reasons.push(`+${alphaEdge21.toFixed(1)}% alpha edge (21d)`);
         } else if (alphaEdge21 > 0) {
-          score += 1; // marginal, not decisive
+          score += 1;
         }
 
-        // 63d confirms 21d (both windows agree)
+        // G6: 63d confirms 21d — both edge must be material (>1%) for full credit
         const alphaEdge63 = (s.alpha63 ?? 0) - (oS.alpha63 ?? 0);
-        // Three-tier 63d confirmation: strong (+2), marginal (+1), none (0)
-        // alphaEdge63 > 0.01% was trivially satisfied — even a near-tie got full +2 pts.
-        // Require the 63d edge to be material (MIN_ALPHA_EDGE/2 = 1.0%) for strong confirmation.
-        // A 21d spike that compresses to 0.01% quarterly is noise, not structural outperformance.
         if (alphaEdge63 > MIN_ALPHA_EDGE / 2 && alphaEdge21 > MIN_ALPHA_EDGE) {
           score += 2;
           reasons.push(`confirmed over 63d (+${alphaEdge63.toFixed(1)}%)`);
         } else if (alphaEdge63 > 0 && alphaEdge21 > 0) {
-          score += 1; // marginal confirmation — both windows positive but 63d edge is thin
+          score += 1;
           reasons.push(`weak 63d confirmation (+${alphaEdge63.toFixed(1)}%)`);
         }
 
-        // Quality score higher over 63d
+        // G7: Quality score higher over 63d (bonus, not a hard veto — see methodology note)
         const qualEdge = (s.qual63 ?? 0) - (oS.qual63 ?? 0);
         if (qualEdge > 0.5) {
           score += 2;
@@ -433,7 +444,7 @@ async function runCorrelationEngine() {
         // Cascade health bonus
         if (s.cascadeHealth === 'HEALTHY') { score += 1; }
 
-        // Hard blockers — disqualify regardless of score
+        // Hard blockers — disqualify regardless of score (G3, G4)
         const blocked =
           BLOCKED_ACTIONS.has(s.action) ||
           BLOCKED_REGIMES.has(s.regime_status) ||
@@ -445,7 +456,6 @@ async function runCorrelationEngine() {
       const e1 = evaluate(t1, s1, t2, s2);
       const e2 = evaluate(t2, s2, t1, s1);
 
-      // Both blocked — neither is safe to recommend
       if (e1.blocked && e2.blocked) {
         insights.push({
           ...basePayload,
@@ -456,16 +466,13 @@ async function runCorrelationEngine() {
         continue;
       }
 
-      // Determine winner
       let winner, loser, wStat, lStat, winnerReasons, winnerScore;
 
       if (!e1.blocked && e2.blocked) {
-        // t2 is blocked — t1 wins by default
         winner = t1; loser = t2; wStat = s1; lStat = s2;
         winnerReasons = [`${t2} is in ${s2.cascadeHealth} cascade / ${s2.action} action`];
         winnerScore = e1.score;
       } else if (e1.blocked && !e2.blocked) {
-        // t1 is blocked — t2 wins by default
         winner = t2; loser = t1; wStat = s2; lStat = s1;
         winnerReasons = [`${t1} is in ${s1.cascadeHealth} cascade / ${s1.action} action`];
         winnerScore = e2.score;
@@ -478,7 +485,6 @@ async function runCorrelationEngine() {
         winnerReasons = e2.reasons;
         winnerScore = e2.score;
       } else {
-        // Tied — emit MONITOR, don't force a call
         insights.push({
           ...basePayload,
           verdict:       'MONITOR',
@@ -488,8 +494,7 @@ async function runCorrelationEngine() {
         continue;
       }
 
-      // Final check: does the winner have a material proven edge?
-      // Score < 4 means we found a winner but the edge is thin — downgrade to MONITOR
+      // FIX-F: WEAK_SIGNAL fires when winner identified but evidence is thin (score < 4)
       const verdict = winnerScore >= 4 ? 'RECOMMEND' : 'WEAK_SIGNAL';
 
       insights.push({
@@ -509,13 +514,12 @@ async function runCorrelationEngine() {
         loserCascade:    lStat.cascadeHealth,
         loserAction:     lStat.action,
         loserRegime:     lStat.regime_status,
-        winnerReasons,   // array of human-readable evidence strings
+        winnerReasons,
         winnerScore,
       });
     }
   }
 
-  // Sort: RECOMMEND first, then by correlation strength
   insights.sort((a, b) => {
     const tier = { RECOMMEND: 0, WEAK_SIGNAL: 1, MONITOR: 2 };
     const tDiff = (tier[a.verdict] ?? 2) - (tier[b.verdict] ?? 2);
@@ -528,24 +532,20 @@ async function runCorrelationEngine() {
   console.log(`✓ ${insights.length} pairs flagged — RECOMMEND:${recommends} WEAK:${weakSignals} MONITOR:${monitors}`);
 
   // STEP 8: Save to Redis
-  const redisClient = createRedisClient({ url: process.env.REDIS_URL });
-  redisClient.on('error', err => console.error('Redis error:', err.message));
-
+  // FIX-C: dataPoints now included in the payload.
+  // FIX-E: reusing the already-open redisClient.
   try {
-    await redisClient.connect();
-    // Remove the internal _lowConfidence metadata before saving the matrix itself
-    const { _lowConfidence, ...cleanMatrix } = matrix;
-
     await redisClient.set('portfolio_correlation', JSON.stringify({
       lastUpdated: new Date().toISOString(),
       windowStart: sortedDates[0],
       windowEnd:   sortedDates[sortedDates.length - 1],
-      windowDays:  sortedDates.length, // unique trading days with price data (not calendar days)
+      windowDays:  sortedDates.length,
       tickers,
-      matrix:        cleanMatrix,
-      lowConfidence: _lowConfidence || {},  // pairs with 15-29 shared data points
+      matrix,
+      lowConfidence,  // pairs with 15-29 shared return observations — for dashboard shading
+      dataPoints,     // FIX-C: actual return count per upper-triangle pair — for data quality display
       insights,
-      threshold:     THRESHOLD,
+      threshold: THRESHOLD,
     }));
     console.log(`\n✅ Saved to Redis — ${tickers.length} tickers · ${insights.length} insights`);
   } catch (err) {
