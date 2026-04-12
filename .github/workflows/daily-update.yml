@@ -82,7 +82,7 @@ jobs:
           REDIS_URL:            ${{ secrets.REDIS_URL }}
           SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: npm run calculate-matrix
+        run: npm run generate-correlation
 
       - name: Run Earnings Event Analyser
         working-directory: backend
@@ -179,7 +179,7 @@ jobs:
           REDIS_URL:            ${{ secrets.REDIS_URL }}
           SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: npm run calculate-matrix
+        run: npm run generate-correlation
 
 # ─── SCHEDULE SUMMARY ─────────────────────────────────────────────────────────
 # 0 14 * * 1-5  = Mon-Fri 9:00 AM ET  → intraday-news
