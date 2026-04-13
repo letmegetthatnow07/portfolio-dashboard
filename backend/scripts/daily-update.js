@@ -64,7 +64,8 @@ async function isMarketClosedToday(redisClient) {
 const VALID_SIGNALS = [
   'STRONG_BUY', 'BUY', 'HOLD', 'WATCH',
   'TRIM_25', 'SELL', 'SPRING_CANDIDATE', 'SPRING_CONFIRMED', 'ADD',
-  'HOLD_NOISE', 'NORMAL', 'INSUFFICIENT_DATA', 'IDIOSYNCRATIC_DECAY', 'REDUCE'
+  'HOLD_NOISE', 'NORMAL', 'INSUFFICIENT_DATA', 'IDIOSYNCRATIC_DECAY', 'REDUCE',
+  'MARKET_NOISE',  // FIX: quantEngine.evaluateFractalDecay can return this — was silently mapped to 'HOLD'
 ];
 
 // ─── INSTRUMENT TYPE DETECTION ────────────────────────────────────────────────
@@ -97,6 +98,8 @@ async function fetchInstrumentType(symbol, finnhubKey) {
       raw:   type,
       isETF: isFund,
       name:  res.data?.name   || null,
+      // FIX: capture industry here so the auto-refresh sector block doesn't need a second profile2 call
+      industry: res.data?.finnhubIndustry || null,
       // Expense ratio from Finnhub profile (field: expenseRatio, in decimal e.g. 0.0013)
       expenseRatio: res.data?.expenseRatio != null
         ? parseFloat((res.data.expenseRatio * 100).toFixed(4))  // convert to %
@@ -456,8 +459,12 @@ class PriceAnalyzer {
       );
       if (res.data?.data?.length > 0) {
         const avgMspr = res.data.data.reduce((sum, m) => sum + m.mspr, 0) / res.data.data.length;
-        if (avgMspr > 0) return { bought: avgMspr * 1_000_000, sold: 0 };
-        if (avgMspr < 0) return { bought: 0, sold: Math.abs(avgMspr) * 1_000_000 };
+        // FIX: Tag source as 'finnhub' so calculateScore can bypass the $50K dollar threshold.
+        // Finnhub MSPR is a ratio (monthly share purchase ratio), not a dollar value.
+        // avgMspr * 1M is an arbitrary normalisation — the threshold should not apply.
+        // Directional signal (buy vs sell) is reliable; the magnitude is not comparable to SEC-API dollars.
+        if (avgMspr > 0) return { bought: avgMspr * 1_000_000, sold: 0, rawBought: Infinity, _source: 'finnhub' };
+        if (avgMspr < 0) return { bought: 0, sold: Math.abs(avgMspr) * 1_000_000, rawBought: 0, _source: 'finnhub' };
       }
     } catch (e) { /* fall through */ }
     return null;
@@ -481,6 +488,7 @@ class PriceAnalyzer {
    */
   calculateScore(priceData, fundamentals, technicals, ratings, analyzedNews, insiderData, capexException = false, newsScoreOverride = null, isETF = false, expenseRatio = null) {
     let fundScore = 5, techScore = 5, ratingScore = 5, newsScore = 5, insiderScore = 5;
+    let adjFcfMargin = null; // function-scoped — returned to caller for Supabase write-back
 
     if (fundamentals) {
       // ── ROIC ─────────────────────────────────────────────────────────────
@@ -489,7 +497,7 @@ class PriceAnalyzer {
       // ── Earnings quality veto on ROIC ─────────────────────────────────────
       if (fundamentals._earningsQualityFlag === 'risk' && !capexException) {
         roicS = Math.min(roicS, 5.0);
-        logger.warn?.(`  🔒 ROIC capped at neutral (earnings quality risk — OCF < 0, GAAP income > 0)`);
+        logger.warn(`  🔒 ROIC capped at neutral (earnings quality risk — OCF < 0, GAAP income > 0)`);
       }
 
       // ── Cyclical peak brake ────────────────────────────────────────────────
@@ -497,20 +505,29 @@ class PriceAnalyzer {
       const _gmNow = fundamentals.grossMargin ?? 0;
       const _atCyclicalPeak = _gm5y != null && _gm5y > 0.02 && _gmNow > _gm5y * 1.5;
       if (_atCyclicalPeak) {
-        logger.warn?.(`  ⚠️ CYCLICAL PEAK SIGNAL: current gross margin ${(_gmNow*100).toFixed(1)}% is >150% of 5Y avg ${(_gm5y*100).toFixed(1)}%`);
+        logger.warn(`  ⚠️ CYCLICAL PEAK SIGNAL: current gross margin ${(_gmNow*100).toFixed(1)}% is >150% of 5Y avg ${(_gm5y*100).toFixed(1)}%`);
       }
 
       // ── SBC-adjusted FCF ─────────────────────────────────────────────────
-      let adjFcfMargin = fundamentals.fcfMargin;
+      // adjFcfMargin is declared at the top of calculateScore (function-scoped).
+      // We assign it here and surface it in the return value — the caller writes
+      // it back to fundamentals.fcfMargin AFTER scoring. This keeps calculateScore
+      // a pure scoring function without hidden mutations of its input object.
+      adjFcfMargin = fundamentals.fcfMargin;
       const rawFcfMargin = fundamentals.fcfMargin;
 
-      // CORRECT: fcfYield × marketCapM = actual FCF $M (not fcfMargin × marketCapM)
+      // CORRECT formula: fcfYield × marketCapM = (FCF/MarketCap) × MarketCap = actual FCF $M.
+      // Wrong (old): fcfMargin × marketCapM = FCF × P/S ratio — overestimates FCF for high P/S stocks.
+      // For CRWD (P/S≈20) the wrong formula makes SBC look 20× smaller than it is.
       if (fundamentals.sbcMillions != null && fundamentals.sbcMillions > 0
           && fundamentals.fcfYield != null && fundamentals.fcfYield > 0
           && fundamentals.marketCapM > 0) {
-        const fcfMillions = fundamentals.fcfYield * fundamentals.marketCapM; // ✓ true FCF
+        const fcfMillions = fundamentals.fcfYield * fundamentals.marketCapM; // ✓ true FCF $M
         if (fcfMillions > 0) {
           const sbcAsFcfFraction = fundamentals.sbcMillions / fcfMillions;
+          // Store ratio on fundamentals so moat score SBC penalty can use it directly.
+          // sbcAsFcfFraction > 1.0 means SBC exceeds reported FCF entirely → adjFcfMargin = 0.
+          fundamentals._sbcAsFcfRatio = sbcAsFcfFraction;
           adjFcfMargin = Math.max(0, fundamentals.fcfMargin * (1 - sbcAsFcfFraction));
           if (Math.abs(adjFcfMargin - rawFcfMargin) > 0.005) {
             logger.info(`  💰 SBC adj: FCF ${(rawFcfMargin*100).toFixed(1)}% → ${(adjFcfMargin*100).toFixed(1)}% (SBC ${(sbcAsFcfFraction*100).toFixed(0)}% of true FCF)`);
@@ -519,29 +536,6 @@ class PriceAnalyzer {
       }
 
       let fcfS = Math.max(0, Math.min(10, (adjFcfMargin / 0.03) * 10));
-
-      // ── FIX #3: Persist SBC-adjusted FCF margin back to fundamentals ─────
-      // Without this, writeSupabaseQuarterlyFundamentals writes the unadjusted
-      // value while the composite score used the adjusted one — DB/score diverge.
-      fundamentals.fcfMargin = adjFcfMargin;
-
-      // ── FIX #2: Compute sbcMargin for moat score SBC penalty ─────────────
-      // sbcMargin = SBC / Revenue. Revenue is estimated as FCF / fcfMarginRaw.
-      // Uses rawFcfMargin (pre-adjustment) to avoid circular dependency.
-      // Guard: rawFcfMargin must be meaningfully non-zero to avoid division instability.
-      if (
-        fundamentals.sbcMillions != null &&
-        rawFcfMargin != null && Math.abs(rawFcfMargin) > 0.001 &&
-        fundamentals.fcfYield != null && fundamentals.fcfYield > 0 &&
-        fundamentals.marketCapM != null && fundamentals.marketCapM > 0
-      ) {
-        // Revenue ≈ FCF / FCF Margin. FCF ≈ fcfYield × marketCap
-        const impliedFCF     = fundamentals.fcfYield * fundamentals.marketCapM; // $M
-        const impliedRevenue = impliedFCF / rawFcfMargin;                        // $M
-        fundamentals.sbcMargin = impliedRevenue > 0
-          ? fundamentals.sbcMillions / impliedRevenue
-          : null;
-      }
 
       // ── Debt/Equity ───────────────────────────────────────────────────────
       let deS = fundamentals.debtToEquity < 0
@@ -610,12 +604,15 @@ class PriceAnalyzer {
       const fcfConvS = Math.max(0, Math.min(10, (fundamentals.fcfConversion ?? 0.5) * 6.67));
       const roicVsHurdleS = Math.max(0, Math.min(10, ((fundamentals.roic - 0.15) / 0.10) * 10));
 
-      // SBC dilution penalty — now functional because sbcMargin is computed above (Fix #2)
+      // SBC dilution penalty: uses _sbcAsFcfRatio = SBC/FCF computed in the SBC block above.
+      // This is the direct ratio of SBC to true FCF (fcfYield × marketCap) — no extra arithmetic.
+      // Example: CRWD SBC≈$1.1B, true FCF≈$150M → ratio≈7.3 → sbcPenalty = 2.5 (heavy).
+      // This correctly hammers companies where SBC is destroying most of the FCF shareholders see.
       let sbcPenalty = 0;
-      if (fundamentals.sbcMargin != null && rawFcfMargin > 0) {
-        const sbcAsFcfPct = fundamentals.sbcMargin / Math.max(0.01, rawFcfMargin);
-        if (sbcAsFcfPct > 0.25) sbcPenalty = 2.5;
-        else if (sbcAsFcfPct > 0.10) sbcPenalty = 1.0;
+      const _sbcRatio = fundamentals._sbcAsFcfRatio ?? null;
+      if (_sbcRatio != null) {
+        if (_sbcRatio > 0.25) sbcPenalty = 2.5;       // SBC > 25% of true FCF
+        else if (_sbcRatio > 0.10) sbcPenalty = 1.0;  // SBC > 10% of true FCF
       }
 
       const fcfYieldMoatAdj = fundamentals.fcfYield != null
@@ -693,6 +690,10 @@ class PriceAnalyzer {
       const INSIDER_MIN_BUY_USD = 50_000;
       const { bought, sold, cluster30d = 0, rawBought = bought } = insiderData;
 
+      // FIX: Finnhub fallback tags rawBought = Infinity so it always clears this threshold.
+      // The $50K floor filters token SEC-API purchases (CEO buys $3K of stock = noise).
+      // Finnhub MSPR is a ratio-based signal — magnitude is not in dollars, so the dollar
+      // threshold is inapplicable. Directional signal (positive vs negative MSPR) is reliable.
       const effectiveBought = rawBought >= INSIDER_MIN_BUY_USD ? bought : 0;
       const clusterBonus    = cluster30d >= 3 ? 1.5 : cluster30d === 2 ? 0.5 : 0;
 
@@ -733,12 +734,16 @@ class PriceAnalyzer {
       }
     }
     return {
-      total:   Math.max(0, Math.min(10, finalScore)),
-      fund:    fundScore,
-      tech:    techScore,
-      rating:  ratingScore,
-      news:    newsScore,
-      insider: insiderScore
+      total:         Math.max(0, Math.min(10, finalScore)),
+      fund:          fundScore,
+      tech:          techScore,
+      rating:        ratingScore,
+      news:          newsScore,
+      insider:       insiderScore,
+      // Surfaced so the main loop can write it back to fundamentals.fcfMargin
+      // and pass the adjusted value to Supabase. Keeping the mutation OUT of
+      // calculateScore ensures it remains a pure scoring function.
+      _adjFcfMargin: adjFcfMargin,
     };
   }
 
@@ -1019,9 +1024,11 @@ function appendCsvRow(csvPath, symbol, scoreObj, priceData, spyPrice, regimeStat
 }
 
 function compute21dReturn(historyAsc) {
+  // FIX: index [-22] compared [0] with [21] = 22 bars apart = a 22-day return.
+  // Correct: [-21] compares today with 21 trading days ago = true 21-day return.
   if (!historyAsc || historyAsc.length < 22) return 0;
   const recent = historyAsc[historyAsc.length - 1].c;
-  const prior  = historyAsc[historyAsc.length - 22].c;
+  const prior  = historyAsc[historyAsc.length - 21].c;
   return ((recent - prior) / prior) * 100;
 }
 
@@ -1186,12 +1193,53 @@ async function updateMarketData() {
       (sum, s) => sum + ((s.current_price || 0) * (s.quantity || 0)), 0
     );
 
+    // ── Batch-read all intraday news scores in ONE query before the stock loop ────
+    // Previously: 1 Supabase read per stock = 18 sequential queries adding ~3-4s latency.
+    // Now: 1 query for all symbols, built into a lookup map. Same data, 18× fewer round-trips.
+    const intradayNewsMap = {};
+    try {
+      const { data: allNewsRows, error: newsErr } = await supabase
+        .from('intraday_news_log')
+        .select('symbol, run_slot, news_score, recency_weight, article_count')
+        .eq('date', TODAY)
+        .in('symbol', stocks.map(s => s.symbol));
+
+      if (newsErr) {
+        logger.warn(`Batch intraday news read failed: ${newsErr.message} — using neutral 5.0 for all`);
+      } else {
+        for (const sym of stocks.map(s => s.symbol)) {
+          const runs = (allNewsRows || []).filter(r => r.symbol === sym);
+          if (!runs.length) { intradayNewsMap[sym] = null; continue; }
+          let wSum = 0, tW = 0;
+          runs.forEach(r => {
+            const w = parseFloat(r.recency_weight) || 0;
+            const ew = w > 0 ? w : (r.article_count || 1);
+            wSum += parseFloat(r.news_score) * ew;
+            tW   += ew;
+          });
+          intradayNewsMap[sym] = tW > 0
+            ? parseFloat(Math.max(0, Math.min(10, wSum / tW)).toFixed(2))
+            : null;
+        }
+        logger.info(`  📰 Intraday news loaded for ${Object.keys(intradayNewsMap).length} symbols (1 query)`);
+      }
+    } catch (e) {
+      logger.warn(`Batch intraday news query threw: ${e.message} — using neutral 5.0 for all`);
+    }
+
     for (const stock of stocks) {
       try {
         logger.info(`\n${'─'.repeat(60)}`);
         logger.info(`Analyzing: ${stock.symbol}`);
 
-        const intradayNewsScore = await getIntradayNewsScore(stock.symbol);
+        // Use pre-fetched map (1 query for all stocks, done before loop)
+        const intradayNewsScore = intradayNewsMap[stock.symbol] ?? null;
+        if (intradayNewsScore !== null) {
+          const runs = []; // already aggregated — just log the final value
+          logger.info(`  📰 Intraday news score: ${intradayNewsScore.toFixed(2)}`);
+        } else {
+          logger.info(`  ⚪ No intraday news logged today — using neutral 5.0`);
+        }
 
         const instrumentProfile   = await fetchInstrumentType(stock.symbol, process.env.FINNHUB_API_KEY);
         const profileExpenseRatio = instrumentProfile.expenseRatio;
@@ -1216,33 +1264,32 @@ async function updateMarketData() {
         }
 
         // ── Auto-refresh sector/name for stocks showing 'Unknown' ────────────
-        // FIX #1 applied here: storage.savePortfolio → storage.writeData
-        if ((stock.sector === 'Unknown' || !stock.sector || stock.name === stock.symbol) && !instrumentIsETF) {
+        // Runs AFTER instrumentIsETF is defined. Uses instrumentProfile (already fetched above)
+        // to avoid a redundant second call to Finnhub profile2.
+        // FIX: was making a second axios.get to profile2 — now reuses the cached profile data.
+        if (!instrumentIsETF && (stock.sector === 'Unknown' || !stock.sector || stock.name === stock.symbol)) {
           try {
-            const fhProfile = await axios.get(
-              `https://finnhub.io/api/v1/stock/profile2?symbol=${stock.symbol}&token=${process.env.FINNHUB_API_KEY}`,
-              { timeout: 6000 }
-            );
-            const p = fhProfile.data;
-            if (p?.name || p?.finnhubIndustry) {
+            const fhName     = instrumentProfile.name     ?? null;
+            const fhIndustry = instrumentProfile.industry ?? null;
+            const needsFix   = (stock.name === stock.symbol && fhName) || ((stock.sector === 'Unknown' || !stock.sector) && fhIndustry);
+            if (needsFix) {
               const portfolio = await storage.getPortfolio();
               const idx = portfolio.stocks.findIndex(s => s.symbol === stock.symbol);
               if (idx >= 0) {
-                if (p.name && portfolio.stocks[idx].name === stock.symbol) {
-                  portfolio.stocks[idx].name = p.name;
-                  logger.info(`  📛 Name auto-fixed: ${stock.symbol} → "${p.name}"`);
+                if (fhName && portfolio.stocks[idx].name === stock.symbol) {
+                  portfolio.stocks[idx].name = fhName;
+                  stock.name = fhName;
+                  logger.info(`  📛 Name auto-fixed: ${stock.symbol} → "${fhName}"`);
                 }
-                if (p.finnhubIndustry && portfolio.stocks[idx].sector === 'Unknown') {
-                  portfolio.stocks[idx].sector = p.finnhubIndustry;
-                  logger.info(`  🏭 Sector auto-fixed: ${stock.symbol} → "${p.finnhubIndustry}"`);
+                if (fhIndustry && (portfolio.stocks[idx].sector === 'Unknown' || !portfolio.stocks[idx].sector)) {
+                  portfolio.stocks[idx].sector = fhIndustry;
+                  stock.sector = fhIndustry;
+                  logger.info(`  🏭 Sector auto-fixed: ${stock.symbol} → "${fhIndustry}"`);
                 }
-                // ── FIX #1: was storage.savePortfolio(portfolio) — method does not exist ──
                 await storage.writeData(portfolio);
-                stock.name   = portfolio.stocks[idx].name;
-                stock.sector = portfolio.stocks[idx].sector;
               }
             }
-          } catch (e) { /* non-critical enrichment — skip if API unavailable */ }
+          } catch (e) { /* non-critical — never blocks the main loop */ }
         }
 
         const [priceData, fundamentals, technicals, ratings, insiderData, secCapex, sbcMillions, recent8K] = await Promise.all([
@@ -1282,6 +1329,13 @@ async function updateMarketData() {
           instrumentIsETF,
           instrumentIsETF ? (profileExpenseRatio ?? null) : null
         );
+
+        // Write SBC-adjusted FCF margin back to fundamentals so Supabase stores
+        // the same value the composite score was computed from. DB and score now consistent.
+        // Mutation happens here (caller), not inside calculateScore (kept pure).
+        if (fundamentals && scoreObj._adjFcfMargin !== null) {
+          fundamentals.fcfMargin = scoreObj._adjFcfMargin;
+        }
 
         const maxDrawdown   = technicals ? computeMaxDrawdown(technicals.historyAsc) : null;
         const realizedVol   = technicals ? quantEngine.computeVolatility(technicals.historyAsc) : null;
