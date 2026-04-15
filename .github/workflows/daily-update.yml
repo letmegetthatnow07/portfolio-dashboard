@@ -1,23 +1,37 @@
 name: Market & News Data Pipeline
 
-# ─── WHY TWO JOBS INSTEAD OF ONE ──────────────────────────────────────────────
+# ─── SCHEDULING PHILOSOPHY ────────────────────────────────────────────────────
 #
-# The old design had ONE job that used HOUR=$(date -u +"%H") to decide whether
-# to run the master pipeline or the news update. GitHub Actions frequently delays
-# scheduled runs by 15-90 minutes under high load. If the 22:00 UTC cron started
-# at 23:05 UTC, HOUR="23" → fell into the else branch → ran the news script
-# instead of the master. This is why Supabase and GitHub CSV had no new data
-# after April 3 — the master run silently never fired.
+# GitHub Actions cron runs in UTC. Eastern Time observes DST:
+#   EST (Nov → Mar): UTC-5     EDT (Mar → Nov): UTC-4
 #
-# FIX: Two jobs with separate schedule triggers. Each job knows its own purpose.
-# No clock detection. A 90-minute GitHub delay cannot misroute a job.
+# The cron times below are chosen as the best UTC compromise so that
+# scheduled slots land at reasonable ET times in BOTH EST and EDT:
+#
+#   Slot 1  13:30 UTC  =  8:30 AM EST  /  9:30 AM EDT  (at market open)
+#   Slot 2  17:00 UTC  = 12:00 PM EST  /  1:00 PM EDT  (midday)
+#   Slot 3  20:45 UTC  =  3:45 PM EST  /  4:45 PM EDT  (near/post close)
+#   Master  22:00 UTC  =  5:00 PM EST  /  6:00 PM EDT  (well after close)
+#
+# OLD PROBLEM (fixed):
+#   Slot 1 was 14:00 UTC = 9:00 AM EST but 10:00 AM EDT —
+#   missing the opening 30 minutes of the session every day Mar-Nov.
+#   Slot 3 was 21:15 UTC = 4:15 PM EST but 5:15 PM EDT.
+#
+# MANUAL RUNS: workflow_dispatch sets FORCE_RUN=true in the step env.
+# The scripts check this var and skip the market-closed gate so you can
+# run master/news/matrix on weekends/holidays without the job exiting early.
+#
+# WHY TWO JOBS: the old single-job design used HOUR=$(date -u +"%H") to route.
+# GitHub Actions delays of 15-90 mins caused news to run instead of master.
+# Separate jobs with separate schedule triggers eliminate this completely.
 
 on:
   schedule:
-    - cron: '0 14 * * 1-5'   # 9:00 AM ET  — intraday news (job: intraday-news)
-    - cron: '0 18 * * 1-5'   # 1:00 PM ET  — intraday news (job: intraday-news)
-    - cron: '15 21 * * 1-5'  # 4:15 PM ET  — intraday news (job: intraday-news)
-    - cron: '0 22 * * 1-5'   # 5:00 PM ET  — EOD master + matrix (job: eod-master)
+    - cron: '30 13 * * 1-5'  # Slot 1:  8:30 AM EST /  9:30 AM EDT → intraday-news
+    - cron: '0 17 * * 1-5'   # Slot 2: 12:00 PM EST /  1:00 PM EDT → intraday-news
+    - cron: '45 20 * * 1-5'  # Slot 3:  3:45 PM EST /  4:45 PM EDT → intraday-news
+    - cron: '0 22 * * 1-5'   # Master:  5:00 PM EST /  6:00 PM EDT → eod-master
 
   workflow_dispatch:
     inputs:
@@ -41,9 +55,8 @@ jobs:
 
   # ════════════════════════════════════════════════════════════════════════════
   # JOB 1: EOD MASTER
-  # Runs at 22:00 UTC (5 PM ET) — after US market close + EOD processing.
-  # Scores all stocks, writes Supabase (with retry), updates Redis, commits CSV.
-  # Immediately followed by correlation matrix recalculation.
+  # Runs at 22:00 UTC — after US market close in both EST and EDT.
+  # FORCE_RUN=true on manual dispatch bypasses the market-closed gate.
   # ════════════════════════════════════════════════════════════════════════════
   eod-master:
     name: EOD Master + Matrix
@@ -74,6 +87,8 @@ jobs:
           SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           GEMINI_API_KEY:       ${{ secrets.GEMINI_API_KEY }}
+          # FORCE_RUN=true on manual dispatch → skips market-closed gate in daily-update.js
+          FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
         run: npm run update
 
       - name: Run correlation matrix
@@ -117,18 +132,17 @@ jobs:
 
   # ════════════════════════════════════════════════════════════════════════════
   # JOB 2: INTRADAY NEWS
-  # Runs 3x daily at 9 AM, 1 PM, 4:15 PM ET.
-  # Updates news sentiment scores in Redis. Does NOT touch Supabase scores
-  # or the CSV. EOD master reads intraday news log at 5 PM to build final score.
+  # 3 slots per day — DST-aware UTC times (see header for full breakdown).
+  # FORCE_RUN=true on manual dispatch bypasses any market-closed logic.
   # ════════════════════════════════════════════════════════════════════════════
   intraday-news:
     name: Intraday News Update
     runs-on: ubuntu-latest
     if: >-
       (github.event_name == 'schedule' && (
-        github.event.schedule == '0 14 * * 1-5' ||
-        github.event.schedule == '0 18 * * 1-5' ||
-        github.event.schedule == '15 21 * * 1-5'
+        github.event.schedule == '30 13 * * 1-5' ||
+        github.event.schedule == '0 17 * * 1-5'  ||
+        github.event.schedule == '45 20 * * 1-5'
       )) ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.run_type == 'news')
 
@@ -150,12 +164,13 @@ jobs:
           FINNHUB_API_KEY:      ${{ secrets.FINNHUB_API_KEY }}
           SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
         run: npm run update:news
 
   # ════════════════════════════════════════════════════════════════════════════
   # JOB 3: MATRIX ONLY (manual trigger)
-  # Recalculates correlation matrix without running the full master pipeline.
-  # Use when you've added/removed stocks and want updated correlations immediately.
+  # Recalculates correlation matrix without the full master pipeline.
+  # Use after adding/removing stocks for immediate correlation update.
   # ════════════════════════════════════════════════════════════════════════════
   correlation-matrix:
     name: Correlation Matrix Only
@@ -182,7 +197,7 @@ jobs:
         run: npm run generate-correlation
 
 # ─── SCHEDULE SUMMARY ─────────────────────────────────────────────────────────
-# 0 14 * * 1-5  = Mon-Fri 9:00 AM ET  → intraday-news
-# 0 18 * * 1-5  = Mon-Fri 1:00 PM ET  → intraday-news
-# 15 21 * * 1-5 = Mon-Fri 4:15 PM ET  → intraday-news
-# 0 22 * * 1-5  = Mon-Fri 5:00 PM ET  → eod-master (update → matrix → earnings → narrative → CSV)
+# 30 13 * * 1-5  = Mon-Fri  8:30 AM EST /  9:30 AM EDT  → intraday-news slot 1
+#  0 17 * * 1-5  = Mon-Fri 12:00 PM EST /  1:00 PM EDT  → intraday-news slot 2
+# 45 20 * * 1-5  = Mon-Fri  3:45 PM EST /  4:45 PM EDT  → intraday-news slot 3
+#  0 22 * * 1-5  = Mon-Fri  5:00 PM EST /  6:00 PM EDT  → eod-master
