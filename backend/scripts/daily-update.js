@@ -1141,17 +1141,25 @@ async function updateMarketData() {
     logger.info(`║     Date: ${TODAY}                                   ║`);
     logger.info('╚════════════════════════════════════════════════════════════╝');
 
+    // ── Market holiday check ──────────────────────────────────────────────────
+    // FORCE_RUN=true is injected by the YAML on workflow_dispatch triggers.
+    // Manual runs bypass the market-closed gate — use for weekend/holiday
+    // testing, backfills, or inspecting scores without waiting for market open.
+    // Scheduled runs always respect the holiday check.
+    const _isManualRun = process.env.FORCE_RUN === 'true';
     const _holidayRedis = createRedisClient({ url: process.env.REDIS_URL });
     _holidayRedis.on('error', () => {});
     await _holidayRedis.connect().catch(() => {});
     const _marketClosed = await isMarketClosedToday(_holidayRedis);
     await _holidayRedis.quit().catch(() => {});
 
-    if (_marketClosed) {
+    if (_marketClosed && !_isManualRun) {
       logger.info(`\n🏖️  Market closed today (${TODAY}) — confirmed via Polygon.`);
-      logger.info('   Skipping EOD price/fundamental/filing updates.');
-      logger.info('   News-only runs (14:00, 18:00, 21:15 UTC) are unaffected.');
+      logger.info('   Skipping EOD updates. News-only runs are unaffected.');
       process.exit(0);
+    }
+    if (_marketClosed && _isManualRun) {
+      logger.info(`\n⚡ Market closed today but FORCE_RUN=true — proceeding with manual run.`);
     }
 
     const portfolio = await storage.getPortfolio();
