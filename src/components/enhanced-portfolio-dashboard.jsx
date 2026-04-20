@@ -278,23 +278,6 @@ const FundRow = ({ label, value, hint, positive }) => {
 
 // ── Detail Panel ──────────────────────────────────────────────────────────────
 const DetailPanel = ({ stock }) => {
-  const [earningsEvent,   setEarningsEvent]   = useState(null);
-  const [filingNarrative, setFilingNarrative] = useState(null);
-
-  useEffect(() => {
-    fetch(`/api/portfolio/earnings-event/${stock.symbol}`)
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.event) setEarningsEvent(d.event); })
-      .catch(() => {});
-  }, [stock.symbol]);
-
-  useEffect(() => {
-    fetch(`/api/portfolio/filing-narrative/${stock.symbol}`)
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.narrative) setFilingNarrative(d.narrative); })
-      .catch(() => {});
-  }, [stock.symbol]);
-
   const fcfYieldPct = (stock.fcf_yield != null && stock.fcf_yield > 0) ? (stock.fcf_yield * 100) : null;
   const sbcPct      = stock.sbc_to_market_cap;
   const filingScore = stock.filing_sentiment;
