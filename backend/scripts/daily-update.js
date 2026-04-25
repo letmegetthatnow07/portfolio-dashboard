@@ -653,15 +653,8 @@ class PriceAnalyzer {
    * @param {object|null}  insiderData
    * @param {boolean}      capexException
    * @param {number|null}  newsScoreOverride   — pre-computed intraday average
-   * @param {boolean}      isETF
-   * @param {number|null}  expenseRatio
-   * @param {object|null}  recent8K
    */
   calculateScore(priceData, fundamentals, technicals, ratings, analyzedNews, insiderData, capexException = false, newsScoreOverride = null, isETF = false, expenseRatio = null, recent8K = null) {
-    // ✅ FIX: Removed the stray 12th `maxDrawdown` parameter that was never used
-    // inside this function. The old signature had it but the body never referenced it.
-    // Passing it caused no crash here, but the declaration order bug below did.
-
     let fundScore = 5, techScore = 5, ratingScore = 5, newsScore = 5, insiderScore = 5;
     let adjFcfMargin = null; // function-scoped — returned to caller for Supabase write-back
 
@@ -1616,6 +1609,7 @@ async function updateMarketData() {
         // Use pre-fetched map (1 query for all stocks, done before loop)
         const intradayNewsScore = intradayNewsMap[stock.symbol] ?? null;
         if (intradayNewsScore !== null) {
+          const runs = []; // already aggregated — just log the final value
           logger.info(`  📰 Intraday news score: ${intradayNewsScore.toFixed(2)}`);
         } else {
           logger.info(`  ⚪ No intraday news logged today — using neutral 5.0`);
@@ -1670,20 +1664,20 @@ async function updateMarketData() {
             const fhIndustry = instrumentProfile.industry ?? null;
             const needsFix   = (stock.name === stock.symbol && fhName) || ((stock.sector === 'Unknown' || !stock.sector) && fhIndustry);
             if (needsFix) {
-              const portfolioData = await storage.getPortfolio();
-              const idx = portfolioData.stocks.findIndex(s => s.symbol === stock.symbol);
+              const portfolio = await storage.getPortfolio();
+              const idx = portfolio.stocks.findIndex(s => s.symbol === stock.symbol);
               if (idx >= 0) {
-                if (fhName && portfolioData.stocks[idx].name === stock.symbol) {
-                  portfolioData.stocks[idx].name = fhName;
+                if (fhName && portfolio.stocks[idx].name === stock.symbol) {
+                  portfolio.stocks[idx].name = fhName;
                   stock.name = fhName;
                   logger.info(`  📛 Name auto-fixed: ${stock.symbol} → "${fhName}"`);
                 }
-                if (fhIndustry && (portfolioData.stocks[idx].sector === 'Unknown' || !portfolioData.stocks[idx].sector)) {
-                  portfolioData.stocks[idx].sector = fhIndustry;
+                if (fhIndustry && (portfolio.stocks[idx].sector === 'Unknown' || !portfolio.stocks[idx].sector)) {
+                  portfolio.stocks[idx].sector = fhIndustry;
                   stock.sector = fhIndustry;
                   logger.info(`  🏭 Sector auto-fixed: ${stock.symbol} → "${fhIndustry}"`);
                 }
-                await storage.writeData(portfolioData);
+                await storage.writeData(portfolio);
               }
             }
           } catch (e) { /* non-critical — never blocks the main loop */ }
@@ -1697,7 +1691,7 @@ async function updateMarketData() {
           analyzer.fetchTechnicals(stock.symbol),
           instrumentIsETF ? Promise.resolve(null) : analyzer.fetchRatings(stock.symbol),
           instrumentIsETF ? Promise.resolve(null) : fetchInsiderCached(stock.symbol, storage),
-          instrumentIsETF ? Promise.resolve(null) : quantEngine.fetchSECCashFlow(stock.symbol),
+          instrumentIsETF ? Promise.resolve(null) : (typeof quantEngine.fetchSECCashFlow === 'function' ? quantEngine.fetchSECCashFlow(stock.symbol) : Promise.resolve(null)),
           instrumentIsETF ? Promise.resolve(null) : fetchSECStockBasedComp(stock.symbol),
           // ETFs skip 8-K; ADRs get 6-K monitoring instead (foreign filer equivalent)
           instrumentIsETF ? Promise.resolve(null) : fetchRecent8K(stock.symbol, instrumentProfile.raw === 'DR'),
@@ -1723,20 +1717,6 @@ async function updateMarketData() {
           fundamentals._earningsQualityFlag = earningsQualityFlag;
         }
 
-        // ✅ FIX (PRIMARY — was causing every stock to crash):
-        // maxDrawdown, realizedVol, and momentumLabel were declared AFTER
-        // calculateScore() was called, but `maxDrawdown` was referenced as an
-        // argument in the call. In strict mode, referencing a `const` before
-        // its declaration is a ReferenceError (temporal dead zone). This caused
-        // every stock to throw, producing the "Error processing X: - undefined"
-        // log pattern (ReferenceError.message is '' in some Node builds, which
-        // renders as empty after the ': ' separator, then logger appends `undefined`).
-        //
-        // Fix: move all three declarations to BEFORE the calculateScore() call.
-        const maxDrawdown   = technicals ? computeMaxDrawdown(technicals.historyAsc) : null;
-        const realizedVol   = technicals ? quantEngine.computeVolatility(technicals.historyAsc) : null;
-        const momentumLabel = technicals ? quantEngine.evaluateMomentum(technicals.historyAsc) : 'NEUTRAL';
-
         // Calculate score. Pass intradayNewsScore as-is (null when none logged).
         // B12 FIX: was intradayNewsScore ?? 5.0 — coercing null to 5.0 before passing
         // caused the log to print "Using intraday news score: 5.00" even when no news was
@@ -1747,10 +1727,8 @@ async function updateMarketData() {
           intradayNewsScore,   // null when no intraday news — calculateScore handles it
           instrumentIsETF,
           instrumentIsETF ? (profileExpenseRatio ?? null) : null,
-          recent8K             // 8-K/6-K event for recency-weighted score adjustment
-          // ✅ FIX: removed stray `maxDrawdown` 12th argument — calculateScore() only
-          // accepts 11 parameters; the extra arg was ignored but its presence here
-          // (referencing an undeclared const) was triggering the TDZ ReferenceError.
+          recent8K,            // 8-K/6-K event for recency-weighted score adjustment
+          maxDrawdown          // B04-ZA: wire into techScore drawdown penalty
         );
 
         // B5 FIX: Capture raw GAAP FCF margin BEFORE mutating fundamentals.fcfMargin.
@@ -1762,7 +1740,9 @@ async function updateMarketData() {
           fundamentals.fcfMargin = scoreObj._adjFcfMargin; // adjusted — used by score
         }
 
-        // maxDrawdown, realizedVol, momentumLabel already declared above (before calculateScore)
+        const maxDrawdown   = technicals ? computeMaxDrawdown(technicals.historyAsc) : null;
+        const realizedVol   = technicals ? quantEngine.computeVolatility(technicals.historyAsc) : null;
+        const momentumLabel = technicals ? quantEngine.evaluateMomentum(technicals.historyAsc) : 'NEUTRAL';
 
         const moatScore = fundamentals?._moatScore ?? null;
         const fcfYield  = fundamentals?.fcfYield   ?? null;
@@ -1829,15 +1809,16 @@ async function updateMarketData() {
           const [_w1Days, _w2Days] = _moatWindows[_moatStrength] ?? [7, 21];
           logger.info(`  🏛️  Moat strength: ${_moatStrength ?? 'none'} → W1 window: ${_w1Days}d, W2 window: ${_w2Days}d`);
 
-          regimeStatus = quantEngine.evaluateFractalDecay(history252d, noiseDecay, {
-            w1: _w1Days,
-            w2: _w2Days,
-          });
+          regimeStatus = typeof quantEngine.evaluateFractalDecay === 'function'
+            ? quantEngine.evaluateFractalDecay(history252d, noiseDecay, { w1: _w1Days, w2: _w2Days })
+            : noiseDecay;
 
-          w1 = history252d.length >= _w1Days ? quantEngine._w1Trigger(history252d.slice(-_w1Days)) : false;
-          w2 = history252d.length >= _w2Days ? quantEngine._w2Trigger(history252d.slice(-_w2Days)) : false;
-          w3 = history252d.length >= 63      ? quantEngine._w3Trigger(history252d.slice(-63))      : false;
-          w4 = history252d.length >= 252     ? quantEngine._w4Trigger(history252d)                 : false;
+          // Guard: _w1Trigger etc. are private — may not be exported in all quant-engine versions
+          const _hasW = typeof quantEngine._w1Trigger === 'function';
+          w1 = (_hasW && history252d.length >= _w1Days) ? quantEngine._w1Trigger(history252d.slice(-_w1Days)) : false;
+          w2 = (_hasW && history252d.length >= _w2Days) ? quantEngine._w2Trigger(history252d.slice(-_w2Days)) : false;
+          w3 = (_hasW && history252d.length >= 63)      ? quantEngine._w3Trigger(history252d.slice(-63))      : false;
+          w4 = (_hasW && history252d.length >= 252)     ? quantEngine._w4Trigger(history252d)                 : false;
 
           const prevFundScore = history252d.length >= 1
             ? history252d[history252d.length - 1].fund_score
@@ -1935,7 +1916,7 @@ async function updateMarketData() {
         const redisUpdates = {
           latest_score:    Math.round(scoreObj.total * 10) / 10,
           signal:          action,
-          classic_signal:  analyzer.getSignal(scoreObj.total, marketRegime ?? 'NORMAL'),
+          classic_signal:  analyzer.getSignal(scoreObj.total, marketRegime?.regime ?? 'NORMAL'),
           instrument_type:       instrumentIsETF ? 'ETF' : (instrumentIsADR ? 'ADR' : 'Stock'),
           expense_ratio:         profileExpenseRatio ?? null,
           accounting_standard:   accountingStandard,   // 'US-GAAP' | 'IFRS' | 'UNKNOWN'
@@ -1998,11 +1979,13 @@ async function updateMarketData() {
         logger.info(`  ✅ ${stock.symbol} complete → ${action}`);
 
       } catch (e) {
-        // ✅ FIX: use `e?.message || String(e)` instead of bare `e.message`.
-        // When the thrown value is a ReferenceError with an empty message, or a
-        // non-Error object (string, number, plain object), e.message is undefined
-        // or ''. `String(e)` always produces a readable representation.
-        logger.error(`Error processing ${stock.symbol}: ${e?.message || String(e)}`);
+        // Single template string — avoids pino two-arg format which shows "- undefined" 
+        // when e.message is empty/undefined. Includes stack for root cause identification.
+        const _eMsg = e instanceof Error ? e.message || e.constructor.name : String(e);
+        const _eStack = e instanceof Error && e.stack
+          ? ' | ' + e.stack.split(/\r?\n/).slice(1, 3).map(s => s.trim()).join(' > ')
+          : '';
+        logger.error(`Error processing ${stock.symbol}: ${_eMsg}${_eStack}`);
       }
 
       await sleep(SLEEP_BETWEEN_STOCKS_MS);
