@@ -441,7 +441,7 @@ const GEMINI_SCHEMA = {
     has_regulatory_moat:    { type: 'boolean' },
     regulatory_moat_type:   { type: 'string' },
     regulatory_moat_strength: { type: 'integer', minimum: 0, maximum: 5 },
-    dual_class_warning:     { type: 'string', nullable: true },
+    dual_class_warning:     { type: 'string' },   // nullable via empty string — Gemini doesn't support nullable:true in schema
     evidence_quotes:        { type: 'array', items: { type: 'string' }, maxItems: 3 },
     uncertainty_flags:      { type: 'array', items: { type: 'string' }, maxItems: 3 },
   },
@@ -490,8 +490,8 @@ async function analyseFilingWithGemini(symbol, stock, filingText, filingMeta) {
       generationConfig: {
         responseMimeType: 'application/json',
         responseSchema:   GEMINI_SCHEMA,
-        temperature:      0,     // deterministic
-        topP:             0.1,
+        temperature:      0.1,   // slightly above 0 — pure 0 + schema causes 400 on some inputs
+        // topP removed — conflicts with responseSchema in Gemini 2.5 Flash
       },
     }, 3);
   } catch (e) {
@@ -578,8 +578,8 @@ async function logToSupabase(symbol, filingMeta, geminiResult) {
   try {
     const { error } = await supabase.from('earnings_events').insert({
       symbol,
-      event_type: 'filing_narrative',
-      event_date: filingMeta.filed,
+      event_type:  'filing_narrative',
+      event_date:  filingMeta.filed,   // matches migrations.sql column name
       payload: {
         form:            filingMeta.form,
         period:          filingMeta.period,
@@ -589,7 +589,13 @@ async function logToSupabase(symbol, filingMeta, geminiResult) {
         processedAt:     new Date().toISOString(),
       },
     });
-    if (error) console.warn(`  [Supabase] ${symbol}: audit log failed — ${error.message}`);
+    if (error) {
+      // Detailed error logging — show column name to catch schema mismatches quickly
+      console.warn(`  [Supabase] ${symbol}: audit log failed — ${error.message} (code: ${error.code})`);
+      if (error.message?.includes('column')) {
+        console.warn(`  [Supabase] Note: run migrations.sql to ensure earnings_events has event_date column`);
+      }
+    }
   } catch (e) {
     console.warn(`  [Supabase] ${symbol}: audit log threw — ${e.message}`);
   }
