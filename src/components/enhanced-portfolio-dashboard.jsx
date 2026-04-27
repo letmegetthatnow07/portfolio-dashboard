@@ -4,21 +4,89 @@ import './enhanced-portfolio-dashboard.css';
 import CorrelationHeatmap from './CorrelationHeatmap';
 
 const SIGNAL_CFG = {
-  ADD:                 { color: '#059669', label: 'Add',           tier: 'bull' },
-  SPRING_CONFIRMED:    { color: '#047857', label: 'Spring ✓',      tier: 'bull' },
-  SPRING_CANDIDATE:    { color: '#10b981', label: 'Spring ~',      tier: 'bull' },
-  STRONG_BUY:          { color: '#2563eb', label: 'Strong Buy',    tier: 'bull' },
-  BUY:                 { color: '#3b82f6', label: 'Buy',           tier: 'bull' },
-  HOLD:                { color: '#6b7280', label: 'Hold',          tier: 'flat' },
-  HOLD_NOISE:          { color: '#9ca3af', label: 'Hold · Noise',  tier: 'flat' },
-  NORMAL:              { color: '#6b7280', label: 'Normal',        tier: 'flat' },
-  MARKET_NOISE:        { color: '#9ca3af', label: 'Mkt Noise',     tier: 'flat' },
-  WATCH:               { color: '#d97706', label: 'Watch',         tier: 'bear' },
-  TRIM_25:             { color: '#ea580c', label: 'Trim 25%',      tier: 'bear' },
-  REDUCE:              { color: '#dc2626', label: 'Reduce',        tier: 'bear' },
-  SELL:                { color: '#b91c1c', label: 'Sell',          tier: 'bear' },
-  IDIOSYNCRATIC_DECAY: { color: '#7f1d1d', label: 'Decay',         tier: 'bear' },
-  INSUFFICIENT_DATA:   { color: '#9ca3af', label: 'No Data',       tier: 'flat' },
+  // ── Accumulate signals ─────────────────────────────────────────────────────
+  // Fire when: score high + stock cheap or recovering + upswing imminent
+  STRONG_BUY: {
+    color: '#2563eb', label: 'Strong Buy', tier: 'bull',
+    action: 'Add to or initiate a full position.',
+    why: 'Score ≥ 8.5 — exceptional business quality, attractive valuation, and positive momentum. Highest-conviction entry point.',
+  },
+  BUY: {
+    color: '#3b82f6', label: 'Buy', tier: 'bull',
+    action: 'Consider adding to the position.',
+    why: 'Score ≥ 7.5 — strong fundamentals with reasonable entry. Quality compounder at a fair or better price.',
+  },
+  ADD: {
+    color: '#059669', label: 'Add', tier: 'bull',
+    action: 'Add incrementally — accumulation zone confirmed.',
+    why: 'Excess return is positive vs SPY, score is solid, and momentum supports adding. Good risk/reward within the 3-7yr thesis.',
+  },
+  SPRING_CONFIRMED: {
+    color: '#047857', label: 'Spring ✓', tier: 'bull',
+    action: 'Buy the dip — spring entry confirmed (day 3+).',
+    why: 'Quality stock has rebounded for 3+ consecutive sessions from an oversold low. This is the contrarian entry the system is designed to catch: cheap + recovering.',
+  },
+  SPRING_CANDIDATE: {
+    color: '#10b981', label: 'Spring ~', tier: 'bull',
+    action: 'Watch for spring confirmation — early recovery underway.',
+    why: 'Stock dipped below its trend on a quality name and is beginning to recover. Wait for Day 3 before adding; premature entry has higher whipsaw risk.',
+  },
+  // ── Hold signals ───────────────────────────────────────────────────────────
+  // Fire when: score decent, no clear directional signal
+  HOLD: {
+    color: '#6b7280', label: 'Hold', tier: 'flat',
+    action: 'Maintain your position. No action warranted.',
+    why: 'Score in the HOLD band (4.5–7.5). Business quality is adequate but no catalyst for adding or reducing. Let the compounder compound.',
+  },
+  NORMAL: {
+    color: '#6b7280', label: 'Hold', tier: 'flat',
+    action: 'Maintain your position.',
+    why: 'No regime signal. Price action is normal relative to SPY. Hold and monitor.',
+  },
+  HOLD_NOISE: {
+    color: '#9ca3af', label: 'Hold', tier: 'flat',
+    action: 'Ignore short-term volatility. Maintain position.',
+    why: 'Score is stable but near-term price movement is market-driven noise, not stock-specific. Do not react — this is the cost of owning equities.',
+  },
+  MARKET_NOISE: {
+    color: '#9ca3af', label: 'Hold', tier: 'flat',
+    action: 'Ignore market turbulence. Hold with conviction.',
+    why: 'Broad market is creating noise that obscures this stock's quality. Long-term business thesis is unchanged. Selling here locks in a temporary loss.',
+  },
+  // ── Caution signals ────────────────────────────────────────────────────────
+  // Fire when: score declining or stock overvalued — soft warning, not action
+  WATCH: {
+    color: '#d97706', label: 'Watch', tier: 'bear',
+    action: 'Heightened monitoring. Do not add. Review thesis.',
+    why: '3-week score decline detected. Could be temporary (earnings, macro) or early-stage deterioration. Do not add capital here. If the thesis is intact, hold; if a W3 follows, consider trimming.',
+  },
+  TRIM_25: {
+    color: '#ea580c', label: 'Trim 25%', tier: 'bear',
+    action: 'Reduce position by ~25%. Take partial profit.',
+    why: 'Score and/or momentum have deteriorated materially. Trimming 25% locks in partial gains, reduces concentration risk, and preserves capital — without abandoning the thesis entirely. Note: factor in CGT before acting if this is a large gain position.',
+  },
+  REDUCE: {
+    color: '#dc2626', label: 'Reduce', tier: 'bear',
+    action: 'Meaningfully reduce position size.',
+    why: 'Score < 4.5 with confirmed structural decline (W3+). Business quality metrics have deteriorated beyond a temporary blip. Reduce to a smaller position; maintain only if you have high-conviction thesis reasons to hold.',
+  },
+  // ── Exit signals ───────────────────────────────────────────────────────────
+  // Fire only on hard evidence of structural breakdown — high bar for Indian investor
+  SELL: {
+    color: '#b91c1c', label: 'Sell', tier: 'bear',
+    action: 'Exit the position.',
+    why: 'Score < 3.5 with W4 structural decay or a critical 8-K event (bankruptcy, delisting). This is not a temporary dip — the business has fundamentally deteriorated. The cost of inaction exceeds the CGT cost of exiting.',
+  },
+  IDIOSYNCRATIC_DECAY: {
+    color: '#7f1d1d', label: 'Decay', tier: 'bear',
+    action: 'Structural breakdown confirmed. Plan an exit.',
+    why: '12-month sustained underperformance beyond what market conditions explain — stock-specific deterioration. This is W4-level decay: the compounding thesis has broken. Exit in a tax-efficient manner.',
+  },
+  INSUFFICIENT_DATA: {
+    color: '#9ca3af', label: 'No Data', tier: 'flat',
+    action: 'Insufficient history. Hold and wait for data.',
+    why: 'Fewer than 7 trading days of score history. The system cannot make a reliable regime call yet. Treat as HOLD.',
+  },
 };
 const REGIME_CFG = {
   MARKET_NOISE:        { color: '#9ca3af', label: 'Market Noise'        },
@@ -887,11 +955,13 @@ const EnhancedPortfolioDashboard = () => {
                         </td>
 
                         <td>
-                          {showRegime ? (
-                            <div className="regime-name" style={{color:rCfg.color}} title={rCfg.label}>{rCfg.label}</div>
-                          ) : (
-                            <div className="regime-name" style={{color:'#9ca3af',fontWeight:400}}>Normal</div>
-                          )}
+                          {/* Regime label only when it adds information distinct from signal */}
+                          {showRegime && (() => {
+                            // Suppress noise-family pairs that mean the same thing
+                            const NOISE = new Set(['MARKET_NOISE','HOLD_NOISE','NORMAL','HOLD']);
+                            if (NOISE.has(stock.regime || '') && NOISE.has(stock.signal || '')) return null;
+                            return <div className="regime-name" style={{color:rCfg.color}} title={rCfg.label}>{rCfg.label}</div>;
+                          })()}
                           {stock.excess_return != null && (
                             <div className={`alpha-val change ${stock.excess_return>=0?'positive':'negative'}`}>
                               α {fmtPct(stock.excess_return)}
@@ -909,13 +979,22 @@ const EnhancedPortfolioDashboard = () => {
                         </td>
 
                         <td>
-                          <span className={`signal-badge ${
-                            sCfg.tier === 'bull' ? 'signal-bull' :
-                            sCfg.tier === 'bear' && ['WATCH','TRIM_25'].includes(stock.signal) ? 'signal-bear-soft' :
-                            sCfg.tier === 'bear' ? 'signal-bear-hard' : 'signal-neutral'
-                          }`}>{sCfg.label}</span>
+                          {/* Signal badge: tooltip shows rationale + action */}
+                          <span
+                            title={[sCfg.why, sCfg.action].filter(Boolean).join(' → ')}
+                            className={`signal-badge ${
+                              sCfg.tier === 'bull' ? 'signal-bull' :
+                              sCfg.tier === 'bear' && ['WATCH','TRIM_25'].includes(stock.signal) ? 'signal-bear-soft' :
+                              sCfg.tier === 'bear' ? 'signal-bear-hard' : 'signal-neutral'
+                            }`}>{sCfg.label}</span>
+                          {/* Action text — plain language below badge */}
+                          {sCfg.action && (
+                            <div style={{ fontSize:10, color:'#6b6b65', marginTop:3, lineHeight:1.35, maxWidth:140 }}>
+                              {sCfg.action}
+                            </div>
+                          )}
                           {stock.sharp_score_drop && (
-                            <div title={`Score dropped ${Math.abs(stock.score_delta_1d||0).toFixed(1)} pts vs yesterday`}
+                            <div title={`Quality score dropped ${Math.abs(stock.score_delta_1d||0).toFixed(1)} pts vs yesterday — review thesis`}
                               style={{ display:'inline-block', marginLeft:4, padding:'1px 5px', fontSize:9, fontWeight:700,
                                 background:'#fef2f2', color:'#dc2626', border:'1px solid #fca5a5', borderRadius:3, verticalAlign:'middle' }}>
                               ⚡ −{Math.abs(stock.score_delta_1d||0).toFixed(1)}
@@ -928,74 +1007,122 @@ const EnhancedPortfolioDashboard = () => {
                         <td>
                           <div className="price-value">{fmtUSD(tv)}</div>
                           {totalVal > 0 && (() => {
-                            const wPct    = (tv / totalVal) * 100;
-                            const score   = stock.latest_score != null ? stock.latest_score : 5;
-                            const fnd     = (stock.score_fund != null ? stock.score_fund : 5);
-                            const sigStr  = stock.signal || '';
-                            const mr      = (marketRegime && marketRegime.regime) ? marketRegime.regime : 'NORMAL';
-                            const isSpring = ['SPRING_CONFIRMED','SPRING_CANDIDATE'].includes(sigStr);
+                            const wPct   = (tv / totalVal) * 100;
+                            const score  = stock.latest_score != null ? stock.latest_score : 5;
+                            const sigStr = stock.signal || '';
+                            const mr     = (marketRegime && marketRegime.regime) ? marketRegime.regime : 'NORMAL';
+                            const isSpring  = ['SPRING_CONFIRMED','SPRING_CANDIDATE'].includes(sigStr);
+                            const isBullish = ['ADD','SPRING_CONFIRMED','SPRING_CANDIDATE','STRONG_BUY','BUY'].includes(sigStr);
+                            const isBearish = ['WATCH','TRIM_25','REDUCE','SELL','IDIOSYNCRATIC_DECAY'].includes(sigStr);
 
-                            // ── Score-based weight thresholds ─────────────────────────────────
-                            // The IDEAL weight for a position is determined by the SCORE —
-                            // not hardcoded conviction buckets. The score already reflects
-                            // quality + moat + valuation + insider + technicals.
+                            // ── Hybrid weight assessment ───────────────────────────────────────
                             //
-                            // Threshold = how much weight the current score JUSTIFIES:
-                            //   score >= 8.0 → up to 22% (strong buy, quality + cheap)
-                            //   score >= 7.0 → up to 16% (good, hold with decent size)
-                            //   score >= 5.5 → up to 12% (fair, moderate position)
-                            //   score >= 4.5 → up to 8%  (below par, trim toward this)
-                            //   score <  4.5 → up to 5%  (weak, should be reducing)
+                            // PRIMARY: Score-relative fair share.
+                            //   Each position's "fair weight" = (this score / sum of all scores) × 100.
+                            //   Works for any portfolio composition: ETF anchors, concentrated positions,
+                            //   mixed stock/ETF — no hardcoded assumptions needed.
+                            //   A stock scoring 7.5 in a 13-stock portfolio (~avg 6.5) gets ~8.7% fair share.
                             //
-                            // These are CEILINGS not targets. You can always hold less.
-                            // The color tells you: is your current weight appropriate for
-                            // what the scoring engine currently thinks of this business?
+                            // SECONDARY: Hard caps per score tier (safety ceiling).
+                            //   These are absolute maximums — no position should exceed them
+                            //   regardless of how the portfolio is otherwise positioned.
+                            //   Score ≥ 8.0 → max 25%  (exceptional, still concentrated position risk)
+                            //   Score ≥ 7.0 → max 20%  (good business)
+                            //   Score ≥ 5.5 → max 15%  (fair, approaching aggressive)
+                            //   Score ≥ 4.5 → max 10%  (below par)
+                            //   Score < 4.5 → max 6%   (weak, should be exiting)
                             //
-                            // Regime caps (BEAR/STRESSED) tighten ceilings system-wide.
-                            // Spring signals are EXEMPT from regime caps —
-                            // oversold quality in a bear market is when to ADD, not reduce.
-                            const rawThreshold =
-                              score >= 8.0 ? 22 :
-                              score >= 7.0 ? 16 :
-                              score >= 5.5 ? 12 :
-                              score >= 4.5 ?  8 :
-                                              5;
+                            // The EFFECTIVE upper limit is: min(relative upper, hard cap).
+                            // This means: fair-share logic adjusts for portfolio composition,
+                            // hard caps prevent any single position from dominating on score alone.
+                            //
+                            // REGIME TIGHTENING: Bear/Stressed markets shrink the relative band.
+                            // SPRING EXEMPTION: Oversold recovery dips are exempt from regime caps.
 
-                            // Regime adjustment: bear markets tighten max weight
-                            const threshold = isSpring ? rawThreshold   // spring: no cap
-                              : mr === 'BEAR'     ? Math.min(rawThreshold, 14)
-                              : mr === 'STRESSED' ? Math.min(rawThreshold, 18)
-                              : rawThreshold;
+                            // Step 1: Score-relative fair share
+                            const allScores = portfolio.map(s => s.latest_score != null ? s.latest_score : 5);
+                            const scoreSum  = allScores.reduce((a, b) => a + b, 0);
+                            const fairShare = scoreSum > 0
+                              ? (score / scoreSum) * 100
+                              : (100 / Math.max(portfolio.length, 1));
 
-                            // Severity: how far over the score-justified ceiling are we?
-                            const overweight  = wPct > threshold;
-                            const nearLimit   = wPct > threshold * 0.85;
-                            const underweight = wPct < threshold * 0.40 && score >= 7.0;
+                            // Step 2: Relative band around fair share
+                            const relUppMult = isSpring ? 1.90
+                              : mr === 'BEAR'     ? 1.25
+                              : mr === 'STRESSED' ? 1.45
+                              : 1.65;
+                            const relLowMult = 0.40;
+                            const relUpper   = fairShare * relUppMult;
+                            const relLower   = fairShare * relLowMult;
 
-                            // Color: red = overweight for score, amber = near limit,
-                            // blue = underweight (score justifies more), grey = fine
-                            const wColor = overweight  ? '#dc2626'
-                                         : nearLimit   ? '#d97706'
-                                         : underweight ? '#2563eb'
-                                         : '#6b6b65';
+                            // Step 3: Hard cap — absolute ceiling per score tier
+                            // (professional position sizing discipline regardless of fair share)
+                            const hardCap =
+                              score >= 8.0 ? 25 :
+                              score >= 7.0 ? 20 :
+                              score >= 5.5 ? 15 :
+                              score >= 4.5 ? 10 :
+                                             6;
+                            const regimeCap = isSpring ? hardCap
+                              : mr === 'BEAR'     ? Math.min(hardCap, 15)
+                              : mr === 'STRESSED' ? Math.min(hardCap, 18)
+                              : hardCap;
 
-                            // Build the tooltip
-                            const direction = overweight
-                              ? 'Overweight for current score — consider reducing'
-                              : underweight
-                              ? 'Underweight — score justifies up to ' + threshold.toFixed(0) + '%'
-                              : 'Weight appropriate for score ' + score.toFixed(1);
-                            const regimeCap = (mr !== 'NORMAL' && !isSpring && rawThreshold !== threshold)
-                              ? ' (' + mr + ' cap applied)'
+                            // Effective upper = tighter of relative or hard cap
+                            const upperLimit = Math.min(relUpper, regimeCap);
+                            const lowerLimit = relLower;
+
+                            // Flags
+                            const overHard   = wPct > regimeCap;           // breaches absolute cap
+                            const overweight = wPct > upperLimit;           // overweight relative to score
+                            const nearLimit  = wPct > upperLimit * 0.87 && !overweight;
+                            // Only flag underweight when bullish signal AND score good AND not already overweight
+                            const underweight = !overweight && !isBearish && score >= 6.5 && wPct < lowerLimit;
+
+                            // Tax gate: warn when sell/trim signal but position has big gain
+                            const gainPct = stock.average_price > 0 && stock.current_price != null
+                              ? ((stock.current_price - stock.average_price) / stock.average_price) * 100
+                              : null;
+                            const taxWarning = isBearish && gainPct != null && gainPct > 50;
+
+                            // Color
+                            const wColor = overHard    ? '#b91c1c'   // dark red — breaches hard cap
+                                         : overweight  ? '#dc2626'   // red — score-relative overweight
+                                         : taxWarning  ? '#ea580c'   // orange — sell signal + big gain
+                                         : nearLimit   ? '#d97706'   // amber — approaching limit
+                                         : underweight ? '#2563eb'   // blue — room to add
+                                         : '#6b6b65';               // grey — balanced
+
+                            // Tooltip
+                            const overVerdict = overHard
+                              ? 'EXCEEDS absolute cap for score ' + score.toFixed(1) + ' (max ' + regimeCap + '%)'
+                              : 'Overweight relative to score rank in portfolio';
+                            const regimeNote = mr !== 'NORMAL' && !isSpring
+                              ? ' | ' + mr + ' regime: caps tightened'
                               : '';
+                            const taxNote = taxWarning
+                              ? ' | ⚠ ' + gainPct.toFixed(0) + '% gain — factor in CGT before selling'
+                              : '';
+                            const verdict = overweight
+                              ? overVerdict
+                              : underweight
+                              ? 'Underweight — score ' + score.toFixed(1) + ' justifies up to ' + upperLimit.toFixed(1) + '%'
+                              : 'Weight proportional to score';
 
                             return (
                               <div
-                                title={wPct.toFixed(1) + '% held | Score ' + score.toFixed(1) + ' justifies up to ' + threshold.toFixed(0) + '% | ' + direction + regimeCap}
+                                title={
+                                  wPct.toFixed(1) + '% held | Score ' + score.toFixed(1) +
+                                  ' → fair share ' + fairShare.toFixed(1) + '% | Hard cap: ' + regimeCap + '%' +
+                                  ' | OK range: ' + lowerLimit.toFixed(1) + '–' + upperLimit.toFixed(1) + '%' +
+                                  ' | ' + verdict + regimeNote + taxNote
+                                }
                                 style={{ fontFamily:'var(--font-mono)', fontSize:11, color:wColor, marginTop:3, fontWeight: overweight ? 700 : 400 }}>
                                 {wPct.toFixed(1)}%
-                                {overweight  && ' ⚠ over'}
-                                {underweight && ' ↑ room'}
+                                {overHard    && ' 🚫'}
+                                {!overHard && overweight && ' ⚠'}
+                                {underweight && ' ↑'}
+                                {taxWarning  && !overweight && ' 🇮🇳'}
                               </div>
                             );
                           })()}
