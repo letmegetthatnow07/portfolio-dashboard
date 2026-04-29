@@ -94,19 +94,19 @@ const reg = (r) => REGIME_CFG[r || ''] || { color: '#6b7280', label: r || 'Norma
 
 // ── Formatting Utilities ──────────────────────────────────────────────────────
 // BUG FIX: All template literals now have proper backticks
-const fmtUSD = (n | null | undefined, compact = false): string => {
+const fmtUSD = (n, compact = false) => {
   if (n == null || isNaN(n)) return 'N/A';
   if (compact && Math.abs(n) >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
   if (compact && Math.abs(n) >= 1_000) return `$${(n / 1_000).toFixed(1)}K`;
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
 };
 
-const fmtPct = (n | null | undefined, dp = 2): string | null => {
+const fmtPct = (n, dp = 2) => {
   if (n == null || isNaN(n)) return null;
   return `${n >= 0 ? '+' : ''}${Number(n).toFixed(dp)}%`;
 };
 
-const scoreCol = (s | null | undefined): string => {
+const scoreCol = (s) => {
   if (s == null) return '#9ca3af';
   if (s >= 8) return '#059669';
   if (s >= 6.5) return '#2563eb';
@@ -114,7 +114,7 @@ const scoreCol = (s | null | undefined): string => {
   return '#dc2626';
 };
 
-const moatCol = (s | null | undefined): string => {
+const moatCol = (s) => {
   if (s == null) return '#9ca3af';
   if (s >= 7) return '#059669';
   if (s >= 5) return '#2563eb';
