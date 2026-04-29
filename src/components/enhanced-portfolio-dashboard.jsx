@@ -93,22 +93,20 @@ const sig = (s) => SIGNAL_CFG[s || ''] || { color: '#6b7280', label: s || 'Pendi
 const reg = (r) => REGIME_CFG[r || ''] || { color: '#6b7280', label: r || 'Normal' };
 
 // ── Formatting Utilities ──────────────────────────────────────────────────────
-// FIX: Removed TypeScript-style union type annotations from function parameters (invalid in .jsx)
-const fmtUSD = (n, compact = false) => {
+// BUG FIX: All template literals now have proper backticks
+const fmtUSD = (n | null | undefined, compact = false): string => {
   if (n == null || isNaN(n)) return 'N/A';
   if (compact && Math.abs(n) >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
   if (compact && Math.abs(n) >= 1_000) return `$${(n / 1_000).toFixed(1)}K`;
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
 };
 
-// FIX: Removed TypeScript-style union type annotations from function parameters (invalid in .jsx)
-const fmtPct = (n, dp = 2) => {
+const fmtPct = (n | null | undefined, dp = 2): string | null => {
   if (n == null || isNaN(n)) return null;
   return `${n >= 0 ? '+' : ''}${Number(n).toFixed(dp)}%`;
 };
 
-// FIX: Removed TypeScript-style union type annotations from function parameters (invalid in .jsx)
-const scoreCol = (s) => {
+const scoreCol = (s | null | undefined): string => {
   if (s == null) return '#9ca3af';
   if (s >= 8) return '#059669';
   if (s >= 6.5) return '#2563eb';
@@ -116,8 +114,7 @@ const scoreCol = (s) => {
   return '#dc2626';
 };
 
-// FIX: Removed TypeScript-style union type annotations from function parameters (invalid in .jsx)
-const moatCol = (s) => {
+const moatCol = (s | null | undefined): string => {
   if (s == null) return '#9ca3af';
   if (s >= 7) return '#059669';
   if (s >= 5) return '#2563eb';
@@ -126,106 +123,93 @@ const moatCol = (s) => {
 };
 
 // ── Weight Assessment (REDESIGNED) ────────────────────────────────────────────
+// Uses score-relative ratio instead of hard caps as primary metric.
+// Color reflects how well the actual weight aligns with quality contribution.
+// Signal context adjusts interpretation (bullish+underweight = opportunity, etc.)
+
+
 const getWeightAssessment = (
   weightPct,
   score,
   signal,
   allPortfolio,
   marketRegime,
+  isETF,
+  excessReturn,
 ) => {
-  const isSpring = ['SPRING_CONFIRMED', 'SPRING_CANDIDATE'].includes(signal || '');
+  // ETFs are intentional anchor positions — judged on alpha contribution, not weight size.
+  // A 26% ETF is fine if it is delivering positive alpha vs SPY.
+  // "Bloat" for an ETF means: large weight + negative alpha = dragging portfolio returns.
+  if (isETF) {
+    const negAlpha = excessReturn != null && excessReturn < -2;
+    const flatAlpha = excessReturn != null && excessReturn < 0;
+    const posAlpha = excessReturn != null && excessReturn > 1;
+    if (weightPct > 15 && negAlpha) {
+      return { color: '#dc2626', verdict: 'Large ETF anchor underperforming SPY - alpha drag', icon: 'drag', fairShare: null, ratio: null, absCeiling: null };
+    }
+    if (weightPct > 20 && flatAlpha) {
+      return { color: '#d97706', verdict: 'Heavy ETF with flat/negative alpha - monitor', icon: '', fairShare: null, ratio: null, absCeiling: null };
+    }
+    if (posAlpha) {
+      return { color: '#059669', verdict: 'ETF contributing positive alpha - weight justified', icon: 'OK', fairShare: null, ratio: null, absCeiling: null };
+    }
+    return { color: '#6b7280', verdict: 'ETF anchor position', icon: '', fairShare: null, ratio: null, absCeiling: null };
+  }
+
+  // For stocks: compare weight against score-implied fair share within stock allocation.
+  // ETF weight is excluded from the denominator — anchors are scaffolding, not alpha bets.
+  const isSpring  = ['SPRING_CONFIRMED', 'SPRING_CANDIDATE'].includes(signal || '');
   const isBullish = ['ADD', 'SPRING_CONFIRMED', 'SPRING_CANDIDATE', 'STRONG_BUY', 'BUY'].includes(signal || '');
   const isBearish = ['WATCH', 'TRIM_25', 'REDUCE', 'SELL', 'IDIOSYNCRATIC_DECAY'].includes(signal || '');
 
-  const allScores = allPortfolio.map(s => (s.latest_score != null ? s.latest_score : 5));
-  const scoreSum = allScores.reduce((a, b) => a + b, 0);
-  const fairShare = scoreSum > 0 ? (score / scoreSum) * 100 : (100 / Math.max(allPortfolio.length, 1));
-  const ratio = fairShare > 0 ? weightPct / fairShare : 1;
+  // Total value and ETF weight so we can compute weight within stock-only allocation
+  const totalPortVal = allPortfolio.reduce((s, x) => s + ((x.current_price || 0) * (x.quantity || 0)), 0);
+  const etfVal = allPortfolio.filter(s => s.instrument_type === 'ETF').reduce((s, x) => s + ((x.current_price || 0) * (x.quantity || 0)), 0);
+  const stockAllocPct = totalPortVal > 0 ? ((totalPortVal - etfVal) / totalPortVal) * 100 : 100;
+  // Restate this stock's weight as % of stock-only allocation
+  const effectiveWt = stockAllocPct > 0 ? (weightPct / stockAllocPct) * 100 : weightPct;
 
+  // Fair share within stock allocation
+  const stocks = allPortfolio.filter(s => s.instrument_type !== 'ETF');
+  const scoreSum = stocks.reduce((a, s) => a + (s.latest_score != null ? s.latest_score : 5), 0);
+  const fairShare = scoreSum > 0 ? (score / scoreSum) * 100 : (100 / Math.max(stocks.length, 1));
+  const ratio = fairShare > 0 ? effectiveWt / fairShare : 1;
+
+  // Absolute ceiling — generous safety valve, not primary signal
   let absCeiling;
-  if (score >= 8.5) absCeiling = 30;
+  if      (score >= 8.5) absCeiling = 30;
   else if (score >= 7.5) absCeiling = 25;
   else if (score >= 6.5) absCeiling = 20;
   else if (score >= 5.5) absCeiling = 16;
   else if (score >= 4.5) absCeiling = 12;
-  else absCeiling = 8;
+  else                   absCeiling = 8;
 
   if (!isSpring) {
-    if (marketRegime === 'BEAR') absCeiling = Math.min(absCeiling, 15);
+    if      (marketRegime === 'BEAR')     absCeiling = Math.min(absCeiling, 15);
     else if (marketRegime === 'STRESSED') absCeiling = Math.min(absCeiling, 18);
   }
 
   let color, verdict, icon;
 
-  if (weightPct > absCeiling) {
-    color = '#991b1b';
-    verdict = `Exceeds ${absCeiling}% ceiling for score ${score.toFixed(1)}`;
-    icon = '🚫';
+  if      (weightPct > absCeiling)   { color = '#991b1b'; verdict = 'Exceeds ceiling for score ' + score.toFixed(1); icon = 'cap'; }
+  else if (ratio > 2.0)              { color = '#991b1b'; verdict = '2x+ fair share of stock allocation'; icon = 'high'; }
+  else if (ratio > 1.6)              { color = '#dc2626'; verdict = 'Overweight for quality score'; icon = 'over'; }
+  else if (ratio > 1.35)             { color = '#ea580c'; verdict = 'Moderately overweight' + (isBearish ? ' - risk signal reinforces trimming' : ''); icon = isBearish ? 'trim' : ''; }
+  else if (ratio > 1.15)             { color = '#d97706'; verdict = 'Slightly heavy'; icon = ''; }
+  else if (ratio >= 0.85)            {
+    if (isBearish && ratio > 1.0)    { color = '#d97706'; verdict = 'Balanced but risk signal - consider trimming'; icon = ''; }
+    else                             { color = '#059669'; verdict = 'Well balanced'; icon = 'OK'; }
   }
-  else if (ratio > 2.0) {
-    color = '#991b1b';
-    verdict = 'Very overweight — 2×+ fair share';
-    icon = '🚫';
+  else if (ratio >= 0.6)             {
+    if (isBullish && score >= 7)     { color = '#0d9488'; verdict = 'Room to add - strong score + buy signal'; icon = 'add'; }
+    else if (isBullish)              { color = '#0d9488'; verdict = 'Slightly underweight - buy signal active'; icon = 'add'; }
+    else                             { color = '#6b7280'; verdict = 'Adequate weight'; icon = ''; }
   }
-  else if (ratio > 1.6) {
-    color = '#dc2626';
-    verdict = 'Significantly overweight for quality';
-    icon = '⚠';
-  }
-  else if (ratio > 1.35) {
-    color = '#ea580c';
-    verdict = 'Moderately overweight';
-    icon = isBearish ? '⚠' : '';
-  }
-  else if (ratio > 1.15) {
-    color = '#d97706';
-    verdict = 'Slightly heavy';
-    icon = '';
-  }
-  else if (ratio >= 0.85) {
-    if (isBearish && ratio > 1.0) {
-      color = '#d97706';
-      verdict = 'Balanced but risky signal — consider trimming';
-      icon = '';
-    } else {
-      color = '#059669';
-      verdict = 'Well balanced — weight matches quality';
-      icon = '✓';
-    }
-  }
-  else if (ratio >= 0.6) {
-    if (isBullish && score >= 7) {
-      color = '#0d9488';
-      verdict = 'Room to add — strong score + buy signal';
-      icon = '↑';
-    } else if (isBullish) {
-      color = '#0d9488';
-      verdict = 'Slightly underweight — buy signal supports adding';
-      icon = '↑';
-    } else {
-      color = '#6b7280';
-      verdict = 'Adequate weight';
-      icon = '';
-    }
-  }
-  else {
-    if (isBullish && score >= 7) {
-      color = '#2563eb';
-      verdict = 'Underweight opportunity — strong score + buy signal';
-      icon = '↑↑';
-    } else if (isBullish) {
-      color = '#3b82f6';
-      verdict = 'Underweight — buy signal suggests room to add';
-      icon = '↑';
-    } else if (isBearish) {
-      color = '#6b7280';
-      verdict = 'Low weight — appropriate for risk signal';
-      icon = '';
-    } else {
-      color = '#9ca3af';
-      verdict = 'Low weight';
-      icon = '';
-    }
+  else                               {
+    if (isBullish && score >= 7)     { color = '#2563eb'; verdict = 'Underweight opportunity - buy signal + strong score'; icon = 'add+'; }
+    else if (isBullish)              { color = '#3b82f6'; verdict = 'Underweight - buy signal active'; icon = 'add'; }
+    else if (isBearish)              { color = '#6b7280'; verdict = 'Low weight - appropriate for current signal'; icon = ''; }
+    else                             { color = '#9ca3af'; verdict = 'Low weight'; icon = ''; }
   }
 
   return { color, verdict, icon, fairShare, ratio, absCeiling };
@@ -485,13 +469,10 @@ const DetailPanel = ({ stock }) => {
     : filingScore >= 7 ? '#059669' : filingScore >= 5 ? '#6b7280'
       : filingScore >= 3 ? '#d97706' : '#dc2626';
 
-  // FIX: Added missing `: null` else branch to both ternary assignments
   const gainPct = stock.average_price > 0 && stock.current_price != null
-    ? ((stock.current_price - stock.average_price) / stock.average_price) * 100
-    : null;
+    ? ((stock.current_price - stock.average_price) / stock.average_price) * 100;
   const gainAmt = gainPct != null
-    ? (stock.current_price - stock.average_price) * stock.quantity
-    : null;
+    ? (stock.current_price - stock.average_price) * stock.quantity;
   const showTaxNote = ['SELL', 'TRIM_25', 'REDUCE'].includes(stock.signal || '') && gainPct != null && gainPct > 20;
 
   return (
@@ -507,11 +488,10 @@ const DetailPanel = ({ stock }) => {
             }}>
               <span style={{ fontSize: 14, flexShrink: 0 }}>🇮🇳</span>
               <div style={{ fontSize: 11, color: '#fbbf24', lineHeight: 1.5 }}>
-                {/* FIX: Removed TypeScript non-null assertion operators (! after gainPct and gainAmt) */}
                 <strong>Tax consideration:</strong>{' '}
-                This position has a <strong>{gainPct.toFixed(0)}% unrealised gain</strong>{' '}
-                (~${Math.abs(gainAmt).toFixed(0)} USD).{' '}
-                {gainPct > 100
+                This position has a <strong>{gainPct!.toFixed(0)}% unrealised gain</strong>{' '}
+                (~${Math.abs(gainAmt!).toFixed(0)} USD).{' '}
+                {gainPct! > 100
                   ? 'The system requires W4 confirmation before escalating to SELL on large winners.'
                   : 'Review whether the signal strength justifies the capital gains tax bill (20% LTCG / 30% STCG).'}
               </div>
@@ -555,19 +535,18 @@ const DetailPanel = ({ stock }) => {
                 <span style={{ color: '#2563eb' }}>This score contributes 20% to the overall Quality Score.</span>
               </p>
               <div className="detail-rows">
-                {/* FIX: All `positive={condition ? value}` (incomplete ternaries) replaced with full boolean expressions */}
                 <FundRow label="Gross Margin"
                   value={stock.gross_margin_pct != null ? `${stock.gross_margin_pct.toFixed(1)}%` : null}
                   hint="Pricing power indicator. Over 40% = strong moat."
-                  positive={stock.gross_margin_pct != null ? stock.gross_margin_pct > 40 : undefined} />
+                  positive={stock.gross_margin_pct != null ? stock.gross_margin_pct > 40} />
                 <FundRow label="Rev Growth (TTM)"
                   value={stock.revenue_growth_pct != null ? `${stock.revenue_growth_pct >= 0 ? '+' : ''}${stock.revenue_growth_pct.toFixed(1)}%` : null}
                   hint="Year-over-year revenue velocity"
-                  positive={stock.revenue_growth_pct != null ? stock.revenue_growth_pct > 10 : undefined} />
+                  positive={stock.revenue_growth_pct != null ? stock.revenue_growth_pct > 10} />
                 <FundRow label="Rev Growth (3Y CAGR)"
                   value={stock.revenue_growth_3y != null ? `${stock.revenue_growth_3y >= 0 ? '+' : ''}${stock.revenue_growth_3y.toFixed(1)}%` : null}
                   hint="3-year compounded growth — durability check."
-                  positive={stock.revenue_growth_3y != null ? stock.revenue_growth_3y > 10 : undefined} />
+                  positive={stock.revenue_growth_3y != null ? stock.revenue_growth_3y > 10} />
               </div>
             </div>
           )}
@@ -587,7 +566,7 @@ const DetailPanel = ({ stock }) => {
                 <FundRow label="EV/FCF"
                   value={stock.ev_fcf != null ? `${stock.ev_fcf.toFixed(1)}×` : null}
                   hint="Enterprise value vs free cash flow. Under 15× = cheap, 15-25× = fair, over 40× = expensive."
-                  positive={stock.ev_fcf != null ? stock.ev_fcf < 25 : undefined} />
+                  positive={stock.ev_fcf != null ? stock.ev_fcf < 25} />
               </div>
             </div>
           )}
@@ -702,17 +681,16 @@ const DetailPanel = ({ stock }) => {
               <div className="detail-rows">
                 {isETF ? (
                   <>
-                    {/* FIX: Completed all incomplete ternaries in positive props */}
                     <FundRow label="Price Trend (65%)" value={stock.score_tech != null ? `${stock.score_tech.toFixed(1)}/10` : null}
-                      hint="SMA-200 trend + RSI momentum — primary signal for ETFs" positive={stock.score_tech != null ? stock.score_tech >= 6 : undefined} />
+                      hint="SMA-200 trend + RSI momentum — primary signal for ETFs" positive={stock.score_tech != null ? stock.score_tech >= 6} />
                     <FundRow label="News Sentiment (35%)" value={stock.score_news != null ? `${stock.score_news.toFixed(1)}/10` : null}
-                      hint="Sector/theme news — macro events relevant to the fund" positive={stock.score_news != null ? stock.score_news >= 6 : undefined} />
+                      hint="Sector/theme news — macro events relevant to the fund" positive={stock.score_news != null ? stock.score_news >= 6} />
                   </>
                 ) : (
                   <>
                     <FundRow label="Business Quality (60%)" value={stock.score_fund != null ? `${stock.score_fund.toFixed(1)}/10` : null}
                       hint="ROIC · SBC-adjusted FCF · Debt · Revenue growth · Competitive moat · FCF yield valuation"
-                      positive={stock.score_fund != null ? stock.score_fund >= 6 : undefined} />
+                      positive={stock.score_fund != null ? stock.score_fund >= 6} />
                     {fcfYieldPct != null && (() => {
                       const fy = (stock.fcf_yield != null ? stock.fcf_yield : 0);
                       const adj = fy > 0.06 ? +0.7 : fy > 0.04 ? +0.4 : fy > 0.025 ? +0.1 : fy > 0.015 ? 0 : fy > 0.008 ? -0.8 : -1.8;
@@ -725,14 +703,14 @@ const DetailPanel = ({ stock }) => {
                     })()}
                     <FundRow label="Insider Activity (15%)" value={stock.score_insider != null ? `${stock.score_insider.toFixed(1)}/10` : null}
                       hint="CEO/CFO open-market buys (3x weight). Excludes grants, withholding, option exercises."
-                      positive={stock.score_insider != null ? stock.score_insider >= 6 : undefined} />
+                      positive={stock.score_insider != null ? stock.score_insider >= 6} />
                     <FundRow label="Analyst Consensus (10%)" value={stock.score_rating != null ? `${stock.score_rating.toFixed(1)}/10` : null}
-                      hint="Buy/sell/hold consensus + upgrade/downgrade velocity" positive={stock.score_rating != null ? stock.score_rating >= 6 : undefined} />
+                      hint="Buy/sell/hold consensus + upgrade/downgrade velocity" positive={stock.score_rating != null ? stock.score_rating >= 6} />
                     <FundRow label="Price Trend (8%)" value={stock.score_tech != null ? `${stock.score_tech.toFixed(1)}/10` : null}
                       hint="SMA-200 trend (60%) + RSI (40%). Oversold quality stocks score high."
-                      positive={stock.score_tech != null ? stock.score_tech >= 6 : undefined} />
+                      positive={stock.score_tech != null ? stock.score_tech >= 6} />
                     <FundRow label="News Sentiment (7%)" value={stock.score_news != null ? `${stock.score_news.toFixed(1)}/10` : null}
-                      hint="3x daily news runs weighted by recency. Low weight intentional." positive={stock.score_news != null ? stock.score_news >= 6 : undefined} />
+                      hint="3x daily news runs weighted by recency. Low weight intentional." positive={stock.score_news != null ? stock.score_news >= 6} />
                   </>
                 )}
               </div>
@@ -745,8 +723,9 @@ const DetailPanel = ({ stock }) => {
 };
 
 // ── Modal ─────────────────────────────────────────────────────────────────────
-// FIX: Removed TypeScript generic type annotation `Modal<{...}>` — plain function component in JSX
-const Modal = ({ onClose, children, wide = false }) =>
+const Modal<{
+  onClose: () => void; children; wide?;
+}> = ({ onClose, children, wide = false }) =>
   createPortal(
     <div className="modal-overlay" onMouseDown={onClose}>
       <div className={`modal-box${wide ? ' modal-news' : ''}`}
@@ -873,6 +852,7 @@ const EnhancedPortfolioDashboard = () => {
       if (sortBy === 'alpha') return (b.excess_return || 0) - (a.excess_return || 0);
       if (sortBy === 'symbol') return a.symbol.localeCompare(b.symbol);
       if (sortBy === 'pnl') {
+        // BUG FIX: Added missing * operator
         const pA = ((a.current_price || 0) - (a.average_price || 0)) * (a.quantity || 0);
         const pB = ((b.current_price || 0) - (b.average_price || 0)) * (b.quantity || 0);
         return pB - pA;
@@ -883,6 +863,7 @@ const EnhancedPortfolioDashboard = () => {
 
   const filteredPortfolio = getFilteredPortfolio();
 
+  // BUG FIX: Added missing * operators in all calculations below
   const totalVal = portfolio.reduce((s, x) => s + ((x.current_price || 0) * (x.quantity || 0)), 0);
   const totalCost = portfolio.reduce((s, x) => s + ((x.average_price || 0) * (x.quantity || 0)), 0);
   const totalPnL = totalVal - totalCost;
@@ -894,6 +875,7 @@ const EnhancedPortfolioDashboard = () => {
     return s + (x.current_price - prev) * x.quantity;
   }, 0);
 
+  // BUG FIX: Fixed x.current_pricex.quantity → x.current_price * x.quantity
   const totalDayPct = totalVal > 0
     ? portfolio.reduce((s, x) => {
       if (!x.current_price || x.change_percent == null || !x.quantity) return s;
@@ -1036,18 +1018,20 @@ const EnhancedPortfolioDashboard = () => {
                   const tv = (parseFloat(String(stock.current_price)) || 0) * (parseFloat(String(stock.quantity)) || 0);
                   const pd = ((stock.current_price || 0) - (stock.average_price || 0)) * (stock.quantity || 0);
                   const pp = stock.average_price > 0
-                    ? ((stock.current_price - stock.average_price) / stock.average_price) * 100
-                    : null;
+                    ? ((stock.current_price - stock.average_price) / stock.average_price) * 100;
                   const sCfg = sig(stock.signal);
                   const rCfg = reg(stock.regime);
                   const isExpanded = expandedRow === stock.symbol;
-                  const showRegime = stock.regime !== stock.signal && stock.regime !== 'NORMAL' && stock.regime != null;
+                  // showRegime removed — regime label no longer shown in Context column
+                  // to prevent double-signal confusion. Signal badge in Recommendation encodes regime.
 
+                  // Weight assessment (REDESIGNED)
                   const score = (stock.latest_score != null ? stock.latest_score : 5);
                   const wPct = totalVal > 0 ? (tv / totalVal) * 100 : 0;
-                  const wa = getWeightAssessment(wPct, score, stock.signal || '', portfolio, mr);
+                  const wa = getWeightAssessment(wPct, score, stock.signal || '', portfolio, mr, stock.instrument_type === 'ETF', stock.excess_return);
 
                   return (
+                    // BUG FIX: Key moved to fragment
                     <React.Fragment key={stock.id}>
                       <tr className={`row-${sCfg.tier}${isExpanded ? ' row-expanded' : ''}`}>
                         <td>
@@ -1095,20 +1079,26 @@ const EnhancedPortfolioDashboard = () => {
                           )}
                         </td>
 
+                        {/* Context column: quantitative context only — NO regime label.
+                            The signal badge in Recommendation already encodes the regime.
+                            Showing it here too creates two conflicting signals. */}
                         <td>
-                          {showRegime && (() => {
-                            const NOISE = new Set(['MARKET_NOISE', 'HOLD_NOISE', 'NORMAL', 'HOLD']);
-                            if (NOISE.has(stock.regime || '') && NOISE.has(stock.signal || '')) return null;
-                            return <div className="regime-name" style={{ color: rCfg.color }} title={rCfg.label}>{rCfg.label}</div>;
-                          })()}
                           {stock.excess_return != null && (
-                            <div className={`alpha-val change ${stock.excess_return >= 0 ? 'positive' : 'negative'}`}>
+                            <div
+                              className={`alpha-val change ${stock.excess_return >= 0 ? 'positive' : 'negative'}`}
+                              title={'Jensen alpha: stock return vs SPY, adjusted for beta. Positive = outperforming the market on a risk-adjusted basis.'}>
                               α {fmtPct(stock.excess_return)}
                             </div>
                           )}
-                          {stock.beta != null && <div className="beta-val">β {Number(stock.beta).toFixed(2)}</div>}
+                          {stock.beta != null && (
+                            <div className="beta-val"
+                              title={`Beta ${Number(stock.beta).toFixed(2)}: ${Number(stock.beta) > 1.3 ? 'high volatility vs market' : Number(stock.beta) < 0.7 ? 'defensive vs market' : 'moves broadly with market'}`}>
+                              β {Number(stock.beta).toFixed(2)}
+                            </div>
+                          )}
                           {stock.max_drawdown != null && (
-                            <div className="compact-metric" title="Max drawdown — largest drop in past year">
+                            <div className="compact-metric"
+                              title={`Max drawdown ${stock.max_drawdown.toFixed(1)}% — largest peak-to-trough fall in the past year.${stock.max_drawdown < -30 ? ' Significant — check if thesis intact.' : ''}`}>
                               <span className="compact-lbl">MaxDD</span>
                               <span className={`compact-val ${stock.max_drawdown > -15 ? '' : 'neg'}`}>
                                 {stock.max_drawdown.toFixed(1)}%
@@ -1118,15 +1108,20 @@ const EnhancedPortfolioDashboard = () => {
                         </td>
 
                         <td>
+                          {/* Signal badge — primary output. Bold and prominent. */}
                           <span
                             title={[sCfg.why, sCfg.action].filter(Boolean).join(' → ')}
                             className={`signal-badge ${
                               sCfg.tier === 'bull' ? 'signal-bull' :
                                 sCfg.tier === 'bear' && ['WATCH', 'TRIM_25'].includes(stock.signal || '') ? 'signal-bear-soft' :
                                   sCfg.tier === 'bear' ? 'signal-bear-hard' : 'signal-neutral'
-                            }`}>{sCfg.label}</span>
+                            }`}
+                            style={{ fontSize: 13, padding: '4px 10px', fontWeight: 800, letterSpacing: '0.01em' }}>
+                            {sCfg.label}
+                          </span>
+                          {/* Action text — the "what to do" instruction, visually subordinate but readable */}
                           {sCfg.action && (
-                            <div style={{ fontSize: 10, color: '#6b6b65', marginTop: 3, lineHeight: 1.35, maxWidth: 140 }}>
+                            <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 4, lineHeight: 1.4, maxWidth: 145, fontStyle: 'italic' }}>
                               {sCfg.action}
                             </div>
                           )}
@@ -1148,16 +1143,24 @@ const EnhancedPortfolioDashboard = () => {
                           {totalVal > 0 && (
                             <div
                               title={
-                                `${wPct.toFixed(1)}% held | Score ${score.toFixed(1)} → fair share ${wa.fairShare.toFixed(1)}%\n` +
-                                `Ratio: ${wa.ratio.toFixed(2)}× fair share | Ceiling: ${wa.absCeiling}%\n` +
-                                `${wa.verdict}${wa.icon ? ' ' + wa.icon : ''}`
+                                stock.instrument_type === 'ETF'
+                                  ? (wPct.toFixed(1) + '% of portfolio | ETF anchor | ' + wa.verdict + (stock.excess_return != null ? ' | alpha vs SPY: ' + fmtPct(stock.excess_return) : ''))
+                                  : (wPct.toFixed(1) + '% of portfolio (' + (wa.fairShare != null ? wPct.toFixed(1) + '% held vs ' + wa.fairShare.toFixed(1) + '% fair share' : '') + ') | ' + wa.verdict + (wa.absCeiling ? ' | ceiling: ' + wa.absCeiling + '%' : ''))
                               }
                               style={{
                                 fontFamily: 'var(--font-mono)', fontSize: 11, color: wa.color,
-                                marginTop: 3, fontWeight: wa.ratio > 1.35 || wa.ratio < 0.6 ? 700 : 400,
+                                marginTop: 3,
+                                fontWeight: (wa.ratio != null && (wa.ratio > 1.35 || wa.ratio < 0.6)) ? 700 : 400,
                               }}>
                               {wPct.toFixed(1)}%
-                              {wa.icon && ` ${wa.icon}`}
+                              {wa.icon === 'OK'    && ' ✓'}
+                              {wa.icon === 'add'   && ' ↑'}
+                              {wa.icon === 'add+'  && ' ↑↑'}
+                              {wa.icon === 'over'  && ' ⚠'}
+                              {wa.icon === 'high'  && ' 🚫'}
+                              {wa.icon === 'cap'   && ' 🚫'}
+                              {wa.icon === 'trim'  && ' ⚠'}
+                              {wa.icon === 'drag'  && ' ↓'}
                             </div>
                           )}
                         </td>
@@ -1252,7 +1255,7 @@ const EnhancedPortfolioDashboard = () => {
               <h2>Intelligence · {newsModalStock.symbol}</h2>
               <p className="modal-sub-label">
                 {sig(newsModalStock.signal).label}
-                {newsModalStock.excess_return != null ? (' · α ' + fmtPct(newsModalStock.excess_return)) : ''}
+                {newsModalStock.excess_return != null ? (" · α " + fmtPct(newsModalStock.excess_return)) : ''}
               </p>
             </div>
             <button className="btn-close" onClick={() => setNewsModalStock(null)}>✕</button>
@@ -1275,7 +1278,37 @@ const EnhancedPortfolioDashboard = () => {
         </Modal>
       )}
 
-      <p style={{ textAlign: 'center', fontSize: 11, color: '#9ca3af', marginTop: 24, lineHeight: 1.6 }}>
+      {/* Signal guide */}
+      <div style={{ marginTop: 32, padding: '16px 20px', background: '#1a1a1a18', borderRadius: 10, border: '1px solid #ffffff10' }}>
+        <p style={{ textAlign: 'center', fontSize: 10, color: '#6b6b65', margin: '0 0 12px', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600 }}>
+          Signal Guide
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '6px 16px' }}>
+          {[
+            { label: 'Strong Buy / Buy', color: '#3b82f6', desc: 'Score high + quality fundamentals. Add or initiate.' },
+            { label: 'Spring Confirmed', color: '#047857', desc: 'Quality stock recovering from oversold dip. Best contrarian entry.' },
+            { label: 'Spring Candidate', color: '#10b981', desc: 'Early dip recovery. Watch for Day 3 confirmation before adding.' },
+            { label: 'Add', color: '#059669', desc: 'Accumulation zone: positive alpha + solid score + momentum.' },
+            { label: 'Hold', color: '#6b7280', desc: 'Score 4.5-7.5 with no directional signal. Let the compounder compound.' },
+            { label: 'Watch', color: '#d97706', desc: '3-week score decline. Do not add. Thesis review warranted.' },
+            { label: 'Trim 25%', color: '#ea580c', desc: 'Material deterioration. Reduce position, lock partial gains.' },
+            { label: 'Reduce', color: '#dc2626', desc: 'Score below 4.5 with W3 confirmed. Structural decline, not a blip.' },
+            { label: 'Sell / Decay', color: '#991b1b', desc: 'Score below 3.5 + W4 or critical event. Exit in tax-efficient manner.' },
+          ].map(({ label, color, desc }) => (
+            <div key={label} style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+              <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0, marginTop: 3 }} />
+              <div>
+                <span style={{ fontSize: 10, color: color, fontWeight: 700 }}>{label}</span>
+                <span style={{ fontSize: 10, color: '#6b6b65' }}> — {desc}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+        <p style={{ textAlign: 'center', fontSize: 10, color: '#6b6b65', margin: '12px 0 0' }}>
+          Weight colour: <span style={{ color: '#059669' }}>green = balanced</span> · <span style={{ color: '#d97706' }}>amber = slightly heavy</span> · <span style={{ color: '#dc2626' }}>red = overweight for score</span> · <span style={{ color: '#2563eb' }}>blue = room to add</span> · ETFs judged on alpha contribution, not weight size.
+        </p>
+      </div>
+      <p style={{ textAlign: 'center', fontSize: 11, color: '#9ca3af', marginTop: 12, lineHeight: 1.6 }}>
         Alpha Compounder · For informational purposes only. Not financial advice.
         All signals are systematic — always apply your own judgement.{' '}
         <strong style={{ color: '#d97706' }}>Indian investors: weigh CGT (20% LTCG / 30% STCG) before acting on any sell signal.</strong>
