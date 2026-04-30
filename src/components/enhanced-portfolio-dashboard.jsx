@@ -455,12 +455,270 @@ const FundRow = ({ label, value, hint, positive }) => {
   );
 };
 
+
+// ── Filing Narrative Card ─────────────────────────────────────────────────────
+// Shown in the expanded detail panel after a 10-K or 10-Q is analysed by
+// filing-narrative.js. Gemini extracts: thesis status, key changes, risks,
+// confirms, guidance direction, regulatory moat, dual-class warnings.
+const FilingNarrativeCard = ({ narrative }) => {
+  if (!narrative) return null;
+  const g = narrative.gemini;
+  if (!g) return (
+    <div className="detail-section" style={{ borderLeft: '3px solid #9ca3af', paddingLeft: 12 }}>
+      <div className="detail-section-head">
+        <span className="detail-section-title">📑 {narrative.form || '10-K/Q'} · {narrative.period || narrative.filed}</span>
+        <span style={{ fontSize: 10, color: '#9ca3af' }}>Analysis pending</span>
+      </div>
+      <p style={{ fontSize: 11, color: '#6b6b65', margin: 0 }}>
+        Filing was found but Gemini analysis is not yet available. Will appear after the next filing-narrative run.
+      </p>
+    </div>
+  );
+
+  const statusColor = g.thesis_status === 'strengthening' ? '#059669'
+    : g.thesis_status === 'stable'    ? '#2563eb'
+    : g.thesis_status === 'weakening' ? '#dc2626'
+    : '#9ca3af';
+  const statusLabel = g.thesis_status === 'strengthening' ? '▲ Thesis Strengthening'
+    : g.thesis_status === 'stable'    ? '→ Thesis Stable'
+    : g.thesis_status === 'weakening' ? '▼ Thesis Weakening'
+    : '? Status unclear';
+
+  return (
+    <div className="detail-section" style={{ borderLeft: '3px solid ' + statusColor, paddingLeft: 12 }}>
+      <div className="detail-section-head">
+        <span className="detail-section-title">📑 {narrative.form || '10-K/Q'} · {narrative.period || narrative.filed}</span>
+        <span style={{
+          fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4,
+          background: statusColor + '20', color: statusColor,
+          border: '1px solid ' + statusColor + '40', fontFamily: 'var(--font-mono)',
+        }}>{statusLabel}</span>
+      </div>
+
+      {g.summary && (
+        <p style={{ fontSize: 12, color: '#3a3835', lineHeight: 1.6, margin: 0 }}>{g.summary}</p>
+      )}
+
+      {g.has_regulatory_moat && g.regulatory_moat_type && (
+        <div style={{ padding: '6px 10px', background: '#f0fdf420', borderRadius: 6,
+          borderLeft: '3px solid #16a34a', display: 'flex', gap: 6 }}>
+          <span style={{ fontSize: 12, flexShrink: 0 }}>🏛</span>
+          <div>
+            <span style={{ fontSize: 10, color: '#15803d', fontWeight: 700, textTransform: 'uppercase' }}>Regulatory Moat · </span>
+            <span style={{ fontSize: 11, color: '#14532d' }}>{g.regulatory_moat_type}</span>
+          </div>
+        </div>
+      )}
+
+      {g.dual_class_warning && (
+        <div style={{ padding: '6px 10px', background: '#fff7ed20', borderRadius: 6,
+          borderLeft: '3px solid #ea580c', display: 'flex', gap: 6 }}>
+          <span style={{ fontSize: 12, flexShrink: 0 }}>⚠</span>
+          <div>
+            <span style={{ fontSize: 10, color: '#c2410c', fontWeight: 700, textTransform: 'uppercase' }}>Dual-Class Structure · </span>
+            <span style={{ fontSize: 11, color: '#7c2d12' }}>{g.dual_class_warning}</span>
+          </div>
+        </div>
+      )}
+
+      {g.thesis_confirms && g.thesis_confirms.length > 0 && (
+        <div style={{ background: '#f0fdf420', border: '1px solid #bbf7d030', borderRadius: 5,
+          padding: '7px 10px', display: 'flex', flexDirection: 'column', gap: 3 }}>
+          {g.thesis_confirms.map((c, i) => (
+            <span key={i} style={{ fontSize: 11, color: '#166534', fontFamily: 'var(--font-mono)' }}>✓ {c}</span>
+          ))}
+        </div>
+      )}
+
+      {((g.thesis_risks && g.thesis_risks.length > 0) || (g.new_risks && g.new_risks.length > 0)) && (
+        <div style={{ background: '#fef2f220', border: '1px solid #fecaca30', borderRadius: 5,
+          padding: '7px 10px', display: 'flex', flexDirection: 'column', gap: 3 }}>
+          {(g.thesis_risks || []).map((r, i) => (
+            <span key={'r' + i} style={{ fontSize: 11, color: '#991b1b', fontFamily: 'var(--font-mono)' }}>⚠ {r}</span>
+          ))}
+          {(g.new_risks || []).map((r, i) => (
+            <span key={'n' + i} style={{ fontSize: 11, color: '#7f1d1d', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>🆕 {r}</span>
+          ))}
+        </div>
+      )}
+
+      {g.guidance_changes && g.guidance_changes.length > 0 && (
+        <div style={{ background: '#eff6ff20', border: '1px solid #bfdbfe30', borderRadius: 5,
+          padding: '7px 10px', display: 'flex', flexDirection: 'column', gap: 3 }}>
+          {g.guidance_changes.map((c, i) => (
+            <span key={i} style={{ fontSize: 11, color: '#1e40af', fontFamily: 'var(--font-mono)' }}>📋 {c}</span>
+          ))}
+        </div>
+      )}
+
+      <span style={{ fontSize: 10, color: '#9ca3af', fontFamily: 'var(--font-mono)' }}>
+        Filed {narrative.filed ? new Date(narrative.filed).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+      </span>
+    </div>
+  );
+};
+
+// ── Earnings Card ─────────────────────────────────────────────────────────────
+// Shown in the expanded detail panel for ~90 days after earnings are released.
+// The earnings-event.js script analyses the 8-K press release via Gemini and
+// extracts: EPS/revenue beat, guidance direction, management confidence, thesis impact.
+const EarningsCard = ({ event }) => {
+  if (!event) return null;
+
+  // Show something even when Gemini analysis failed (event exists but gemini=null)
+  if (!event.gemini) return (
+    <div className="detail-section" style={{ borderLeft: '3px solid #2563eb', paddingLeft: 12 }}>
+      <div className="detail-section-head">
+        <span className="detail-section-title">
+          📞 Earnings{event.quarter ? (' · Q' + event.quarter + ' ' + event.year) : (' · ' + event.filedDate)}
+        </span>
+      </div>
+      <p style={{ fontSize: 11, color: '#6b6b65', margin: 0 }}>
+        Earnings 8-K found (filed {event.filedDate}). Gemini analysis is pending or unavailable.
+      </p>
+    </div>
+  );
+
+  const g = event.gemini;
+  const guidColor = g.guidance_direction === 'raised'  ? '#059669'
+    : g.guidance_direction === 'lowered' ? '#dc2626' : '#6b7280';
+  const guidLabel = g.guidance_direction === 'raised'     ? '▲ Guidance Raised'
+    : g.guidance_direction === 'lowered'    ? '▼ Guidance Lowered'
+    : g.guidance_direction === 'maintained' ? '→ Maintained'
+    : g.guidance_direction === 'withdrawn'  ? '— Withdrawn'
+    : 'No guidance';
+
+  const conf = g.management_confidence || 0;
+  const confColor = conf >= 4 ? '#059669' : conf >= 3 ? '#d97706' : '#dc2626';
+
+  return (
+    <div className="detail-section" style={{ borderLeft: '3px solid #2563eb', paddingLeft: 12 }}>
+      <div className="detail-section-head">
+        <span className="detail-section-title">
+          📞 Earnings{event.quarter ? (' · Q' + event.quarter + ' ' + event.year) : (' · ' + event.filedDate)}
+        </span>
+        {g.guidance_direction && g.guidance_direction !== 'none' && (
+          <span style={{
+            fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4,
+            background: guidColor + '20', color: guidColor,
+            border: '1px solid ' + guidColor + '40', fontFamily: 'var(--font-mono)',
+          }}>{guidLabel}</span>
+        )}
+      </div>
+
+      {/* EPS and Revenue beat chips */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {g.eps_beat != null && (
+          <span style={{
+            fontSize: 11, padding: '3px 8px', borderRadius: 4, fontWeight: 600,
+            background: g.eps_beat ? '#05966920' : '#dc262620',
+            color: g.eps_beat ? '#059669' : '#dc2626',
+            border: '1px solid ' + (g.eps_beat ? '#05966940' : '#dc262640'),
+          }}>
+            {g.eps_beat ? '✓' : '✗'} EPS {g.eps_actual || ''}
+            {g.eps_estimate ? ' (est. ' + g.eps_estimate + ')' : ''}
+          </span>
+        )}
+        {g.revenue_beat != null && (
+          <span style={{
+            fontSize: 11, padding: '3px 8px', borderRadius: 4, fontWeight: 600,
+            background: g.revenue_beat ? '#05966920' : '#dc262620',
+            color: g.revenue_beat ? '#059669' : '#dc2626',
+            border: '1px solid ' + (g.revenue_beat ? '#05966940' : '#dc262640'),
+          }}>
+            {g.revenue_beat ? '✓' : '✗'} Revenue {g.revenue_actual || ''}
+            {g.revenue_estimate ? ' (est. ' + g.revenue_estimate + ')' : ''}
+          </span>
+        )}
+      </div>
+
+      {g.summary && (
+        <p style={{ fontSize: 12, color: '#3a3835', lineHeight: 1.6, margin: 0 }}>{g.summary}</p>
+      )}
+
+      {conf > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 11, color: '#6b6b65', flexShrink: 0 }}>Mgmt tone</span>
+          <div style={{ flex: 1, height: 4, background: '#e6e5df', borderRadius: 2, overflow: 'hidden' }}>
+            <div style={{ width: (((conf - 1) / 4) * 100) + '%', height: '100%', background: confColor, borderRadius: 2 }} />
+          </div>
+          <span style={{ fontSize: 10, color: confColor, fontFamily: 'var(--font-mono)' }}>{conf}/5</span>
+        </div>
+      )}
+
+      {g.key_metrics && g.key_metrics.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+          {g.key_metrics.map((m, i) => (
+            <span key={i} style={{
+              fontSize: 10, padding: '2px 6px', borderRadius: 4,
+              background: '#f0f4ff', color: '#1e40af', fontFamily: 'var(--font-mono)',
+            }}>{m}</span>
+          ))}
+        </div>
+      )}
+
+      {g.thesis_confirms && g.thesis_confirms.length > 0 && (
+        <div style={{ background: '#f0fdf420', border: '1px solid #bbf7d030', borderRadius: 5,
+          padding: '7px 10px', display: 'flex', flexDirection: 'column', gap: 3 }}>
+          {g.thesis_confirms.map((c, i) => (
+            <span key={i} style={{ fontSize: 11, color: '#166534', fontFamily: 'var(--font-mono)' }}>✓ {c}</span>
+          ))}
+        </div>
+      )}
+
+      {g.thesis_risks && g.thesis_risks.length > 0 && (
+        <div style={{ background: '#fef2f220', border: '1px solid #fecaca30', borderRadius: 5,
+          padding: '7px 10px', display: 'flex', flexDirection: 'column', gap: 3 }}>
+          {g.thesis_risks.map((r, i) => (
+            <span key={i} style={{ fontSize: 11, color: '#991b1b', fontFamily: 'var(--font-mono)' }}>⚠ {r}</span>
+          ))}
+        </div>
+      )}
+
+      <span style={{ fontSize: 10, color: '#9ca3af', fontFamily: 'var(--font-mono)' }}>
+        8-K filed {event.filedDate} · Visible for 90 days
+      </span>
+    </div>
+  );
+};
+
 // ── Detail Panel ──────────────────────────────────────────────────────────────
 const DetailPanel = ({ stock }) => {
   const fcfYieldPct = (stock.fcf_yield != null && stock.fcf_yield > 0) ? (stock.fcf_yield * 100) : null;
   const sbcPct = stock.sbc_to_market_cap;
   const filingScore = stock.filing_sentiment;
   const isETF = stock.instrument_type === 'ETF';
+
+  // Fetch earnings event and filing narrative from API when panel expands.
+  // Returns 204 (no content) when no data exists yet — that is normal.
+  const [earningsEvent,   setEarningsEvent]   = useState(null);
+  const [filingNarrative, setFilingNarrative] = useState(null);
+  const [cardsLoading,    setCardsLoading]    = useState(!isETF);
+
+  useEffect(() => {
+    if (isETF) { setCardsLoading(false); return; }
+    let cancelled = false;
+    setCardsLoading(true);
+    Promise.allSettled([
+      fetch('/api/portfolio/earnings-event/' + stock.symbol),
+      fetch('/api/portfolio/filing-narrative/' + stock.symbol),
+    ]).then(function(results) {
+      if (cancelled) return;
+      var earnRes = results[0], narRes = results[1];
+      if (earnRes.status === 'fulfilled' && earnRes.value.status === 200) {
+        earnRes.value.json().then(function(d) {
+          if (!cancelled && d && d.event) setEarningsEvent(d.event);
+        }).catch(function() {});
+      }
+      if (narRes.status === 'fulfilled' && narRes.value.status === 200) {
+        narRes.value.json().then(function(d) {
+          if (!cancelled && d && d.narrative) setFilingNarrative(d.narrative);
+        }).catch(function() {});
+      }
+      if (!cancelled) setCardsLoading(false);
+    });
+    return function() { cancelled = true; };
+  }, [stock.symbol, isETF]);
 
   const filingLabel = filingScore == null ? null
     : filingScore >= 7 ? 'Positive tone' : filingScore >= 5 ? 'Neutral tone'
@@ -470,9 +728,11 @@ const DetailPanel = ({ stock }) => {
       : filingScore >= 3 ? '#d97706' : '#dc2626';
 
   const gainPct = stock.average_price > 0 && stock.current_price != null
-    ? ((stock.current_price - stock.average_price) / stock.average_price) * 100;
+    ? ((stock.current_price - stock.average_price) / stock.average_price) * 100
+    : null;
   const gainAmt = gainPct != null
-    ? (stock.current_price - stock.average_price) * stock.quantity;
+    ? (stock.current_price - stock.average_price) * stock.quantity
+    : null;
   const showTaxNote = ['SELL', 'TRIM_25', 'REDUCE'].includes(stock.signal || '') && gainPct != null && gainPct > 20;
 
   return (
@@ -658,6 +918,29 @@ const DetailPanel = ({ stock }) => {
                   positive={stock.event_8k_hint === 'positive'} />
                 {stock.event_8k_date && <FundRow label="Filed" value={stock.event_8k_date} />}
               </div>
+            </div>
+          )}
+
+          {/* Earnings Event Card — fetched from /api/portfolio/earnings-event/:symbol */}
+          {!isETF && earningsEvent && <EarningsCard event={earningsEvent} />}
+
+          {/* Filing Narrative Card — fetched from /api/portfolio/filing-narrative/:symbol */}
+          {!isETF && filingNarrative && <FilingNarrativeCard narrative={filingNarrative} />}
+
+          {/* Loading state for cards — only shows briefly on first expand */}
+          {!isETF && cardsLoading && (
+            <div style={{ padding: '8px 0', fontSize: 11, color: '#9ca3af', fontStyle: 'italic' }}>
+              Loading earnings and filing analysis…
+            </div>
+          )}
+
+          {/* No cards found — show helpful message after loading */}
+          {!isETF && !cardsLoading && !earningsEvent && !filingNarrative && (
+            <div style={{ padding: '8px 12px', borderRadius: 6, background: '#ffffff08',
+              border: '1px solid #ffffff10', fontSize: 11, color: '#6b6b65' }}>
+              No earnings event or filing analysis available yet.
+              Run <code style={{ fontFamily: 'var(--font-mono)', color: '#9ca3af' }}>npm run earnings-event</code> and{' '}
+              <code style={{ fontFamily: 'var(--font-mono)', color: '#9ca3af' }}>npm run filing-narrative</code> to populate.
             </div>
           )}
 
