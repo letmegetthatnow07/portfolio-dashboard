@@ -93,7 +93,6 @@ const sig = (s) => SIGNAL_CFG[s || ''] || { color: '#6b7280', label: s || 'Pendi
 const reg = (r) => REGIME_CFG[r || ''] || { color: '#6b7280', label: r || 'Normal' };
 
 // ── Formatting Utilities ──────────────────────────────────────────────────────
-// BUG FIX: All template literals now have proper backticks
 const fmtUSD = (n, compact = false) => {
   if (n == null || isNaN(n)) return 'N/A';
   if (compact && Math.abs(n) >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
@@ -126,7 +125,6 @@ const moatCol = (s) => {
 // Uses score-relative ratio instead of hard caps as primary metric.
 // Color reflects how well the actual weight aligns with quality contribution.
 // Signal context adjusts interpretation (bullish+underweight = opportunity, etc.)
-
 
 const getWeightAssessment = (
   weightPct,
@@ -455,270 +453,12 @@ const FundRow = ({ label, value, hint, positive }) => {
   );
 };
 
-
-// ── Filing Narrative Card ─────────────────────────────────────────────────────
-// Shown in the expanded detail panel after a 10-K or 10-Q is analysed by
-// filing-narrative.js. Gemini extracts: thesis status, key changes, risks,
-// confirms, guidance direction, regulatory moat, dual-class warnings.
-const FilingNarrativeCard = ({ narrative }) => {
-  if (!narrative) return null;
-  const g = narrative.gemini;
-  if (!g) return (
-    <div className="detail-section" style={{ borderLeft: '3px solid #9ca3af', paddingLeft: 12 }}>
-      <div className="detail-section-head">
-        <span className="detail-section-title">📑 {narrative.form || '10-K/Q'} · {narrative.period || narrative.filed}</span>
-        <span style={{ fontSize: 10, color: '#9ca3af' }}>Analysis pending</span>
-      </div>
-      <p style={{ fontSize: 11, color: '#6b6b65', margin: 0 }}>
-        Filing was found but Gemini analysis is not yet available. Will appear after the next filing-narrative run.
-      </p>
-    </div>
-  );
-
-  const statusColor = g.thesis_status === 'strengthening' ? '#059669'
-    : g.thesis_status === 'stable'    ? '#2563eb'
-    : g.thesis_status === 'weakening' ? '#dc2626'
-    : '#9ca3af';
-  const statusLabel = g.thesis_status === 'strengthening' ? '▲ Thesis Strengthening'
-    : g.thesis_status === 'stable'    ? '→ Thesis Stable'
-    : g.thesis_status === 'weakening' ? '▼ Thesis Weakening'
-    : '? Status unclear';
-
-  return (
-    <div className="detail-section" style={{ borderLeft: '3px solid ' + statusColor, paddingLeft: 12 }}>
-      <div className="detail-section-head">
-        <span className="detail-section-title">📑 {narrative.form || '10-K/Q'} · {narrative.period || narrative.filed}</span>
-        <span style={{
-          fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4,
-          background: statusColor + '20', color: statusColor,
-          border: '1px solid ' + statusColor + '40', fontFamily: 'var(--font-mono)',
-        }}>{statusLabel}</span>
-      </div>
-
-      {g.summary && (
-        <p style={{ fontSize: 12, color: '#3a3835', lineHeight: 1.6, margin: 0 }}>{g.summary}</p>
-      )}
-
-      {g.has_regulatory_moat && g.regulatory_moat_type && (
-        <div style={{ padding: '6px 10px', background: '#f0fdf420', borderRadius: 6,
-          borderLeft: '3px solid #16a34a', display: 'flex', gap: 6 }}>
-          <span style={{ fontSize: 12, flexShrink: 0 }}>🏛</span>
-          <div>
-            <span style={{ fontSize: 10, color: '#15803d', fontWeight: 700, textTransform: 'uppercase' }}>Regulatory Moat · </span>
-            <span style={{ fontSize: 11, color: '#14532d' }}>{g.regulatory_moat_type}</span>
-          </div>
-        </div>
-      )}
-
-      {g.dual_class_warning && (
-        <div style={{ padding: '6px 10px', background: '#fff7ed20', borderRadius: 6,
-          borderLeft: '3px solid #ea580c', display: 'flex', gap: 6 }}>
-          <span style={{ fontSize: 12, flexShrink: 0 }}>⚠</span>
-          <div>
-            <span style={{ fontSize: 10, color: '#c2410c', fontWeight: 700, textTransform: 'uppercase' }}>Dual-Class Structure · </span>
-            <span style={{ fontSize: 11, color: '#7c2d12' }}>{g.dual_class_warning}</span>
-          </div>
-        </div>
-      )}
-
-      {g.thesis_confirms && g.thesis_confirms.length > 0 && (
-        <div style={{ background: '#f0fdf420', border: '1px solid #bbf7d030', borderRadius: 5,
-          padding: '7px 10px', display: 'flex', flexDirection: 'column', gap: 3 }}>
-          {g.thesis_confirms.map((c, i) => (
-            <span key={i} style={{ fontSize: 11, color: '#166534', fontFamily: 'var(--font-mono)' }}>✓ {c}</span>
-          ))}
-        </div>
-      )}
-
-      {((g.thesis_risks && g.thesis_risks.length > 0) || (g.new_risks && g.new_risks.length > 0)) && (
-        <div style={{ background: '#fef2f220', border: '1px solid #fecaca30', borderRadius: 5,
-          padding: '7px 10px', display: 'flex', flexDirection: 'column', gap: 3 }}>
-          {(g.thesis_risks || []).map((r, i) => (
-            <span key={'r' + i} style={{ fontSize: 11, color: '#991b1b', fontFamily: 'var(--font-mono)' }}>⚠ {r}</span>
-          ))}
-          {(g.new_risks || []).map((r, i) => (
-            <span key={'n' + i} style={{ fontSize: 11, color: '#7f1d1d', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>🆕 {r}</span>
-          ))}
-        </div>
-      )}
-
-      {g.guidance_changes && g.guidance_changes.length > 0 && (
-        <div style={{ background: '#eff6ff20', border: '1px solid #bfdbfe30', borderRadius: 5,
-          padding: '7px 10px', display: 'flex', flexDirection: 'column', gap: 3 }}>
-          {g.guidance_changes.map((c, i) => (
-            <span key={i} style={{ fontSize: 11, color: '#1e40af', fontFamily: 'var(--font-mono)' }}>📋 {c}</span>
-          ))}
-        </div>
-      )}
-
-      <span style={{ fontSize: 10, color: '#9ca3af', fontFamily: 'var(--font-mono)' }}>
-        Filed {narrative.filed ? new Date(narrative.filed).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
-      </span>
-    </div>
-  );
-};
-
-// ── Earnings Card ─────────────────────────────────────────────────────────────
-// Shown in the expanded detail panel for ~90 days after earnings are released.
-// The earnings-event.js script analyses the 8-K press release via Gemini and
-// extracts: EPS/revenue beat, guidance direction, management confidence, thesis impact.
-const EarningsCard = ({ event }) => {
-  if (!event) return null;
-
-  // Show something even when Gemini analysis failed (event exists but gemini=null)
-  if (!event.gemini) return (
-    <div className="detail-section" style={{ borderLeft: '3px solid #2563eb', paddingLeft: 12 }}>
-      <div className="detail-section-head">
-        <span className="detail-section-title">
-          📞 Earnings{event.quarter ? (' · Q' + event.quarter + ' ' + event.year) : (' · ' + event.filedDate)}
-        </span>
-      </div>
-      <p style={{ fontSize: 11, color: '#6b6b65', margin: 0 }}>
-        Earnings 8-K found (filed {event.filedDate}). Gemini analysis is pending or unavailable.
-      </p>
-    </div>
-  );
-
-  const g = event.gemini;
-  const guidColor = g.guidance_direction === 'raised'  ? '#059669'
-    : g.guidance_direction === 'lowered' ? '#dc2626' : '#6b7280';
-  const guidLabel = g.guidance_direction === 'raised'     ? '▲ Guidance Raised'
-    : g.guidance_direction === 'lowered'    ? '▼ Guidance Lowered'
-    : g.guidance_direction === 'maintained' ? '→ Maintained'
-    : g.guidance_direction === 'withdrawn'  ? '— Withdrawn'
-    : 'No guidance';
-
-  const conf = g.management_confidence || 0;
-  const confColor = conf >= 4 ? '#059669' : conf >= 3 ? '#d97706' : '#dc2626';
-
-  return (
-    <div className="detail-section" style={{ borderLeft: '3px solid #2563eb', paddingLeft: 12 }}>
-      <div className="detail-section-head">
-        <span className="detail-section-title">
-          📞 Earnings{event.quarter ? (' · Q' + event.quarter + ' ' + event.year) : (' · ' + event.filedDate)}
-        </span>
-        {g.guidance_direction && g.guidance_direction !== 'none' && (
-          <span style={{
-            fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4,
-            background: guidColor + '20', color: guidColor,
-            border: '1px solid ' + guidColor + '40', fontFamily: 'var(--font-mono)',
-          }}>{guidLabel}</span>
-        )}
-      </div>
-
-      {/* EPS and Revenue beat chips */}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        {g.eps_beat != null && (
-          <span style={{
-            fontSize: 11, padding: '3px 8px', borderRadius: 4, fontWeight: 600,
-            background: g.eps_beat ? '#05966920' : '#dc262620',
-            color: g.eps_beat ? '#059669' : '#dc2626',
-            border: '1px solid ' + (g.eps_beat ? '#05966940' : '#dc262640'),
-          }}>
-            {g.eps_beat ? '✓' : '✗'} EPS {g.eps_actual || ''}
-            {g.eps_estimate ? ' (est. ' + g.eps_estimate + ')' : ''}
-          </span>
-        )}
-        {g.revenue_beat != null && (
-          <span style={{
-            fontSize: 11, padding: '3px 8px', borderRadius: 4, fontWeight: 600,
-            background: g.revenue_beat ? '#05966920' : '#dc262620',
-            color: g.revenue_beat ? '#059669' : '#dc2626',
-            border: '1px solid ' + (g.revenue_beat ? '#05966940' : '#dc262640'),
-          }}>
-            {g.revenue_beat ? '✓' : '✗'} Revenue {g.revenue_actual || ''}
-            {g.revenue_estimate ? ' (est. ' + g.revenue_estimate + ')' : ''}
-          </span>
-        )}
-      </div>
-
-      {g.summary && (
-        <p style={{ fontSize: 12, color: '#3a3835', lineHeight: 1.6, margin: 0 }}>{g.summary}</p>
-      )}
-
-      {conf > 0 && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 11, color: '#6b6b65', flexShrink: 0 }}>Mgmt tone</span>
-          <div style={{ flex: 1, height: 4, background: '#e6e5df', borderRadius: 2, overflow: 'hidden' }}>
-            <div style={{ width: (((conf - 1) / 4) * 100) + '%', height: '100%', background: confColor, borderRadius: 2 }} />
-          </div>
-          <span style={{ fontSize: 10, color: confColor, fontFamily: 'var(--font-mono)' }}>{conf}/5</span>
-        </div>
-      )}
-
-      {g.key_metrics && g.key_metrics.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-          {g.key_metrics.map((m, i) => (
-            <span key={i} style={{
-              fontSize: 10, padding: '2px 6px', borderRadius: 4,
-              background: '#f0f4ff', color: '#1e40af', fontFamily: 'var(--font-mono)',
-            }}>{m}</span>
-          ))}
-        </div>
-      )}
-
-      {g.thesis_confirms && g.thesis_confirms.length > 0 && (
-        <div style={{ background: '#f0fdf420', border: '1px solid #bbf7d030', borderRadius: 5,
-          padding: '7px 10px', display: 'flex', flexDirection: 'column', gap: 3 }}>
-          {g.thesis_confirms.map((c, i) => (
-            <span key={i} style={{ fontSize: 11, color: '#166534', fontFamily: 'var(--font-mono)' }}>✓ {c}</span>
-          ))}
-        </div>
-      )}
-
-      {g.thesis_risks && g.thesis_risks.length > 0 && (
-        <div style={{ background: '#fef2f220', border: '1px solid #fecaca30', borderRadius: 5,
-          padding: '7px 10px', display: 'flex', flexDirection: 'column', gap: 3 }}>
-          {g.thesis_risks.map((r, i) => (
-            <span key={i} style={{ fontSize: 11, color: '#991b1b', fontFamily: 'var(--font-mono)' }}>⚠ {r}</span>
-          ))}
-        </div>
-      )}
-
-      <span style={{ fontSize: 10, color: '#9ca3af', fontFamily: 'var(--font-mono)' }}>
-        8-K filed {event.filedDate} · Visible for 90 days
-      </span>
-    </div>
-  );
-};
-
 // ── Detail Panel ──────────────────────────────────────────────────────────────
 const DetailPanel = ({ stock }) => {
   const fcfYieldPct = (stock.fcf_yield != null && stock.fcf_yield > 0) ? (stock.fcf_yield * 100) : null;
   const sbcPct = stock.sbc_to_market_cap;
   const filingScore = stock.filing_sentiment;
   const isETF = stock.instrument_type === 'ETF';
-
-  // Fetch earnings event and filing narrative from API when panel expands.
-  // Returns 204 (no content) when no data exists yet — that is normal.
-  const [earningsEvent,   setEarningsEvent]   = useState(null);
-  const [filingNarrative, setFilingNarrative] = useState(null);
-  const [cardsLoading,    setCardsLoading]    = useState(!isETF);
-
-  useEffect(() => {
-    if (isETF) { setCardsLoading(false); return; }
-    let cancelled = false;
-    setCardsLoading(true);
-    Promise.allSettled([
-      fetch('/api/portfolio/earnings-event/' + stock.symbol),
-      fetch('/api/portfolio/filing-narrative/' + stock.symbol),
-    ]).then(function(results) {
-      if (cancelled) return;
-      var earnRes = results[0], narRes = results[1];
-      if (earnRes.status === 'fulfilled' && earnRes.value.status === 200) {
-        earnRes.value.json().then(function(d) {
-          if (!cancelled && d && d.event) setEarningsEvent(d.event);
-        }).catch(function() {});
-      }
-      if (narRes.status === 'fulfilled' && narRes.value.status === 200) {
-        narRes.value.json().then(function(d) {
-          if (!cancelled && d && d.narrative) setFilingNarrative(d.narrative);
-        }).catch(function() {});
-      }
-      if (!cancelled) setCardsLoading(false);
-    });
-    return function() { cancelled = true; };
-  }, [stock.symbol, isETF]);
 
   const filingLabel = filingScore == null ? null
     : filingScore >= 7 ? 'Positive tone' : filingScore >= 5 ? 'Neutral tone'
@@ -733,6 +473,7 @@ const DetailPanel = ({ stock }) => {
   const gainAmt = gainPct != null
     ? (stock.current_price - stock.average_price) * stock.quantity
     : null;
+
   const showTaxNote = ['SELL', 'TRIM_25', 'REDUCE'].includes(stock.signal || '') && gainPct != null && gainPct > 20;
 
   return (
@@ -749,9 +490,9 @@ const DetailPanel = ({ stock }) => {
               <span style={{ fontSize: 14, flexShrink: 0 }}>🇮🇳</span>
               <div style={{ fontSize: 11, color: '#fbbf24', lineHeight: 1.5 }}>
                 <strong>Tax consideration:</strong>{' '}
-                This position has a <strong>{gainPct!.toFixed(0)}% unrealised gain</strong>{' '}
-                (~${Math.abs(gainAmt!).toFixed(0)} USD).{' '}
-                {gainPct! > 100
+                This position has a <strong>{gainPct.toFixed(0)}% unrealised gain</strong>{' '}
+                (~${Math.abs(gainAmt).toFixed(0)} USD).{' '}
+                {gainPct > 100
                   ? 'The system requires W4 confirmation before escalating to SELL on large winners.'
                   : 'Review whether the signal strength justifies the capital gains tax bill (20% LTCG / 30% STCG).'}
               </div>
@@ -798,15 +539,15 @@ const DetailPanel = ({ stock }) => {
                 <FundRow label="Gross Margin"
                   value={stock.gross_margin_pct != null ? `${stock.gross_margin_pct.toFixed(1)}%` : null}
                   hint="Pricing power indicator. Over 40% = strong moat."
-                  positive={stock.gross_margin_pct != null ? stock.gross_margin_pct > 40} />
+                  positive={stock.gross_margin_pct != null ? stock.gross_margin_pct > 40 : undefined} />
                 <FundRow label="Rev Growth (TTM)"
                   value={stock.revenue_growth_pct != null ? `${stock.revenue_growth_pct >= 0 ? '+' : ''}${stock.revenue_growth_pct.toFixed(1)}%` : null}
                   hint="Year-over-year revenue velocity"
-                  positive={stock.revenue_growth_pct != null ? stock.revenue_growth_pct > 10} />
+                  positive={stock.revenue_growth_pct != null ? stock.revenue_growth_pct > 10 : undefined} />
                 <FundRow label="Rev Growth (3Y CAGR)"
                   value={stock.revenue_growth_3y != null ? `${stock.revenue_growth_3y >= 0 ? '+' : ''}${stock.revenue_growth_3y.toFixed(1)}%` : null}
                   hint="3-year compounded growth — durability check."
-                  positive={stock.revenue_growth_3y != null ? stock.revenue_growth_3y > 10} />
+                  positive={stock.revenue_growth_3y != null ? stock.revenue_growth_3y > 10 : undefined} />
               </div>
             </div>
           )}
@@ -826,7 +567,7 @@ const DetailPanel = ({ stock }) => {
                 <FundRow label="EV/FCF"
                   value={stock.ev_fcf != null ? `${stock.ev_fcf.toFixed(1)}×` : null}
                   hint="Enterprise value vs free cash flow. Under 15× = cheap, 15-25× = fair, over 40× = expensive."
-                  positive={stock.ev_fcf != null ? stock.ev_fcf < 25} />
+                  positive={stock.ev_fcf != null ? stock.ev_fcf < 25 : undefined} />
               </div>
             </div>
           )}
@@ -921,27 +662,12 @@ const DetailPanel = ({ stock }) => {
             </div>
           )}
 
-          {/* Earnings Event Card — fetched from /api/portfolio/earnings-event/:symbol */}
-          {!isETF && earningsEvent && <EarningsCard event={earningsEvent} />}
-
-          {/* Filing Narrative Card — fetched from /api/portfolio/filing-narrative/:symbol */}
-          {!isETF && filingNarrative && <FilingNarrativeCard narrative={filingNarrative} />}
-
-          {/* Loading state for cards — only shows briefly on first expand */}
-          {!isETF && cardsLoading && (
-            <div style={{ padding: '8px 0', fontSize: 11, color: '#9ca3af', fontStyle: 'italic' }}>
-              Loading earnings and filing analysis…
-            </div>
+          {!isETF && (
+            <EarningsCard symbol={stock.symbol} />
           )}
 
-          {/* No cards found — show helpful message after loading */}
-          {!isETF && !cardsLoading && !earningsEvent && !filingNarrative && (
-            <div style={{ padding: '8px 12px', borderRadius: 6, background: '#ffffff08',
-              border: '1px solid #ffffff10', fontSize: 11, color: '#6b6b65' }}>
-              No earnings event or filing analysis available yet.
-              Run <code style={{ fontFamily: 'var(--font-mono)', color: '#9ca3af' }}>npm run earnings-event</code> and{' '}
-              <code style={{ fontFamily: 'var(--font-mono)', color: '#9ca3af' }}>npm run filing-narrative</code> to populate.
-            </div>
+          {!isETF && stock.filing_sentiment != null && (
+            <FilingNarrativeCard symbol={stock.symbol} filingForm={stock.filing_form} />
           )}
 
           {(isETF ? stock.score_tech != null : stock.score_fund != null) && (
@@ -965,15 +691,15 @@ const DetailPanel = ({ stock }) => {
                 {isETF ? (
                   <>
                     <FundRow label="Price Trend (65%)" value={stock.score_tech != null ? `${stock.score_tech.toFixed(1)}/10` : null}
-                      hint="SMA-200 trend + RSI momentum — primary signal for ETFs" positive={stock.score_tech != null ? stock.score_tech >= 6} />
+                      hint="SMA-200 trend + RSI momentum — primary signal for ETFs" positive={stock.score_tech != null ? stock.score_tech >= 6 : undefined} />
                     <FundRow label="News Sentiment (35%)" value={stock.score_news != null ? `${stock.score_news.toFixed(1)}/10` : null}
-                      hint="Sector/theme news — macro events relevant to the fund" positive={stock.score_news != null ? stock.score_news >= 6} />
+                      hint="Sector/theme news — macro events relevant to the fund" positive={stock.score_news != null ? stock.score_news >= 6 : undefined} />
                   </>
                 ) : (
                   <>
                     <FundRow label="Business Quality (60%)" value={stock.score_fund != null ? `${stock.score_fund.toFixed(1)}/10` : null}
                       hint="ROIC · SBC-adjusted FCF · Debt · Revenue growth · Competitive moat · FCF yield valuation"
-                      positive={stock.score_fund != null ? stock.score_fund >= 6} />
+                      positive={stock.score_fund != null ? stock.score_fund >= 6 : undefined} />
                     {fcfYieldPct != null && (() => {
                       const fy = (stock.fcf_yield != null ? stock.fcf_yield : 0);
                       const adj = fy > 0.06 ? +0.7 : fy > 0.04 ? +0.4 : fy > 0.025 ? +0.1 : fy > 0.015 ? 0 : fy > 0.008 ? -0.8 : -1.8;
@@ -986,14 +712,14 @@ const DetailPanel = ({ stock }) => {
                     })()}
                     <FundRow label="Insider Activity (15%)" value={stock.score_insider != null ? `${stock.score_insider.toFixed(1)}/10` : null}
                       hint="CEO/CFO open-market buys (3x weight). Excludes grants, withholding, option exercises."
-                      positive={stock.score_insider != null ? stock.score_insider >= 6} />
+                      positive={stock.score_insider != null ? stock.score_insider >= 6 : undefined} />
                     <FundRow label="Analyst Consensus (10%)" value={stock.score_rating != null ? `${stock.score_rating.toFixed(1)}/10` : null}
-                      hint="Buy/sell/hold consensus + upgrade/downgrade velocity" positive={stock.score_rating != null ? stock.score_rating >= 6} />
+                      hint="Buy/sell/hold consensus + upgrade/downgrade velocity" positive={stock.score_rating != null ? stock.score_rating >= 6 : undefined} />
                     <FundRow label="Price Trend (8%)" value={stock.score_tech != null ? `${stock.score_tech.toFixed(1)}/10` : null}
                       hint="SMA-200 trend (60%) + RSI (40%). Oversold quality stocks score high."
-                      positive={stock.score_tech != null ? stock.score_tech >= 6} />
+                      positive={stock.score_tech != null ? stock.score_tech >= 6 : undefined} />
                     <FundRow label="News Sentiment (7%)" value={stock.score_news != null ? `${stock.score_news.toFixed(1)}/10` : null}
-                      hint="3x daily news runs weighted by recency. Low weight intentional." positive={stock.score_news != null ? stock.score_news >= 6} />
+                      hint="3x daily news runs weighted by recency. Low weight intentional." positive={stock.score_news != null ? stock.score_news >= 6 : undefined} />
                   </>
                 )}
               </div>
@@ -1005,10 +731,209 @@ const DetailPanel = ({ stock }) => {
   );
 };
 
+
+// ── EarningsCard ──────────────────────────────────────────────────────────────
+// Lazy-fetches /api/portfolio/:symbol/earnings on first expand.
+// Shows next earnings date + last 4 quarters of EPS surprise vs consensus.
+const EarningsCard = ({ symbol }) => {
+  const [data, setData] = React.useState(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState(null);
+  const [expanded, setExpanded] = React.useState(false);
+
+  const load = useCallback(async () => {
+    if (data || loading) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/portfolio/${encodeURIComponent(symbol)}/earnings`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      setData(json);
+    } catch (e) {
+      setError(e.message || 'Failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [symbol, data, loading]);
+
+  const toggle = () => {
+    if (!expanded && !data) load();
+    setExpanded(v => !v);
+  };
+
+  const fmtDate = (s) => {
+    if (!s) return '—';
+    try { return new Date(s).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
+    catch { return s; }
+  };
+
+  const surpriseColor = (pct) => {
+    if (pct == null) return '#6b7280';
+    return pct >= 5 ? '#059669' : pct >= 0 ? '#6b7280' : pct >= -5 ? '#d97706' : '#dc2626';
+  };
+
+  return (
+    <div className="detail-section">
+      <div className="detail-section-head" style={{ cursor: 'pointer' }} onClick={toggle}>
+        <span className="detail-section-title">📅 Earnings</span>
+        <span style={{ fontSize: 10, color: '#6b7280', userSelect: 'none' }}>{expanded ? '▲ hide' : '▼ show'}</span>
+      </div>
+      {expanded && (
+        <div>
+          {loading && <p style={{ fontSize: 11, color: '#6b7280', margin: '4px 0' }}>Loading…</p>}
+          {error && <p style={{ fontSize: 11, color: '#dc2626', margin: '4px 0' }}>⚠ {error}</p>}
+          {data && !loading && (
+            <div className="detail-rows">
+              {data.next_earnings_date && (
+                <FundRow
+                  label="Next Earnings"
+                  value={`${fmtDate(data.next_earnings_date)}${data.next_earnings_timing ? ' · ' + data.next_earnings_timing : ''}`}
+                  hint="Confirmed or estimated report date from SEC / IR calendar"
+                />
+              )}
+              {data.history && data.history.length > 0 && (
+                <>
+                  <div style={{ fontSize: 10, color: '#6b7280', marginTop: 6, marginBottom: 2, fontWeight: 600 }}>
+                    EPS SURPRISE — LAST {data.history.length} QUARTERS
+                  </div>
+                  {data.history.map((q, i) => {
+                    const surprise = (q.eps_actual != null && q.eps_estimate != null && q.eps_estimate !== 0)
+                      ? ((q.eps_actual - q.eps_estimate) / Math.abs(q.eps_estimate)) * 100
+                      : null;
+                    return (
+                      <FundRow
+                        key={i}
+                        label={q.period || `Q${i + 1}`}
+                        value={
+                          q.eps_actual != null
+                            ? `$${q.eps_actual.toFixed(2)} actual${surprise != null ? ` (${surprise >= 0 ? '+' : ''}${surprise.toFixed(1)}%)` : ''}`
+                            : '—'
+                        }
+                        hint={q.eps_estimate != null ? `Consensus: $${q.eps_estimate.toFixed(2)}` : undefined}
+                        positive={surprise != null ? surprise >= 0 : undefined}
+                      />
+                    );
+                  })}
+                </>
+              )}
+              {!data.next_earnings_date && (!data.history || data.history.length === 0) && (
+                <p style={{ fontSize: 11, color: '#6b7280', margin: '4px 0' }}>No earnings data available yet.</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ── FilingNarrativeCard ────────────────────────────────────────────────────────
+// Lazy-fetches /api/portfolio/:symbol/filing-narrative on first expand.
+// Displays Gemini-generated MD&A summary + risk factor bullets + evidence/uncertainty flags.
+// Only rendered when filing_sentiment is present (Gemini has processed this ticker).
+// IFRS/foreign-filer note is shown for 20-F/6-K filers (MELI, SCCO).
+const FilingNarrativeCard = ({ symbol, filingForm }) => {
+  const [data, setData] = React.useState(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState(null);
+  const [expanded, setExpanded] = React.useState(false);
+
+  const isForeignFiler = filingForm === '20-F' || filingForm === '6-K';
+
+  const load = useCallback(async () => {
+    if (data || loading) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/portfolio/${encodeURIComponent(symbol)}/filing-narrative`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      setData(json);
+    } catch (e) {
+      setError(e.message || 'Failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [symbol, data, loading]);
+
+  const toggle = () => {
+    if (!expanded && !data) load();
+    setExpanded(v => !v);
+  };
+
+  return (
+    <div className="detail-section">
+      <div className="detail-section-head" style={{ cursor: 'pointer' }} onClick={toggle}>
+        <span className="detail-section-title">🤖 Filing Narrative (AI)</span>
+        <span style={{ fontSize: 10, color: '#6b7280', userSelect: 'none' }}>{expanded ? '▲ hide' : '▼ show'}</span>
+      </div>
+      {expanded && (
+        <div>
+          {isForeignFiler && (
+            <p style={{ fontSize: 10, color: '#d97706', margin: '2px 0 6px', lineHeight: 1.5 }}>
+              ⚠ Foreign filer ({filingForm}) — uses IFRS accounting. Narrative is extracted from 20-F/6-K, not 10-K/10-Q.
+            </p>
+          )}
+          {loading && <p style={{ fontSize: 11, color: '#6b7280', margin: '4px 0' }}>Loading…</p>}
+          {error && <p style={{ fontSize: 11, color: '#dc2626', margin: '4px 0' }}>⚠ {error}</p>}
+          {data && !loading && (
+            <div>
+              {/* AI display-only disclaimer */}
+              <p style={{ fontSize: 10, color: '#6b7280', fontStyle: 'italic', margin: '0 0 8px', lineHeight: 1.5 }}>
+                AI-interpreted summary of SEC filing text. Not a scoring input — display only.
+              </p>
+
+              {data.mda_summary && (
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 10, color: '#6b7280', fontWeight: 700, marginBottom: 4 }}>MD&A SUMMARY</div>
+                  <p style={{ fontSize: 11, color: '#d4d4d0', lineHeight: 1.6, margin: 0 }}>{data.mda_summary}</p>
+                </div>
+              )}
+
+              {data.risk_factors && data.risk_factors.length > 0 && (
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 10, color: '#6b7280', fontWeight: 700, marginBottom: 4 }}>KEY RISK FACTORS</div>
+                  <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11, color: '#d4d4d0', lineHeight: 1.6 }}>
+                    {data.risk_factors.map((r, i) => <li key={i}>{r}</li>)}
+                  </ul>
+                </div>
+              )}
+
+              {data.evidence_quotes && data.evidence_quotes.length > 0 && (
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 10, color: '#6b7280', fontWeight: 700, marginBottom: 4 }}>EVIDENCE FROM FILING</div>
+                  {data.evidence_quotes.map((q, i) => (
+                    <div key={i} style={{
+                      fontSize: 10, color: '#9ca3af', fontStyle: 'italic',
+                      borderLeft: '2px solid #374151', paddingLeft: 8, marginBottom: 4, lineHeight: 1.5,
+                    }}>"{q}"</div>
+                  ))}
+                </div>
+              )}
+
+              {data.uncertainty_flags && data.uncertainty_flags.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 10, color: '#d97706', fontWeight: 700, marginBottom: 4 }}>⚠ UNCERTAINTY FLAGS</div>
+                  <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11, color: '#d97706', lineHeight: 1.6 }}>
+                    {data.uncertainty_flags.map((f, i) => <li key={i}>{f}</li>)}
+                  </ul>
+                </div>
+              )}
+
+              {!data.mda_summary && !data.risk_factors?.length && (
+                <p style={{ fontSize: 11, color: '#6b7280', margin: '4px 0' }}>Narrative not yet generated for this ticker.</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ── Modal ─────────────────────────────────────────────────────────────────────
-const Modal<{
-  onClose: () => void; children; wide?;
-}> = ({ onClose, children, wide = false }) =>
+const Modal = ({ onClose, children, wide = false }) =>
   createPortal(
     <div className="modal-overlay" onMouseDown={onClose}>
       <div className={`modal-box${wide ? ' modal-news' : ''}`}
@@ -1135,7 +1060,6 @@ const EnhancedPortfolioDashboard = () => {
       if (sortBy === 'alpha') return (b.excess_return || 0) - (a.excess_return || 0);
       if (sortBy === 'symbol') return a.symbol.localeCompare(b.symbol);
       if (sortBy === 'pnl') {
-        // BUG FIX: Added missing * operator
         const pA = ((a.current_price || 0) - (a.average_price || 0)) * (a.quantity || 0);
         const pB = ((b.current_price || 0) - (b.average_price || 0)) * (b.quantity || 0);
         return pB - pA;
@@ -1146,7 +1070,6 @@ const EnhancedPortfolioDashboard = () => {
 
   const filteredPortfolio = getFilteredPortfolio();
 
-  // BUG FIX: Added missing * operators in all calculations below
   const totalVal = portfolio.reduce((s, x) => s + ((x.current_price || 0) * (x.quantity || 0)), 0);
   const totalCost = portfolio.reduce((s, x) => s + ((x.average_price || 0) * (x.quantity || 0)), 0);
   const totalPnL = totalVal - totalCost;
@@ -1158,7 +1081,6 @@ const EnhancedPortfolioDashboard = () => {
     return s + (x.current_price - prev) * x.quantity;
   }, 0);
 
-  // BUG FIX: Fixed x.current_pricex.quantity → x.current_price * x.quantity
   const totalDayPct = totalVal > 0
     ? portfolio.reduce((s, x) => {
       if (!x.current_price || x.change_percent == null || !x.quantity) return s;
@@ -1301,12 +1223,10 @@ const EnhancedPortfolioDashboard = () => {
                   const tv = (parseFloat(String(stock.current_price)) || 0) * (parseFloat(String(stock.quantity)) || 0);
                   const pd = ((stock.current_price || 0) - (stock.average_price || 0)) * (stock.quantity || 0);
                   const pp = stock.average_price > 0
-                    ? ((stock.current_price - stock.average_price) / stock.average_price) * 100;
+                    ? ((stock.current_price - stock.average_price) / stock.average_price) * 100
+                    : null;
                   const sCfg = sig(stock.signal);
-                  const rCfg = reg(stock.regime);
                   const isExpanded = expandedRow === stock.symbol;
-                  // showRegime removed — regime label no longer shown in Context column
-                  // to prevent double-signal confusion. Signal badge in Recommendation encodes regime.
 
                   // Weight assessment (REDESIGNED)
                   const score = (stock.latest_score != null ? stock.latest_score : 5);
@@ -1314,7 +1234,6 @@ const EnhancedPortfolioDashboard = () => {
                   const wa = getWeightAssessment(wPct, score, stock.signal || '', portfolio, mr, stock.instrument_type === 'ETF', stock.excess_return);
 
                   return (
-                    // BUG FIX: Key moved to fragment
                     <React.Fragment key={stock.id}>
                       <tr className={`row-${sCfg.tier}${isExpanded ? ' row-expanded' : ''}`}>
                         <td>
@@ -1538,7 +1457,7 @@ const EnhancedPortfolioDashboard = () => {
               <h2>Intelligence · {newsModalStock.symbol}</h2>
               <p className="modal-sub-label">
                 {sig(newsModalStock.signal).label}
-                {newsModalStock.excess_return != null ? (" · α " + fmtPct(newsModalStock.excess_return)) : ''}
+                {newsModalStock.excess_return != null ? (' · α ' + fmtPct(newsModalStock.excess_return)) : ''}
               </p>
             </div>
             <button className="btn-close" onClick={() => setNewsModalStock(null)}>✕</button>
