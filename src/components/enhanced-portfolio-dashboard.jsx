@@ -739,7 +739,7 @@ const EarningsCard = ({ symbol }) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/portfolio/${encodeURIComponent(symbol)}/earnings`);
+      const res = await fetch(`/api/portfolio/earnings-event/${encodeURIComponent(symbol)}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
       setData(json);
@@ -776,52 +776,71 @@ const EarningsCard = ({ symbol }) => {
         <div>
           {loading && <p style={{ fontSize: 11, color: '#6b7280', margin: '4px 0' }}>Loading…</p>}
           {error && <p style={{ fontSize: 11, color: '#dc2626', margin: '4px 0' }}>⚠ {error}</p>}
-          {data && !loading && (
-            <div className="detail-rows">
-              {data.next_earnings_date && (
-                <FundRow
-                  label="Next Earnings"
-                  value={`${fmtDate(data.next_earnings_date)}${data.next_earnings_timing ? ' · ' + data.next_earnings_timing : ''}`}
-                  hint="Confirmed or estimated report date from SEC / IR calendar"
-                />
-              )}
-              {data.history && data.history.length > 0 && (
-                <>
-                  <div style={{ fontSize: 10, color: '#6b7280', marginTop: 6, marginBottom: 2, fontWeight: 600 }}>
-                    EPS SURPRISE — LAST {data.history.length} QUARTERS
+          {data && !loading && (() => {
+            // Backend stores earnings_event_SYMBOL with camelCase fields.
+            // Normalise both snake_case (hypothetical future) and camelCase (actual).
+            const nextDate   = data.next_earnings_date || data.nextEarningsDate || null;
+            const timing     = data.next_earnings_timing || data.timing || null;
+            const history    = data.history || [];
+            const summary    = data.geminiSummary || data.summary || null;
+            const hasContent = nextDate || history.length > 0 || summary;
+            return (
+              <div className="detail-rows">
+                {nextDate && (
+                  <FundRow
+                    label="Next Earnings"
+                    value={`${fmtDate(nextDate)}${timing ? ' · ' + timing : ''}`}
+                    hint="Confirmed or estimated report date from SEC / IR calendar"
+                  />
+                )}
+                {history.length > 0 && (
+                  <>
+                    <div style={{ fontSize: 10, color: '#6b7280', marginTop: 6, marginBottom: 2, fontWeight: 600 }}>
+                      EPS SURPRISE — LAST {history.length} QUARTERS
+                    </div>
+                    {history.map((q, i) => {
+                      const surprise = (q.eps_actual != null && q.eps_estimate != null && q.eps_estimate !== 0)
+                        ? ((q.eps_actual - q.eps_estimate) / Math.abs(q.eps_estimate)) * 100
+                        : null;
+                      return (
+                        <FundRow
+                          key={i}
+                          label={q.period || `Q${i + 1}`}
+                          value={
+                            q.eps_actual != null ? (
+                              <span>
+                                ${q.eps_actual.toFixed(2)}
+                                {surprise != null && (
+                                  <span style={{ color: surpriseColor(surprise), marginLeft: 4 }}>
+                                    ({surprise >= 0 ? '+' : ''}{surprise.toFixed(1)}%)
+                                  </span>
+                                )}
+                              </span>
+                            ) : '—'
+                          }
+                          hint={q.eps_estimate != null ? `Consensus: $${q.eps_estimate.toFixed(2)}` : undefined}
+                          positive={surprise != null ? surprise >= 0 : undefined}
+                        />
+                      );
+                    })}
+                  </>
+                )}
+                {summary && (
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ fontSize: 10, color: '#6b7280', fontWeight: 700, marginBottom: 4 }}>
+                      EARNINGS SUMMARY (AI)
+                    </div>
+                    <p style={{ fontSize: 11, color: '#d4d4d0', lineHeight: 1.6, margin: 0 }}>{summary}</p>
                   </div>
-                  {data.history.map((q, i) => {
-                    const surprise = (q.eps_actual != null && q.eps_estimate != null && q.eps_estimate !== 0)
-                      ? ((q.eps_actual - q.eps_estimate) / Math.abs(q.eps_estimate)) * 100
-                      : null;
-                    return (
-                      <FundRow
-                        key={i}
-                        label={q.period || `Q${i + 1}`}
-                        value={
-                          q.eps_actual != null ? (
-                            <span>
-                              ${q.eps_actual.toFixed(2)}
-                              {surprise != null && (
-                                <span style={{ color: surpriseColor(surprise), marginLeft: 4 }}>
-                                  ({surprise >= 0 ? '+' : ''}{surprise.toFixed(1)}%)
-                                </span>
-                              )}
-                            </span>
-                          ) : '—'
-                        }
-                        hint={q.eps_estimate != null ? `Consensus: $${q.eps_estimate.toFixed(2)}` : undefined}
-                        positive={surprise != null ? surprise >= 0 : undefined}
-                      />
-                    );
-                  })}
-                </>
-              )}
-              {!data.next_earnings_date && (!data.history || data.history.length === 0) && (
-                <p style={{ fontSize: 11, color: '#6b7280', margin: '4px 0' }}>No earnings data available yet.</p>
-              )}
-            </div>
-          )}
+                )}
+                {!hasContent && (
+                  <p style={{ fontSize: 11, color: '#6b7280', margin: '4px 0' }}>
+                    No earnings data available yet for this ticker.
+                  </p>
+                )}
+              </div>
+            );
+          })()}
         </div>
       )}
     </div>
