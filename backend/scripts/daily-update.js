@@ -1721,14 +1721,20 @@ async function updateMarketData() {
         // B12 FIX: was intradayNewsScore ?? 5.0 — coercing null to 5.0 before passing
         // caused the log to print "Using intraday news score: 5.00" even when no news was
         // logged. Now null is passed and calculateScore defaults to 5.0 internally.
+        // TDZ FIX: maxDrawdown was declared AFTER calculateScore() used it as an arg.
+// JavaScript const has temporal dead zone — accessing before declaration throws
+// ReferenceError and crashes the entire stock loop. Moved here so it is
+// available at the call site. Also removed from the calculateScore arg list:
+// calculateScore() has no 12th param — it was being silently discarded anyway.
+const maxDrawdown   = technicals ? computeMaxDrawdown(technicals.historyAsc) : null;
+
         const scoreObj = analyzer.calculateScore(
           priceData, fundamentals, technicals,
           ratings, null, insiderData, capexException,
           intradayNewsScore,   // null when no intraday news — calculateScore handles it
           instrumentIsETF,
           instrumentIsETF ? (profileExpenseRatio ?? null) : null,
-          recent8K,            // 8-K/6-K event for recency-weighted score adjustment
-          maxDrawdown          // B04-ZA: wire into techScore drawdown penalty
+          recent8K             // 8-K/6-K event for recency-weighted score adjustment
         );
 
         // B5 FIX: Capture raw GAAP FCF margin BEFORE mutating fundamentals.fcfMargin.
@@ -1739,8 +1745,6 @@ async function updateMarketData() {
         if (fundamentals && scoreObj._adjFcfMargin !== null) {
           fundamentals.fcfMargin = scoreObj._adjFcfMargin; // adjusted — used by score
         }
-
-        const maxDrawdown   = technicals ? computeMaxDrawdown(technicals.historyAsc) : null;
         const realizedVol   = technicals ? quantEngine.computeVolatility(technicals.historyAsc) : null;
         const momentumLabel = technicals ? quantEngine.evaluateMomentum(technicals.historyAsc) : 'NEUTRAL';
 
