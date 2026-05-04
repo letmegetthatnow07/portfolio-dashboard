@@ -82,15 +82,8 @@ const SIGNAL_CFG = {
   },
 };
 
-const REGIME_CFG = {
-  MARKET_NOISE: { color: '#9ca3af', label: 'Market Noise' },
-  WATCH: { color: '#d97706', label: 'Watch' },
-  IDIOSYNCRATIC_DECAY: { color: '#dc2626', label: 'Idiosyncratic Decay' },
-  INSUFFICIENT_DATA: { color: '#9ca3af', label: 'Insufficient Data' },
-};
 
 const sig = (s) => SIGNAL_CFG[s || ''] || { color: '#6b7280', label: s || 'Pending', tier: 'flat', action: '', why: '' };
-const reg = (r) => REGIME_CFG[r || ''] || { color: '#6b7280', label: r || 'Normal' };
 
 // ── Formatting Utilities ──────────────────────────────────────────────────────
 const fmtUSD = (n, compact = false) => {
@@ -806,9 +799,16 @@ const EarningsCard = ({ symbol }) => {
                         key={i}
                         label={q.period || `Q${i + 1}`}
                         value={
-                          q.eps_actual != null
-                            ? `$${q.eps_actual.toFixed(2)} actual${surprise != null ? ` (${surprise >= 0 ? '+' : ''}${surprise.toFixed(1)}%)` : ''}`
-                            : '—'
+                          q.eps_actual != null ? (
+                            <span>
+                              ${q.eps_actual.toFixed(2)}
+                              {surprise != null && (
+                                <span style={{ color: surpriseColor(surprise), marginLeft: 4 }}>
+                                  ({surprise >= 0 ? '+' : ''}{surprise.toFixed(1)}%)
+                                </span>
+                              )}
+                            </span>
+                          ) : '—'
                         }
                         hint={q.eps_estimate != null ? `Consensus: $${q.eps_estimate.toFixed(2)}` : undefined}
                         positive={surprise != null ? surprise >= 0 : undefined}
