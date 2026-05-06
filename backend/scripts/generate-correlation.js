@@ -33,9 +33,16 @@ require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 const { createClient: createRedisClient }    = require('redis');
 const { createClient: createSupabaseClient } = require('@supabase/supabase-js');
 
+// NODE 20 FIX: @supabase/realtime-js v2 throws on startup without a WebSocket
+// implementation on Node < 22. 'ws' is a direct dep of @supabase/realtime-js
+// so it is always present. This script only uses HTTP REST (.from(), .rpc()) —
+// never realtime subscriptions — so this has zero effect on runtime behaviour.
+const _ws = require('ws');
+
 const supabase = createSupabaseClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
+  process.env.SUPABASE_SERVICE_KEY,
+  { realtime: { transport: _ws } }
 );
 
 // ── Normalise any date string to ISO YYYY-MM-DD ──────────────────────────────
