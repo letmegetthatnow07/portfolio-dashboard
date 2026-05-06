@@ -39,9 +39,11 @@ const RISK_HARD_CAP     =  8000; // Risk Factors appended after MD&A
 
 // ─── CLIENTS ──────────────────────────────────────────────────────────────────
 
+jsconst _ws = require('ws');
 const supabase = createSupabaseClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
+  process.env.SUPABASE_SERVICE_KEY,
+  { realtime: { transport: _ws } }   // ← add this line
 );
 
 const _cikCache = {};
