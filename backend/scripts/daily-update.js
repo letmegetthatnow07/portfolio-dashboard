@@ -212,10 +212,11 @@ async function checkFmpIsEtf(symbol) {
 
 // ─── CLIENTS ──────────────────────────────────────────────────────────────────
 
+const _ws = require('ws'); // Node 20: ws is a dep of @supabase/realtime-js, always present
 const supabase = createSupabaseClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_KEY,
-  { realtime: { transport: require('ws') } }
+  { realtime: { transport: _ws } }
 );
 
 let redisClient = null;
