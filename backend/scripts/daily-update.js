@@ -214,7 +214,8 @@ async function checkFmpIsEtf(symbol) {
 
 const supabase = createSupabaseClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
+  process.env.SUPABASE_SERVICE_KEY,
+  { realtime: { transport: _ws } } // Node 20: pass ws transport to avoid WebSocket crash
 );
 
 let redisClient = null;
