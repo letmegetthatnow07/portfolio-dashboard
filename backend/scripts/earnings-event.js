@@ -73,9 +73,11 @@ async function checkMarketOpen() {
 
 // ─── CLIENTS ──────────────────────────────────────────────────────────────────
 
+jsconst _ws = require('ws');
 const supabase = createSupabaseClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
+  process.env.SUPABASE_SERVICE_KEY,
+  { realtime: { transport: _ws } }   // ← add this line
 );
 
 // ─── STEP 1: EARNINGS CALENDAR ────────────────────────────────────────────────
