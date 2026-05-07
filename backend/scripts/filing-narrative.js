@@ -39,11 +39,17 @@ const RISK_HARD_CAP     =  8000; // Risk Factors appended after MD&A
 
 // ─── CLIENTS ──────────────────────────────────────────────────────────────────
 
-jsconst _ws = require('ws');
+// NODE 20 FIX: @supabase/realtime-js v2 throws on startup without a WebSocket
+// implementation on Node < 22. 'ws' is a direct dep of @supabase/realtime-js
+// so it is always present. This script only uses HTTP REST (.from(), .rpc()) —
+// never realtime subscriptions — so this has zero effect on runtime behaviour.
+// This breakage was introduced by a supabase-js package update, not a code change.
+const _ws = require('ws');
+
 const supabase = createSupabaseClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_KEY,
-  { realtime: { transport: _ws } }   // ← add this line
+  { realtime: { transport: _ws } }
 );
 
 const _cikCache = {};
@@ -443,7 +449,7 @@ const GEMINI_SCHEMA = {
     has_regulatory_moat:    { type: 'boolean' },
     regulatory_moat_type:   { type: 'string' },
     regulatory_moat_strength: { type: 'integer', minimum: 0, maximum: 5 },
-    dual_class_warning:     { type: 'string' },   // nullable via empty string — Gemini doesn't support nullable:true in schema
+    dual_class_warning:     { type: 'string' },
     evidence_quotes:        { type: 'array', items: { type: 'string' }, maxItems: 3 },
     uncertainty_flags:      { type: 'array', items: { type: 'string' }, maxItems: 3 },
   },
@@ -492,8 +498,7 @@ async function analyseFilingWithGemini(symbol, stock, filingText, filingMeta) {
       generationConfig: {
         responseMimeType: 'application/json',
         responseSchema:   GEMINI_SCHEMA,
-        temperature:      0.1,   // slightly above 0 — pure 0 + schema causes 400 on some inputs
-        // topP removed — conflicts with responseSchema in Gemini 2.5 Flash
+        temperature:      0.1,
       },
     }, 3);
   } catch (e) {
@@ -518,13 +523,11 @@ async function analyseFilingWithGemini(symbol, stock, filingText, filingMeta) {
     return null;
   }
 
-  // Sanity guard
   if (!parsed?.summary || !Array.isArray(parsed?.key_changes)) {
     console.error(`  [Gemini] ${symbol}: schema mismatch — missing summary or key_changes`);
     return null;
   }
 
-  // Warn if summary has no number — common hallucination signal
   if (!/\d/.test(parsed.summary ?? '')) {
     console.warn(`  [Gemini] ${symbol}: summary contains no number — possible citation failure`);
   }
@@ -534,8 +537,6 @@ async function analyseFilingWithGemini(symbol, stock, filingText, filingMeta) {
 }
 
 // ─── SAVE TO REDIS ────────────────────────────────────────────────────────────
-// Payload write first (data safe), accession marker last (marks filing as done).
-// If accession marker write fails, next run re-processes but gets same result.
 
 async function save(symbol, filingMeta, geminiResult) {
   const payload = {
@@ -574,14 +575,13 @@ async function save(symbol, filingMeta, geminiResult) {
 }
 
 // ─── SUPABASE AUDIT LOG ───────────────────────────────────────────────────────
-// Optional — failure does not block the core pipeline.
 
 async function logToSupabase(symbol, filingMeta, geminiResult) {
   try {
     const { error } = await supabase.from('earnings_events').insert({
       symbol,
       event_type:  'filing_narrative',
-      event_date:  filingMeta.filed,   // matches migrations.sql column name
+      event_date:  filingMeta.filed,
       payload: {
         form:            filingMeta.form,
         period:          filingMeta.period,
@@ -592,7 +592,6 @@ async function logToSupabase(symbol, filingMeta, geminiResult) {
       },
     });
     if (error) {
-      // Detailed error logging — show column name to catch schema mismatches quickly
       console.warn(`  [Supabase] ${symbol}: audit log failed — ${error.message} (code: ${error.code})`);
       if (error.message?.includes('column')) {
         console.warn(`  [Supabase] Note: run migrations.sql to ensure earnings_events has event_date column`);
@@ -604,12 +603,8 @@ async function logToSupabase(symbol, filingMeta, geminiResult) {
 }
 
 // ─── MARKET OPEN CHECK ────────────────────────────────────────────────────────
-// Reads the Polygon market status written by daily-update.js (12h TTL).
-// FORCE_RUN=true (set by pipeline.yml on workflow_dispatch) bypasses this gate
-// so manual runs work on weekends/holidays — matching master and news behaviour.
 
 async function checkMarketOpen() {
-  // Manual runs always bypass — FORCE_RUN set by the YAML on workflow_dispatch
   if (process.env.FORCE_RUN === 'true') {
     console.log('  [Market] FORCE_RUN=true — bypassing market-closed check');
     return true;
@@ -629,7 +624,7 @@ async function checkMarketOpen() {
     return true;
   } catch (e) {
     console.warn(`  [Market] Redis check failed (${e.message}) — failing open`);
-    return true; // prefer running over silent skip
+    return true;
   }
 }
 
@@ -651,7 +646,6 @@ async function main() {
     process.exit(0);
   }
 
-  // Load portfolio from Redis
   let portfolio;
   const portfolioClient = createRedisClient({ url: process.env.REDIS_URL });
   portfolioClient.on('error', err => console.error(`[Redis] portfolio: ${err.message}`));
@@ -668,7 +662,6 @@ async function main() {
     process.exit(1);
   }
 
-  // Exclude ETFs — they don't file 10-K/10-Q with MD&A
   const stocks = (portfolio.stocks || []).filter(
     s => s.type !== 'ETF' && s.instrument_type !== 'ETF'
   );
@@ -676,8 +669,8 @@ async function main() {
   console.log(`Stocks (excl. ETFs): ${stocks.map(s => s.symbol).join(', ')}\n`);
 
   let processed = 0;
-  let skipped   = 0;  // already processed this filing
-  let failed    = 0;  // fetch/parse/Gemini/save errors
+  let skipped   = 0;
+  let failed    = 0;
 
   for (const stock of stocks) {
     const symbol = String(stock.symbol || '').toUpperCase();
@@ -694,7 +687,6 @@ async function main() {
       continue;
     }
 
-    // result.status === 'ok'
     const geminiResult = await analyseFilingWithGemini(symbol, stock, result.text, result);
 
     if (!geminiResult) { failed++; continue; }
@@ -705,7 +697,6 @@ async function main() {
     await logToSupabase(symbol, result, geminiResult);
     processed++;
 
-    // Pace requests — SEC 10 req/s + Gemini free tier ~15 RPM
     await sleep(1500);
   }
 
