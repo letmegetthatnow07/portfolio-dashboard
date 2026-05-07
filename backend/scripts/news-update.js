@@ -25,16 +25,27 @@
 const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 
-const axios    = require('axios');
-const logger   = require('../lib/logger');
+const axios        = require('axios');
+const logger       = require('../lib/logger');
 const newsAnalyzer = require('../lib/advancedNewsAnalyzer');
 
 const { createClient: createRedisClient }    = require('redis');
 const { createClient: createSupabaseClient } = require('@supabase/supabase-js');
 
+// NODE 20 FIX: @supabase/realtime-js v2 requires a WebSocket implementation on
+// Node < 22 (which lacks native WebSocket). The 'ws' package is a direct
+// dependency of @supabase/realtime-js so it is always present — no package.json
+// change needed. This was a silent breakage introduced by a supabase-js update;
+// the script itself did not change but the library now throws on startup without
+// this option. Passing { realtime: { transport: _ws } } satisfies the check.
+// These backend scripts never use realtime subscriptions — only HTTP REST calls
+// (.from().select(), .rpc()) — so this has zero effect on runtime behaviour.
+const _ws = require('ws');
+
 const supabase = createSupabaseClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
+  process.env.SUPABASE_SERVICE_KEY,
+  { realtime: { transport: _ws } }
 );
 
 const TODAY = new Date().toISOString().split('T')[0];
@@ -167,11 +178,11 @@ function scoreNewsWithRecency(rawNews, analyzedNews) {
 function computeComposite(breakdown, newsScore) {
   const { fund = 5, tech = 5, rating = 5, insider = 5 } = breakdown;
   return Math.max(0, Math.min(10,
-    (fund   * 0.29) +
-    (tech   * 0.16) +
-    (rating * 0.20) +
+    (fund      * 0.29) +
+    (tech      * 0.16) +
+    (rating    * 0.20) +
     (newsScore * 0.15) +
-    (insider * 0.20)
+    (insider   * 0.20)
   ));
 }
 
@@ -259,7 +270,7 @@ async function updateNewsOnly() {
       // ── Update Redis frontend cache ──────────────────────────────────────────
       // Recompute composite using frozen master scores + new news score
       if (redisClient && stock.score_breakdown) {
-        const newTotal    = computeComposite(stock.score_breakdown, newsScore);
+        const newTotal     = computeComposite(stock.score_breakdown, newsScore);
         const roundedTotal = Math.round(newTotal * 10) / 10;
 
         stock.score_breakdown.news = newsScore;
