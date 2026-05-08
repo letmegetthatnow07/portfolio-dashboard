@@ -394,23 +394,35 @@ const MoatRing = ({ score }) => {
 };
 
 const CascadePips = ({ w1: _w1, w2, w3, w4 }) => {
-  if (!w2 && !w3 && !w4) return null;
+  // Always visible — grey = clear, coloured = triggered.
+  // Shows the regime health at a glance regardless of signal state.
   const pips = [
-    { k: 'W2', on: w2, col: '#d97706', tip: 'W2: 3-week score decline — monitor.' },
-    { k: 'W3', on: w3, col: '#dc2626', tip: 'W3: 3-month structural decline. Review thesis.' },
-    { k: 'W4', on: w4, col: '#7f1d1d', tip: 'W4: 12-month sustained deterioration. Strongest sell signal.' },
+    { k: 'W2', on: w2, col: '#d97706', tip: w2 ? 'W2 TRIGGERED: 3-week score decline — monitor closely.' : 'W2 clear: no 3-week score deterioration.' },
+    { k: 'W3', on: w3, col: '#dc2626', tip: w3 ? 'W3 TRIGGERED: 3-month structural decline. Review thesis.' : 'W3 clear: no 3-month structural deterioration.' },
+    { k: 'W4', on: w4, col: '#7f1d1d', tip: w4 ? 'W4 TRIGGERED: 12-month sustained deterioration. Strongest sell signal.' : 'W4 clear: no 12-month sustained deterioration.' },
   ];
   const activeCount = pips.filter(p => p.on).length;
-  const severity = activeCount >= 3 ? 'Serious (W2+W3+W4)' : activeCount === 2 ? 'Elevated' : 'Watch';
+  const allClear = activeCount === 0;
+  const severity = activeCount >= 3 ? 'Serious (W2+W3+W4)' : activeCount === 2 ? 'Elevated' : activeCount === 1 ? 'Watch' : 'All clear';
   return (
-    <div className="cascade-pips" title={`Decay cascade — ${severity}`}>
+    <div className="cascade-pips" title={`Decay cascade — ${severity}`} style={{ marginTop: 4 }}>
       {pips.map(p => (
-        <span key={p.k} className={`pip ${p.on ? 'pip-on' : 'pip-off'}`}
-          style={p.on ? { background: p.col, borderColor: p.col } : {}}
+        <span key={p.k}
+          style={{
+            display: 'inline-block', fontSize: 9, fontWeight: 700, padding: '1px 5px',
+            borderRadius: 3, marginRight: 2, border: '1px solid',
+            background:   p.on ? p.col         : 'transparent',
+            borderColor:  p.on ? p.col         : '#374151',
+            color:        p.on ? '#fff'         : '#4b5563',
+            opacity:      p.on ? 1              : 0.65,
+          }}
           title={p.tip}>
-          {p.k}
+          {p.k}{p.on ? ' ✓' : ''}
         </span>
       ))}
+      {allClear && (
+        <span style={{ fontSize: 9, color: '#059669', marginLeft: 2, fontWeight: 600 }}>✓ clean</span>
+      )}
     </div>
   );
 };
@@ -524,14 +536,10 @@ const DetailPanel = ({ stock }) => {
                   {stock.moat_score.toFixed(1)}/10
                 </span>
               </div>
-              <p style={{ fontSize: 11, color: '#6b6b65', margin: 0 }}>
-                How durable and defensible is this business? Wide moat = pricing power + persistent profits.{' '}
-                <span style={{ color: '#2563eb' }}>This score contributes 20% to the overall Quality Score.</span>
-              </p>
               <div className="detail-rows">
                 <FundRow label="Gross Margin"
                   value={stock.gross_margin_pct != null ? `${stock.gross_margin_pct.toFixed(1)}%` : null}
-                  hint="Pricing power indicator. Over 40% = strong moat."
+                  hint="Pricing power proxy. >40% = strong moat, >60% = exceptional (ROIC-generative)."
                   positive={stock.gross_margin_pct != null ? stock.gross_margin_pct > 40 : undefined} />
                 <FundRow label="Rev Growth (TTM)"
                   value={stock.revenue_growth_pct != null ? `${stock.revenue_growth_pct >= 0 ? '+' : ''}${stock.revenue_growth_pct.toFixed(1)}%` : null}
@@ -539,8 +547,18 @@ const DetailPanel = ({ stock }) => {
                   positive={stock.revenue_growth_pct != null ? stock.revenue_growth_pct > 10 : undefined} />
                 <FundRow label="Rev Growth (3Y CAGR)"
                   value={stock.revenue_growth_3y != null ? `${stock.revenue_growth_3y >= 0 ? '+' : ''}${stock.revenue_growth_3y.toFixed(1)}%` : null}
-                  hint="3-year compounded growth — durability check."
+                  hint="3-year compounded growth — durability signal. 3Y diverging from TTM = investigate."
                   positive={stock.revenue_growth_3y != null ? stock.revenue_growth_3y > 10 : undefined} />
+                {stock.hypergrowth_mode && (
+                  <FundRow label="Scoring Mode" value="⚡ Hypergrowth"
+                    hint="FCF weight reduced to 15%, revenue growth raised to 55%. Applied when CAGR >20% + GM >60%."
+                    positive={true} />
+                )}
+                {stock.capex_exception && (
+                  <FundRow label="CapEx Exception" value="✓ Strategic CapEx"
+                    hint="FCF penalty forgiven — company investing heavily for future growth (verified via SEC EDGAR)."
+                    positive={true} />
+                )}
               </div>
             </div>
           )}
@@ -564,6 +582,61 @@ const DetailPanel = ({ stock }) => {
               </div>
             </div>
           )}
+
+          {!isETF && (stock.momentum_label != null || stock.sma200 != null || stock.realized_vol != null) && (() => {
+            const price = stock.current_price;
+            const aboveSma50  = price != null && stock.sma50  != null ? price > stock.sma50  : null;
+            const aboveSma200 = price != null && stock.sma200 != null ? price > stock.sma200 : null;
+            const smaCross    = stock.sma50 != null && stock.sma200 != null
+              ? (stock.sma50 > stock.sma200 ? 'Golden cross (bullish)' : 'Death cross (bearish)')
+              : null;
+            const volLabel    = stock.realized_vol != null
+              ? (stock.realized_vol < 0.20 ? 'Low' : stock.realized_vol < 0.35 ? 'Normal' : stock.realized_vol < 0.50 ? 'Elevated' : 'High')
+              : null;
+            const momColor    = stock.momentum_label === 'STRONG_UP' ? '#059669'
+                              : stock.momentum_label === 'UP'         ? '#10b981'
+                              : stock.momentum_label === 'DOWN'       ? '#dc2626'
+                              : stock.momentum_label === 'STRONG_DOWN'? '#7f1d1d'
+                              : '#6b7280';
+            return (
+              <div className="detail-section">
+                <div className="detail-section-head">
+                  <span className="detail-section-title">📈 Technical</span>
+                </div>
+                <div className="detail-rows">
+                  {stock.momentum_label && (
+                    <FundRow label="Momentum"
+                      value={<span style={{ color: momColor }}>{stock.momentum_label.replace('_', ' ')}</span>}
+                      hint="Price momentum label from 21/63-day return analysis" />
+                  )}
+                  {stock.sma200 != null && price != null && (
+                    <FundRow label="vs SMA-200"
+                      value={`${aboveSma200 ? '▲ Above' : '▼ Below'} ($${stock.sma200.toFixed(0)})`}
+                      hint="Price vs 200-day moving average. Above = uptrend, below = downtrend."
+                      positive={aboveSma200 === true} />
+                  )}
+                  {stock.sma50 != null && price != null && (
+                    <FundRow label="vs SMA-50"
+                      value={`${aboveSma50 ? '▲ Above' : '▼ Below'} ($${stock.sma50.toFixed(0)})`}
+                      hint="Price vs 50-day moving average — shorter-term trend signal."
+                      positive={aboveSma50 === true} />
+                  )}
+                  {smaCross && (
+                    <FundRow label="SMA Cross"
+                      value={smaCross}
+                      hint="SMA-50 vs SMA-200 crossover status"
+                      positive={smaCross.startsWith('Golden')} />
+                  )}
+                  {stock.realized_vol != null && (
+                    <FundRow label="Realised Volatility"
+                      value={`${(stock.realized_vol * 100).toFixed(0)}% ann · ${volLabel}`}
+                      hint="Annualised daily volatility. High vol = wider price swings, harder to size correctly."
+                      positive={stock.realized_vol < 0.35} />
+                  )}
+                </div>
+              </div>
+            );
+          })()}
 
           {!isETF && (stock.max_drawdown != null || sbcPct != null || stock.earnings_quality_flag || stock.debt_maturity_flag || stock.cyclical_peak_flag) && (
             <div className="detail-section">
@@ -634,8 +707,13 @@ const DetailPanel = ({ stock }) => {
               <div className="detail-rows">
                 <FundRow label={`${stock.filing_form || 'Filing'} Language`}
                   value={filingLabel}
-                  hint="Language analysis of most recent SEC filing."
+                  hint="Sentiment analysis of most recent SEC filing (positive/negative word ratio)."
                   positive={filingScore >= 6} />
+                {stock.accounting_standard === 'IFRS' && (
+                  <FundRow label="Accounting Standard" value="⚠ IFRS (foreign filer)"
+                    hint="This company files under IFRS (20-F/6-K), not US GAAP. Margin comparisons vs domestic peers may be misleading."
+                    positive={false} />
+                )}
               </div>
             </div>
           )}
@@ -643,14 +721,23 @@ const DetailPanel = ({ stock }) => {
           {!isETF && stock.event_8k && (
             <div className="detail-section">
               <div className="detail-section-head">
-                <span className="detail-section-title">📋 Recent 8-K</span>
+                <span className="detail-section-title">📋 Recent 8-K{stock.event_8k_amendment ? '/A' : ''}</span>
               </div>
               <div className="detail-rows">
                 <FundRow label="Event"
                   value={`${stock.event_8k_icon || ''} ${stock.event_8k}`}
-                  hint="Material SEC filing within the last 60 days"
+                  hint={`Material SEC filing within the last 60 days · Item ${stock.event_8k_item || '—'}`}
                   positive={stock.event_8k_hint === 'positive'} />
-                {stock.event_8k_date && <FundRow label="Filed" value={stock.event_8k_date} />}
+                {stock.event_8k_date && (
+                  <FundRow label="Filed"
+                    value={`${stock.event_8k_date}${stock.event_8k_days_old != null ? ` (${Math.round(stock.event_8k_days_old)}d ago)` : ''}`} />
+                )}
+                {stock.event_8k_score_adj != null && stock.event_8k_score_adj !== 0 && (
+                  <FundRow label="Score Impact"
+                    value={`${stock.event_8k_score_adj > 0 ? '+' : ''}${stock.event_8k_score_adj.toFixed(1)} pts (decayed by age)`}
+                    hint="Recency-decayed score adjustment applied to news component. Decays to 15% at 60 days."
+                    positive={stock.event_8k_score_adj > 0} />
+                )}
               </div>
             </div>
           )}
@@ -663,24 +750,69 @@ const DetailPanel = ({ stock }) => {
             <FilingNarrativeCard symbol={stock.symbol} filingForm={stock.filing_form} />
           )}
 
-          {(isETF ? stock.score_tech != null : stock.score_fund != null) && (
-            <div className="detail-section">
-              <div className="detail-section-head">
-                <span className="detail-section-title">📐 Score Breakdown</span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  {stock.hypergrowth_mode && (
-                    <span style={{
-                      fontSize: 10, padding: '2px 6px', borderRadius: 4,
-                      background: '#7c3aed18', color: '#7c3aed',
-                      border: '1px solid #7c3aed40', fontWeight: 600,
-                    }}>⚡ Hypergrowth</span>
-                  )}
-                  <span className="detail-section-score" style={{ color: scoreCol((stock.latest_score != null ? stock.latest_score : null)) }}>
-                    {stock.latest_score != null ? stock.latest_score.toFixed(1) : '—'}/10
-                  </span>
+          {(isETF ? stock.score_tech != null : stock.score_fund != null) && (() => {
+            const w2 = stock.w2_confirmed, w3 = stock.w3_confirmed, w4 = stock.w4_confirmed;
+            const activeW = [w2 && 'W2', w3 && 'W3', w4 && 'W4'].filter(Boolean);
+            const regimeColor = stock.regime === 'IDIOSYNCRATIC_DECAY' ? '#dc2626'
+                              : stock.regime === 'WATCH'                ? '#d97706'
+                              : '#059669';
+            const regimeLabel = stock.regime === 'IDIOSYNCRATIC_DECAY' ? 'Idiosyncratic Decay'
+                              : stock.regime === 'WATCH'                ? 'Watch'
+                              : stock.regime === 'MARKET_NOISE'         ? 'Market Noise'
+                              : stock.regime || 'Normal';
+            return (
+              <div className="detail-section">
+                <div className="detail-section-head">
+                  <span className="detail-section-title">📐 Score Breakdown</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {stock.hypergrowth_mode && (
+                      <span style={{
+                        fontSize: 10, padding: '2px 6px', borderRadius: 4,
+                        background: '#7c3aed18', color: '#7c3aed',
+                        border: '1px solid #7c3aed40', fontWeight: 600,
+                      }}>⚡ Hypergrowth</span>
+                    )}
+                    <span className="detail-section-score" style={{ color: scoreCol((stock.latest_score != null ? stock.latest_score : null)) }}>
+                      {stock.latest_score != null ? stock.latest_score.toFixed(1) : '—'}/10
+                    </span>
+                  </div>
                 </div>
-              </div>
-              <div className="detail-rows">
+                <div className="detail-rows">
+                  {stock.regime && (
+                    <FundRow label="Market Regime"
+                      value={<span style={{ color: regimeColor, fontWeight: 600 }}>{regimeLabel}</span>}
+                      hint="MARKET_NOISE = SPY-driven move, not company-specific. IDIOSYNCRATIC_DECAY = company underperforming beyond market. WATCH = borderline." />
+                  )}
+                  {(w2 != null || w3 != null || w4 != null) && (
+                    <FundRow label="Decay Cascade"
+                      value={
+                        activeW.length === 0
+                          ? <span style={{ color: '#059669', fontWeight: 600 }}>✓ All clear (W2/W3/W4)</span>
+                          : <span style={{ color: activeW.length >= 2 ? '#dc2626' : '#d97706', fontWeight: 600 }}>
+                              {activeW.join(' + ')} triggered
+                            </span>
+                      }
+                      hint={
+                        'W2 = 3-week score decline. W3 = 3-month structural decline. W4 = 12-month sustained deterioration. ' +
+                        (activeW.length === 0 ? 'No cascade signals — thesis intact on all time horizons.' :
+                         activeW.includes('W4') ? 'W4 active: strongest structural sell signal. Requires full thesis review.' :
+                         activeW.includes('W3') ? 'W3 active: quarterly deterioration. Review whether thesis still holds.' :
+                         'W2 active: short-term score dip. Monitor — may be market noise.')
+                      }
+                      positive={activeW.length === 0} />
+                  )}
+                  {stock.excess_return != null && (
+                    <FundRow label="Alpha vs SPY (21d)"
+                      value={`${stock.excess_return >= 0 ? '+' : ''}${stock.excess_return.toFixed(2)}%`}
+                      hint="Jensen alpha: stock return vs SPY adjusted for beta. Positive = outperforming on risk-adjusted basis."
+                      positive={stock.excess_return >= 0} />
+                  )}
+                  {stock.spring_days > 0 && (
+                    <FundRow label="Spring Signal"
+                      value={`Day ${stock.spring_days} of 3${stock.spring_days >= 3 ? ' ✓ CONFIRMED' : ' (forming)'}`}
+                      hint="Wyckoff spring: quality stock bouncing from oversold. Confirmed at day 3+."
+                      positive={stock.spring_days >= 3} />
+                  )}
                 {isETF ? (
                   <>
                     <FundRow label="Price Trend (65%)" value={stock.score_tech != null ? `${stock.score_tech.toFixed(1)}/10` : null}
@@ -717,7 +849,8 @@ const DetailPanel = ({ stock }) => {
                 )}
               </div>
             </div>
-          )}
+            );
+          })()}
         </div>
       </td>
     </tr>
@@ -740,9 +873,11 @@ const EarningsCard = ({ symbol }) => {
     setError(null);
     try {
       const res = await fetch(`/api/portfolio/earnings-event/${encodeURIComponent(symbol)}`);
+      if (res.status === 204) { setData({}); return; } // no earnings event yet — show empty state
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
-      setData(json);
+      // Route wraps payload in { status, symbol, event, timestamp } — unwrap it
+      setData(json.event ?? json);
     } catch (e) {
       setError(e.message || 'Failed to load');
     } finally {
@@ -777,65 +912,83 @@ const EarningsCard = ({ symbol }) => {
           {loading && <p style={{ fontSize: 11, color: '#6b7280', margin: '4px 0' }}>Loading…</p>}
           {error && <p style={{ fontSize: 11, color: '#dc2626', margin: '4px 0' }}>⚠ {error}</p>}
           {data && !loading && (() => {
-            // Backend stores earnings_event_SYMBOL with camelCase fields.
-            // Normalise both snake_case (hypothetical future) and camelCase (actual).
-            const nextDate   = data.next_earnings_date || data.nextEarningsDate || null;
-            const timing     = data.next_earnings_timing || data.timing || null;
-            const history    = data.history || [];
-            const summary    = data.geminiSummary || data.summary || null;
-            const hasContent = nextDate || history.length > 0 || summary;
+            // After unwrapping json.event, data has shape from earnings-event.js:
+            // { gemini: { summary, eps_beat, revenue_beat, guidance_direction,
+            //   thesis_confirms, thesis_risks, management_confidence },
+            //   quarter, year, estimates: { eps, revenue }, pressRelease }
+            const g          = data.gemini ?? {};
+            const summary    = g.summary            ?? null;
+            const epsBeat    = g.eps_beat            ?? null;
+            const revBeat    = g.revenue_beat        ?? null;
+            const guidance   = g.guidance_direction  ?? null;
+            const confirms   = g.thesis_confirms     ?? [];
+            const risks      = g.thesis_risks        ?? [];
+            const quarter    = data.quarter ? `Q${data.quarter} ${data.year ?? ''}`.trim() : null;
+            const epsEst     = data.estimates?.eps;
+            const revEst     = data.estimates?.revenue;
+            const hasContent = summary || epsBeat != null || guidance;
+
+            const beatColor  = (v) => v === true ? '#059669' : v === false ? '#dc2626' : '#6b7280';
+            const beatLabel  = (v) => v === true ? '✓ Beat' : v === false ? '✗ Missed' : '—';
+            const guidanceColor = guidance === 'raised' ? '#059669'
+                               : guidance === 'lowered' ? '#dc2626'
+                               : '#6b7280';
+
             return (
               <div className="detail-rows">
-                {nextDate && (
+                {quarter && (
+                  <FundRow label="Period" value={quarter} />
+                )}
+                {epsBeat != null && (
                   <FundRow
-                    label="Next Earnings"
-                    value={`${fmtDate(nextDate)}${timing ? ' · ' + timing : ''}`}
-                    hint="Confirmed or estimated report date from SEC / IR calendar"
+                    label="EPS vs Estimate"
+                    value={<span style={{ color: beatColor(epsBeat) }}>{beatLabel(epsBeat)}</span>}
+                    hint={epsEst != null ? `Consensus: $${epsEst}` : undefined}
+                    positive={epsBeat === true}
                   />
                 )}
-                {history.length > 0 && (
-                  <>
-                    <div style={{ fontSize: 10, color: '#6b7280', marginTop: 6, marginBottom: 2, fontWeight: 600 }}>
-                      EPS SURPRISE — LAST {history.length} QUARTERS
-                    </div>
-                    {history.map((q, i) => {
-                      const surprise = (q.eps_actual != null && q.eps_estimate != null && q.eps_estimate !== 0)
-                        ? ((q.eps_actual - q.eps_estimate) / Math.abs(q.eps_estimate)) * 100
-                        : null;
-                      return (
-                        <FundRow
-                          key={i}
-                          label={q.period || `Q${i + 1}`}
-                          value={
-                            q.eps_actual != null ? (
-                              <span>
-                                ${q.eps_actual.toFixed(2)}
-                                {surprise != null && (
-                                  <span style={{ color: surpriseColor(surprise), marginLeft: 4 }}>
-                                    ({surprise >= 0 ? '+' : ''}{surprise.toFixed(1)}%)
-                                  </span>
-                                )}
-                              </span>
-                            ) : '—'
-                          }
-                          hint={q.eps_estimate != null ? `Consensus: $${q.eps_estimate.toFixed(2)}` : undefined}
-                          positive={surprise != null ? surprise >= 0 : undefined}
-                        />
-                      );
-                    })}
-                  </>
+                {revBeat != null && (
+                  <FundRow
+                    label="Revenue vs Estimate"
+                    value={<span style={{ color: beatColor(revBeat) }}>{beatLabel(revBeat)}</span>}
+                    hint={revEst != null ? `Consensus: $${(revEst / 1e6).toFixed(0)}M` : undefined}
+                    positive={revBeat === true}
+                  />
+                )}
+                {guidance && guidance !== 'none' && (
+                  <FundRow
+                    label="Guidance"
+                    value={<span style={{ color: guidanceColor, textTransform: 'capitalize' }}>{guidance}</span>}
+                    positive={guidance === 'raised'}
+                  />
                 )}
                 {summary && (
                   <div style={{ marginTop: 8 }}>
                     <div style={{ fontSize: 10, color: '#6b7280', fontWeight: 700, marginBottom: 4 }}>
-                      EARNINGS SUMMARY (AI)
+                      AI VERDICT
                     </div>
                     <p style={{ fontSize: 11, color: '#d4d4d0', lineHeight: 1.6, margin: 0 }}>{summary}</p>
                   </div>
                 )}
+                {confirms.length > 0 && (
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ fontSize: 10, color: '#059669', fontWeight: 700, marginBottom: 4 }}>THESIS CONFIRMS</div>
+                    <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11, color: '#d4d4d0', lineHeight: 1.6 }}>
+                      {confirms.map((c, i) => <li key={i}>{c}</li>)}
+                    </ul>
+                  </div>
+                )}
+                {risks.length > 0 && (
+                  <div style={{ marginTop: 6 }}>
+                    <div style={{ fontSize: 10, color: '#dc2626', fontWeight: 700, marginBottom: 4 }}>THESIS RISKS</div>
+                    <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11, color: '#d4d4d0', lineHeight: 1.6 }}>
+                      {risks.map((r, i) => <li key={i}>{r}</li>)}
+                    </ul>
+                  </div>
+                )}
                 {!hasContent && (
                   <p style={{ fontSize: 11, color: '#6b7280', margin: '4px 0' }}>
-                    No earnings data available yet for this ticker.
+                    No earnings event data for this ticker yet.
                   </p>
                 )}
               </div>
@@ -865,10 +1018,12 @@ const FilingNarrativeCard = ({ symbol, filingForm }) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/portfolio/${encodeURIComponent(symbol)}/filing-narrative`);
+      const res = await fetch(`/api/portfolio/filing-narrative/${encodeURIComponent(symbol)}`);
+      if (res.status === 204) { setData({}); return; } // no narrative yet — show empty state
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
-      setData(json);
+      // Route wraps payload in { status, symbol, narrative, timestamp } — unwrap it
+      setData(json.narrative ?? json);
     } catch (e) {
       setError(e.message || 'Failed to load');
     } finally {
@@ -896,55 +1051,87 @@ const FilingNarrativeCard = ({ symbol, filingForm }) => {
           )}
           {loading && <p style={{ fontSize: 11, color: '#6b7280', margin: '4px 0' }}>Loading…</p>}
           {error && <p style={{ fontSize: 11, color: '#dc2626', margin: '4px 0' }}>⚠ {error}</p>}
-          {data && !loading && (
-            <div>
-              {/* AI display-only disclaimer */}
-              <p style={{ fontSize: 10, color: '#6b7280', fontStyle: 'italic', margin: '0 0 8px', lineHeight: 1.5 }}>
-                AI-interpreted summary of SEC filing text. Not a scoring input — display only.
-              </p>
+          {data && !loading && (() => {
+            // Route returns raw Redis payload: { gemini: { summary, thesis_risks, ... }, form, filed }
+            // Normalise to flat fields the card uses.
+            const g             = data.gemini ?? {};
+            const mdaSummary    = g.summary          ?? null;
+            const riskFactors   = g.thesis_risks      ?? [];
+            const evidenceQuotes = g.evidence_quotes  ?? [];
+            const uncertFlags   = g.uncertainty_flags ?? [];
+            const thesisStatus  = g.thesis_status     ?? null;
+            const filedDate     = data.filed          ?? null;
+            const formType      = data.form           ?? null;
+            const hasContent    = mdaSummary || riskFactors.length > 0;
 
-              {data.mda_summary && (
-                <div style={{ marginBottom: 10 }}>
-                  <div style={{ fontSize: 10, color: '#6b7280', fontWeight: 700, marginBottom: 4 }}>MD&A SUMMARY</div>
-                  <p style={{ fontSize: 11, color: '#d4d4d0', lineHeight: 1.6, margin: 0 }}>{data.mda_summary}</p>
-                </div>
-              )}
+            const statusColor = thesisStatus === 'strengthening' ? '#059669'
+                              : thesisStatus === 'weakening'     ? '#dc2626'
+                              : thesisStatus === 'stable'        ? '#6b7280'
+                              : '#d97706';
 
-              {data.risk_factors && data.risk_factors.length > 0 && (
-                <div style={{ marginBottom: 10 }}>
-                  <div style={{ fontSize: 10, color: '#6b7280', fontWeight: 700, marginBottom: 4 }}>KEY RISK FACTORS</div>
-                  <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11, color: '#d4d4d0', lineHeight: 1.6 }}>
-                    {data.risk_factors.map((r, i) => <li key={i}>{r}</li>)}
-                  </ul>
-                </div>
-              )}
+            return (
+              <div>
+                <p style={{ fontSize: 10, color: '#6b7280', fontStyle: 'italic', margin: '0 0 8px', lineHeight: 1.5 }}>
+                  AI-interpreted summary of SEC filing text. Not a scoring input — display only.
+                </p>
 
-              {data.evidence_quotes && data.evidence_quotes.length > 0 && (
-                <div style={{ marginBottom: 10 }}>
-                  <div style={{ fontSize: 10, color: '#6b7280', fontWeight: 700, marginBottom: 4 }}>EVIDENCE FROM FILING</div>
-                  {data.evidence_quotes.map((q, i) => (
-                    <div key={i} style={{
-                      fontSize: 10, color: '#9ca3af', fontStyle: 'italic',
-                      borderLeft: '2px solid #374151', paddingLeft: 8, marginBottom: 4, lineHeight: 1.5,
-                    }}>"{q}"</div>
-                  ))}
-                </div>
-              )}
+                {thesisStatus && (
+                  <div style={{ marginBottom: 8 }}>
+                    <span style={{ fontSize: 10, color: '#6b7280', fontWeight: 700 }}>THESIS: </span>
+                    <span style={{ fontSize: 11, color: statusColor, fontWeight: 600, textTransform: 'uppercase' }}>
+                      {thesisStatus}
+                    </span>
+                    {formType && filedDate && (
+                      <span style={{ fontSize: 10, color: '#6b7280', marginLeft: 8 }}>
+                        ({formType} · {filedDate})
+                      </span>
+                    )}
+                  </div>
+                )}
 
-              {data.uncertainty_flags && data.uncertainty_flags.length > 0 && (
-                <div>
-                  <div style={{ fontSize: 10, color: '#d97706', fontWeight: 700, marginBottom: 4 }}>⚠ UNCERTAINTY FLAGS</div>
-                  <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11, color: '#d97706', lineHeight: 1.6 }}>
-                    {data.uncertainty_flags.map((f, i) => <li key={i}>{f}</li>)}
-                  </ul>
-                </div>
-              )}
+                {mdaSummary && (
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: 10, color: '#6b7280', fontWeight: 700, marginBottom: 4 }}>MD&A SUMMARY</div>
+                    <p style={{ fontSize: 11, color: '#d4d4d0', lineHeight: 1.6, margin: 0 }}>{mdaSummary}</p>
+                  </div>
+                )}
 
-              {!data.mda_summary && !data.risk_factors?.length && (
-                <p style={{ fontSize: 11, color: '#6b7280', margin: '4px 0' }}>Narrative not yet generated for this ticker.</p>
-              )}
-            </div>
-          )}
+                {riskFactors.length > 0 && (
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: 10, color: '#6b7280', fontWeight: 700, marginBottom: 4 }}>KEY RISK FACTORS</div>
+                    <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11, color: '#d4d4d0', lineHeight: 1.6 }}>
+                      {riskFactors.map((r, i) => <li key={i}>{r}</li>)}
+                    </ul>
+                  </div>
+                )}
+
+                {evidenceQuotes.length > 0 && (
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: 10, color: '#6b7280', fontWeight: 700, marginBottom: 4 }}>EVIDENCE FROM FILING</div>
+                    {evidenceQuotes.map((q, i) => (
+                      <div key={i} style={{
+                        fontSize: 10, color: '#9ca3af', fontStyle: 'italic',
+                        borderLeft: '2px solid #374151', paddingLeft: 8, marginBottom: 4, lineHeight: 1.5,
+                      }}>"{q}"</div>
+                    ))}
+                  </div>
+                )}
+
+                {uncertFlags.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 10, color: '#d97706', fontWeight: 700, marginBottom: 4 }}>⚠ UNCERTAINTY FLAGS</div>
+                    <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11, color: '#d97706', lineHeight: 1.6 }}>
+                      {uncertFlags.map((f, i) => <li key={i}>{f}</li>)}
+                    </ul>
+                  </div>
+                )}
+
+                {!hasContent && (
+                  <p style={{ fontSize: 11, color: '#6b7280', margin: '4px 0' }}>Narrative not yet generated for this ticker.</p>
+                )}
+              </div>
+            );
+          })()}
         </div>
       )}
     </div>
