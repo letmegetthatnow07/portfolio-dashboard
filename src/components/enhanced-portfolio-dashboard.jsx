@@ -890,17 +890,6 @@ const EarningsCard = ({ symbol }) => {
     setExpanded(v => !v);
   };
 
-  const fmtDate = (s) => {
-    if (!s) return '—';
-    try { return new Date(s).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
-    catch { return s; }
-  };
-
-  const surpriseColor = (pct) => {
-    if (pct == null) return '#6b7280';
-    return pct >= 5 ? '#059669' : pct >= 0 ? '#6b7280' : pct >= -5 ? '#d97706' : '#dc2626';
-  };
-
   return (
     <div className="detail-section">
       <div className="detail-section-head" style={{ cursor: 'pointer' }} onClick={toggle}>
