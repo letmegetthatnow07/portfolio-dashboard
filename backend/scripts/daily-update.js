@@ -36,6 +36,7 @@ const SLEEP_BETWEEN_STOCKS_MS = 15000;
 const TODAY = new Date().toISOString().split('T')[0];
 
 // ─── US MARKET HOLIDAY DETECTION — POLYGON UPCOMING HOLIDAYS ────────────────
+// ─── US MARKET HOLIDAY DETECTION — POLYGON UPCOMING HOLIDAYS ────────────────
 // F01 FIX: The previous implementation used /v1/marketstatus/now which returns
 // 'closed' after 4 PM ET on EVERY trading day — including the evening when our
 // EOD run fires (22:00 UTC = 5-6 PM ET). This caused the run to silently skip
@@ -47,39 +48,30 @@ const TODAY = new Date().toISOString().split('T')[0];
 // This is date-based, not real-time-status-based, so it works at any hour.
 //
 // Result cached in Redis for 24h per date — one API call per calendar day.
-
 async function isMarketClosedToday(redisClient) {
   const cacheKey = `market_holiday_${TODAY}`;
   const cached   = await redisClient.get(cacheKey).catch(() => null);
   if (cached !== null) return cached === '1';
 
-  // Weekend check — never a trading day regardless of Polygon
-  const dayOfWeek = new Date(TODAY + 'T12:00:00Z').getUTCDay(); // 0=Sun, 6=Sat
+  const dayOfWeek = new Date(TODAY + 'T12:00:00Z').getUTCDay();
   if (dayOfWeek === 0 || dayOfWeek === 6) {
     await redisClient.set(cacheKey, '1', { EX: 86400 }).catch(() => {});
     return true;
   }
 
-  // Fetch upcoming market holidays from Polygon
-  // Returns a list of dates where the exchange is fully closed (not early close)
   try {
     const res = await axios.get(
       `https://api.polygon.io/v1/marketstatus/upcoming?apiKey=${process.env.POLYGON_API_KEY}`,
       { timeout: 6000 }
     );
     const holidays = res.data ?? [];
-    // Each entry: { exchange, name, date, status, open, close }
-    // status === 'closed' means full closure; 'early-close' means partial
-    const isHoliday = holidays.some(
-      h => h.date === TODAY && h.status === 'closed'
-    );
-    // Cache result for 24h — holiday list for today won't change
+    const isHoliday = holidays.some(h => h.date === TODAY && h.status === 'closed');
     await redisClient.set(cacheKey, isHoliday ? '1' : '0', { EX: 86400 }).catch(() => {});
     logger.info(`  Market holiday check: ${TODAY} = ${isHoliday ? 'HOLIDAY' : 'trading day'}`);
     return isHoliday;
   } catch (e) {
     logger.warn(`Polygon upcoming holidays check failed: ${e.message} — assuming trading day`);
-    return false; // Fail open: if we can't check, proceed with the run
+    return false;
   }
 }
 
@@ -87,37 +79,20 @@ async function isMarketClosedToday(redisClient) {
 // E6: All scoring thresholds in one place — tune here without hunting through calculateScore.
 // Each value is documented with its calibration rationale.
 const SCORING_PARAMS = {
-  // ROIC curve: maps (roic - floor) / range → 0-10
-  ROIC_FLOOR:              0.08,   // below WACC (~8%) = value destroyer; 5% was too lenient
-  ROIC_RANGE:              0.22,   // 8%→30% maps to 0→10 (Terry Smith min 15% ROCE now scores ~3.2)
-
-  // FCF margin curve: 0% → 0, 10% → 3.3, 30%+ → 10
-  FCF_MARGIN_DIVISOR:      0.15,   // 15% FCF margin = perfect 10 (3% was too easy — every profitable co. maxed out)
-
-  // Capex exception: FCF score bonus when strategic capex legitimately suppresses FCF
+  ROIC_FLOOR:              0.08,
+  ROIC_RANGE:              0.22,
+  FCF_MARGIN_DIVISOR:      0.15,
   CAPEX_FCF_BONUS:         2.5,
-
-  // Hypergrowth mode triggers (asset-light compounders: CRWD, RKLB etc.)
-  HYPERGROWTH_CAGR_MIN:    0.20,   // 3Y revenue CAGR > 20%
-  HYPERGROWTH_GM_MIN:      0.60,   // gross margin > 60% (excludes commodity/industrial)
-
-  // Cyclical peak detection: if current GM > this multiple of 5Y avg → cap fundScore
-  CYCLICAL_PEAK_MULTIPLE:  1.50,   // current GM > 150% of 5Y average
-  CYCLICAL_PEAK_SCORE_CAP: 6.5,    // fundScore capped here when at cyclical peak
-
-  // SBC moat penalty thresholds (SBC as fraction of true FCF)
-  SBC_HEAVY_THRESHOLD:     0.25,   // > 25% of FCF → -2.5 moat points
-  SBC_WATCH_THRESHOLD:     0.10,   // > 10% of FCF → -1.0 moat point
-
-  // Revenue growth curve: 0% → 4, 5% → 5 (GDP neutral), 25% → 10
+  HYPERGROWTH_CAGR_MIN:    0.20,
+  HYPERGROWTH_GM_MIN:      0.60,
+  CYCLICAL_PEAK_MULTIPLE:  1.50,
+  CYCLICAL_PEAK_SCORE_CAP: 6.5,
+  SBC_HEAVY_THRESHOLD:     0.25,
+  SBC_WATCH_THRESHOLD:     0.10,
   REV_GROWTH_NEUTRAL_SCORE: 4,
-  REV_GROWTH_DIVISOR:      0.042,  // score = neutralScore + (growth / divisor)
-
-  // 8-K recency decay: full weight on day 0, MIN_DECAY at day 60
+  REV_GROWTH_DIVISOR:      0.042,
   EVENT_8K_LOOKBACK_DAYS:  60,
   EVENT_8K_MIN_DECAY:      0.15,
-
-  // Insider minimum conviction threshold (pre-title raw dollar value)
   INSIDER_MIN_BUY_USD:     50_000,
 };
 
@@ -125,7 +100,7 @@ const VALID_SIGNALS = [
   'STRONG_BUY', 'BUY', 'HOLD', 'WATCH',
   'TRIM_25', 'SELL', 'SPRING_CANDIDATE', 'SPRING_CONFIRMED', 'ADD',
   'HOLD_NOISE', 'NORMAL', 'INSUFFICIENT_DATA', 'IDIOSYNCRATIC_DECAY', 'REDUCE',
-  'MARKET_NOISE',  // FIX: quantEngine.evaluateFractalDecay can return this — was silently mapped to 'HOLD'
+  'MARKET_NOISE',
 ];
 
 // ─── UTILITY: URL SANITISER ─────────────────────────────────────────────────
@@ -161,23 +136,19 @@ async function fetchInstrumentType(symbol, finnhubKey) {
       { timeout: 6000 }
     );
     const type = res.data?.type || 'Common Stock';
-    // Normalise to our two categories
     const isFund = ['ETP', 'ETF', 'Closed-End Fund', 'REIT', 'Open-End Fund'].includes(type);
     const result = {
       raw:   type,
       isETF: isFund,
       name:  res.data?.name   || null,
-      // FIX: capture industry here so the auto-refresh sector block doesn't need a second profile2 call
       industry: res.data?.finnhubIndustry || null,
-      // Expense ratio from Finnhub profile (field: expenseRatio, in decimal e.g. 0.0013)
       expenseRatio: res.data?.expenseRatio != null
-        ? parseFloat((res.data.expenseRatio * 100).toFixed(4))  // convert to %
+        ? parseFloat((res.data.expenseRatio * 100).toFixed(4))
         : null,
     };
     _instrumentTypeCache[symbol] = result;
     return result;
   } catch (e) {
-    // On failure, default to stock treatment — safer than skipping analysis
     logger.warn(`Instrument type fetch failed for ${symbol}: ${e.message} — treating as stock`);
     const fallback = { raw: 'Common Stock', isETF: false, name: null, expenseRatio: null };
     _instrumentTypeCache[symbol] = fallback;
@@ -212,7 +183,7 @@ async function checkFmpIsEtf(symbol) {
 
 // ─── CLIENTS ──────────────────────────────────────────────────────────────────
 
-const _ws = require('ws'); // Node 20: ws is a dep of @supabase/realtime-js, always present
+const _ws = require('ws');
 const supabase = createSupabaseClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_KEY,
@@ -315,37 +286,28 @@ class PriceAnalyzer {
       if (res.data?.metric) {
         const m = res.data.metric;
 
-        // ── Revenue growth ─────────────────────────────────────────────────
-        // Prefer 3Y CAGR (more durable than 1-year which can be a recovery bounce)
-        // Fall back to TTM YoY, then 5Y CAGR
         const revenueGrowth3Y = (m['revenueGrowth3Y'] || 0) / 100;
         const revenueGrowthYoY = (m.revenueGrowthTTMYoy || 0) / 100;
-        // Use 3Y if available (≠0), else YoY, else 5Y
         const revenueGrowth = revenueGrowth3Y !== 0
           ? revenueGrowth3Y
           : (revenueGrowthYoY !== 0 ? revenueGrowthYoY : (m['revenueGrowth5Y'] || 0) / 100);
 
-        // ── Margins ────────────────────────────────────────────────────────
         const grossMargin   = (m.grossMarginTTM || m.grossMarginAnnual || 0) / 100;
         const fcfMarginRaw  = (m.freeCashFlowMarginTTM || m.operatingMarginTTM || 0) / 100;
         const opMarginRaw   = (m.operatingMarginTTM || 0) / 100;
         const fcfConversion = opMarginRaw > 0 ? Math.min(1.5, fcfMarginRaw / opMarginRaw) : 0.5;
 
-        // ── Valuation ──────────────────────────────────────────────────────
-        const marketCap = m.marketCapitalization || 0; // millions USD
+        const marketCap = m.marketCapitalization || 0;
 
         // FCF YIELD FIX: freeCashFlowTTM is frequently null/0 in Finnhub.
         // Multiple fallback paths to avoid showing 0.00% yield for healthy companies.
         // Path 1: Direct TTM FCF from Finnhub (most accurate)
         const fcfTTM_direct = m.freeCashFlowTTM > 0 ? m.freeCashFlowTTM : null;
-        // Path 2: OCF - CapEx (when Finnhub provides cash flow components)
         const ocfTTM  = m.operatingCashFlowTTM  || 0;
-        const capexTTM = m.capitalExpendituresTTM || 0; // usually negative in Finnhub
-        const fcfTTM_ocf = ocfTTM > 0 ? (ocfTTM + capexTTM) : null; // capexTTM is negative
-        // Path 3: FCF margin × revenue TTM — best fallback when cash flow unavailable
-        const revTTM  = m.revenueTTM || m.revenueAnnual || 0; // millions USD
+        const capexTTM = m.capitalExpendituresTTM || 0;
+        const fcfTTM_ocf = ocfTTM > 0 ? (ocfTTM + capexTTM) : null;
+        const revTTM  = m.revenueTTM || m.revenueAnnual || 0;
         const fcfTTM_margin = (fcfMarginRaw > 0 && revTTM > 0) ? (fcfMarginRaw * revTTM) : null;
-        // Use best available: prefer direct > OCF-CapEx > margin-derived
         const fcfTTM = fcfTTM_direct
                     ?? (fcfTTM_ocf != null && fcfTTM_ocf > 0 ? fcfTTM_ocf : null)
                     ?? (fcfTTM_margin != null && fcfTTM_margin > 0 ? fcfTTM_margin : null)
@@ -363,19 +325,11 @@ class PriceAnalyzer {
         // EV/FCF: <15 = cheap, 15-25 = fair, >40 = expensive for a compounder
         const evFcf       = (fcfTTM > 0 && evM > 0) ? (evM / fcfTTM) : null;
 
-        // ── Shares outstanding YoY change — dilution detection ────────────────
-        const sharesNow  = m.shareOutstanding || m.sharesOutstanding || null;  // millions
-        // F03 FIX: m.sharesOutstandingAnnual is the RAW share count in millions
-        // (e.g., 4200 for Apple), NOT a percentage. Comparing it to 5 would flag
-        // every stock as 'heavy' dilution. Only m['52WeekShareChange'] is a YoY % change.
-        const sharesYoY  = m['52WeekShareChange'] ?? null; // % change in shares YoY
+        const sharesNow  = m.shareOutstanding || m.sharesOutstanding || null;
+        const sharesYoY  = m['52WeekShareChange'] ?? null;
 
-        // Gross margin 5-year average — used for cyclical peak detection
-        const grossMargin5Y = m.grossMargin5Y != null
-          ? m.grossMargin5Y / 100
-          : null;
+        const grossMargin5Y = m.grossMargin5Y != null ? m.grossMargin5Y / 100 : null;
 
-        // Dilution flag: if shares grew >3% YoY without a clear acquisition
         let dilutionFlag = null;
         if (sharesYoY != null) {
           if (sharesYoY > 5)       dilutionFlag = 'heavy';
@@ -395,7 +349,7 @@ class PriceAnalyzer {
           fcfYield,
           evFcf,
           marketCapM:    marketCap,
-          _grossMargin5Y: grossMargin5Y,  // for cyclical brake in calculateScore
+          _grossMargin5Y: grossMargin5Y,
           dilutionFlag,
           sharesYoYPct:  sharesYoY,
           _raw: {
@@ -409,8 +363,8 @@ class PriceAnalyzer {
             fcfMarginPct:       (m.freeCashFlowMarginTTM || m.operatingMarginTTM || 0),
             fcfYieldPct:        fcfYield != null ? (fcfYield * 100) : null,
             evFcf:              evFcf,
-            sharesOutstandingM: sharesNow,  // millions — for quarterly snapshot storage
-            cashM:      m.cashAndEquivalentsAnnual || 0,  // for W7 net-cash vs negative-equity detection
+            sharesOutstandingM: sharesNow,
+            cashM:      m.cashAndEquivalentsAnnual || 0,
             totalDebtM: m.totalDebtAnnual || 0,
           }
         };
@@ -487,29 +441,12 @@ class PriceAnalyzer {
   }
 
   async fetchInsider(symbol) {
-    // ── Transaction code semantics ─────────────────────────────────────────────
-    // OPEN_MARKET_BUY  (P): Discretionary purchase — strong conviction signal
-    // OPEN_MARKET_SELL (S): Discretionary sale — meaningful (but check 10b5-1)
-    // NON_ECONOMIC: excluded entirely — no conviction signal
-    //   A = Award/grant (insider paid $0 — inflates bought total if included)
-    //   F = Tax withholding on RSU vesting (forced sale, not discretionary)
-    //   M = Option exercise (mechanical, not a view on the stock)
-    //   G = Gift (non-economic)
-    //   X = Out-of-the-money option exercise
-    //   D = Disposition via tender/exchange (contextual)
-    // 10b5-1 pre-planned sales: flagged but still counted at 50% weight
-    //   (reduces but doesn't eliminate the sell signal — plan could have been
-    //    adopted when insider was bearish)
-    // Form 5: annual catch-up filings — excluded (stale, not real-time conviction)
-    // Deduplication: 4/A amendments can double-count if both original and amendment
-    //   appear — we keep only the latest filing per (reportingCik, transactionDate, code)
-
     const NON_ECONOMIC = new Set(['A', 'F', 'M', 'G', 'X', 'D']);
 
     try {
       const payload = {
         query: `issuer.tradingSymbol:${symbol}`,
-        from: '0', size: '100',   // fetch more to improve deduplication coverage
+        from: '0', size: '100',
         sort: [{ transactionDate: 'desc' }]
       };
       const res = await axios.post(
@@ -536,8 +473,6 @@ class PriceAnalyzer {
           return 1;
         };
 
-        // Deduplication: keep only the most recent filing per (reporterCik, date, code)
-        // 4/A amendments can cause double-counting if both original and amendment appear
         const seen = new Map();
         const dedupedTrades = [];
         for (const trade of trades) {
@@ -549,11 +484,9 @@ class PriceAnalyzer {
             seen.set(key, true);
             dedupedTrades.push(trade);
           }
-          // Skip duplicate — amendment already replaces original via sort order (desc)
         }
 
         dedupedTrades.forEach(trade => {
-          // Form 5 = annual catch-up, not a real-time conviction signal
           const formType = (trade.formType || '').trim();
           if (formType === '5' || formType === '5/A') return;
 
@@ -567,14 +500,12 @@ class PriceAnalyzer {
           const tw     = titleWeight(title);
 
           if (shares <= 0) return;
-
-          // Skip non-economic transactions (grants, withholding, option exercises)
           if (NON_ECONOMIC.has(code)) return;
 
           if (code === 'P') {
             const rawVal = shares * (price || 1);
-            totalBought    += rawVal * tw;  // title-weighted
-            totalRawBought += rawVal;       // raw for $50K threshold check
+            totalBought    += rawVal * tw;
+            totalRawBought += rawVal;
             if (tradeDate >= thirtyDaysAgo) {
               // B3 FIX: Math.random() created a new unique ID every run, inflating cluster30d.
               // Use stable fields: reportingCik → reportingName → officerTitle → filingDate
@@ -585,8 +516,6 @@ class PriceAnalyzer {
           }
 
           if (code === 'S') {
-            // 10b5-1 pre-planned sale: reduce signal weight to 50%
-            // Field name varies by SEC-API version
             const is10b51 = trade.is10b51 ?? trade.automaticTransaction ?? false;
             const weight   = is10b51 ? 0.5 : 1.0;
             totalSold += shares * (price || 1) * weight;
@@ -604,11 +533,6 @@ class PriceAnalyzer {
       }
     } catch (e) { /* try Finnhub fallback */ }
 
-    // ── Finnhub fallback ───────────────────────────────────────────────────────
-    // Finnhub MSPR (Monthly Share Purchase Ratio) is a ratio signal, not dollar-
-    // denominated. Use recency-weighted MSPR (recent months matter more) and map
-    // directly to a score rather than converting to fake dollar amounts.
-    // rawBought = Infinity bypasses the $50K dollar threshold (inapplicable here).
     try {
       const startStr = new Date(new Date().setMonth(new Date().getMonth() - 6))
         .toISOString().split('T')[0];
@@ -619,7 +543,6 @@ class PriceAnalyzer {
         { timeout: 8000 }
       );
       if (res.data?.data?.length > 0) {
-        // Recency-weighted MSPR: most recent month 3×, prior 2×, older 1×
         const sorted  = [...res.data.data].sort((a, b) => b.month?.localeCompare(a.month ?? '') ?? 0);
         const weights = [3, 2, 1];
         let wSum = 0, wTot = 0;
@@ -629,48 +552,25 @@ class PriceAnalyzer {
           wTot += w;
         });
         const recentMspr = wTot > 0 ? wSum / wTot : 0;
-
-        // Map MSPR → bought/sold proxy so calculateScore works unchanged.
-        // rawBought = Infinity bypasses the $50K threshold (ratio ≠ dollar value).
         if (recentMspr > 0) return { bought: recentMspr * 1_000_000, sold: 0, rawBought: Infinity, _source: 'finnhub' };
         if (recentMspr < 0) return { bought: 0, sold: Math.abs(recentMspr) * 1_000_000, rawBought: 0, _source: 'finnhub' };
-        // Exactly 0: neutral — return null so insiderScore stays at 5
       }
     } catch (e) { /* fall through */ }
     return null;
   }
 
-  /**
-   * calculateScore — accepts an optional newsScoreOverride.
-   *
-   * When newsScoreOverride is provided (by the master EOD run reading from
-   * intraday_news_log), the news analysis block is skipped entirely.
-   * When null, analyzedNews is used as before (backward compatible).
-   *
-   * @param {object|null}  priceData
-   * @param {object|null}  fundamentals
-   * @param {object|null}  technicals
-   * @param {object|null}  ratings
-   * @param {Array|null}   analyzedNews        — pass null when using override
-   * @param {object|null}  insiderData
-   * @param {boolean}      capexException
-   * @param {number|null}  newsScoreOverride   — pre-computed intraday average
-   */
   calculateScore(priceData, fundamentals, technicals, ratings, analyzedNews, insiderData, capexException = false, newsScoreOverride = null, isETF = false, expenseRatio = null, recent8K = null) {
     let fundScore = 5, techScore = 5, ratingScore = 5, newsScore = 5, insiderScore = 5;
-    let adjFcfMargin = null; // function-scoped — returned to caller for Supabase write-back
+    let adjFcfMargin = null;
 
     if (fundamentals) {
-      // ── ROIC ─────────────────────────────────────────────────────────────
       let roicS = Math.max(0, Math.min(10, ((fundamentals.roic - SCORING_PARAMS.ROIC_FLOOR) / SCORING_PARAMS.ROIC_RANGE) * 10));
 
-      // ── Earnings quality veto on ROIC ─────────────────────────────────────
       if (fundamentals._earningsQualityFlag === 'risk' && !capexException) {
         roicS = Math.min(roicS, 5.0);
         logger.warn(`  🔒 ROIC capped at neutral (earnings quality risk — OCF < 0, GAAP income > 0)`);
       }
 
-      // ── Cyclical peak brake ────────────────────────────────────────────────
       const _gm5y = fundamentals._grossMargin5Y ?? null;
       const _gmNow = fundamentals.grossMargin ?? 0;
       const _atCyclicalPeak = _gm5y != null && _gm5y > 0.02 && _gmNow > _gm5y * SCORING_PARAMS.CYCLICAL_PEAK_MULTIPLE;
@@ -678,21 +578,13 @@ class PriceAnalyzer {
         logger.warn(`  ⚠️ CYCLICAL PEAK SIGNAL: current gross margin ${(_gmNow*100).toFixed(1)}% is >150% of 5Y avg ${(_gm5y*100).toFixed(1)}%`);
       }
 
-      // ── SBC-adjusted FCF ─────────────────────────────────────────────────
-      // adjFcfMargin is declared at the top of calculateScore (function-scoped).
-      // We assign it here and surface it in the return value — the caller writes
-      // it back to fundamentals.fcfMargin AFTER scoring. This keeps calculateScore
-      // a pure scoring function without hidden mutations of its input object.
       adjFcfMargin = fundamentals.fcfMargin;
       const rawFcfMargin = fundamentals.fcfMargin;
 
-      // CORRECT formula: fcfYield × marketCapM = (FCF/MarketCap) × MarketCap = actual FCF $M.
-      // Wrong (old): fcfMargin × marketCapM = FCF × P/S ratio — overestimates FCF for high P/S stocks.
-      // For CRWD (P/S≈20) the wrong formula makes SBC look 20× smaller than it is.
       if (fundamentals.sbcMillions != null && fundamentals.sbcMillions > 0
           && fundamentals.fcfYield != null
           && fundamentals.marketCapM > 0) {
-        const fcfMillions = fundamentals.fcfYield * fundamentals.marketCapM; // ✓ true FCF $M
+        const fcfMillions = fundamentals.fcfYield * fundamentals.marketCapM;
         if (fcfMillions > 0) {
           const sbcAsFcfFraction = fundamentals.sbcMillions / fcfMillions;
           fundamentals._sbcAsFcfRatio = sbcAsFcfFraction;
@@ -701,11 +593,8 @@ class PriceAnalyzer {
             logger.info(`  💰 SBC adj: FCF ${(rawFcfMargin*100).toFixed(1)}% → ${(adjFcfMargin*100).toFixed(1)}% (SBC ${(sbcAsFcfFraction*100).toFixed(0)}% of true FCF)`);
           }
         } else {
-          // F14 FIX: negative-FCF companies previously escaped the moat SBC penalty entirely.
-          // A money-losing company paying massive SBC is arguably worse than a profitable one.
-          // Set ratio to a sentinel (10.0 = SBC is 1000%+ of FCF) to trigger the full -2.5 penalty.
           fundamentals._sbcAsFcfRatio = 10.0;
-          adjFcfMargin = 0; // negative FCF + SBC = zero economic FCF
+          adjFcfMargin = 0;
           logger.warn(`  ⚠️ SBC penalty: negative FCF + $${fundamentals.sbcMillions.toFixed(0)}M SBC → max moat penalty applied`);
         }
       }
@@ -754,7 +643,9 @@ class PriceAnalyzer {
       } else {
         revGS = yoyS;
       }
-      if (cagr !== 0 && yoy !== 0 && yoy > cagr * 1.5 && cagr < 0.10) {
+      // F-004 FIX: threshold lowered from 0.10 to 0.05. A 9.9% CAGR accelerating to 20% YoY
+      // is a genuine compounder signal, not a recovery bounce. Only cap truly low-CAGR (<5%) stocks.
+      if (cagr !== 0 && yoy !== 0 && yoy > cagr * 1.5 && cagr < 0.05) {
         revGS = Math.min(revGS, 6.5);
       }
 
@@ -767,9 +658,7 @@ class PriceAnalyzer {
         !_atCyclicalPeak
       );
 
-      // ── Composite fundamental score ───────────────────────────────────────
       if (_isHypergrowth) {
-        // FCF reduced 30%→15% for intentional cash burners; revGS raised 45%→55%
         fundScore = (revGS * 0.55) + (fcfS * 0.15) + (roicS * 0.15) + (deS * 0.15);
         fundamentals._hypergrowthMode = true;
       } else {
@@ -777,7 +666,6 @@ class PriceAnalyzer {
         fundamentals._hypergrowthMode = false;
       }
 
-      // ── Cyclical peak cap ─────────────────────────────────────────────────
       if (_atCyclicalPeak) {
         fundScore = Math.min(fundScore, SCORING_PARAMS.CYCLICAL_PEAK_SCORE_CAP);
         fundamentals._cyclicalPeakFlag = true;
@@ -790,7 +678,6 @@ class PriceAnalyzer {
       // Moat GM range fixed: was 20-26% (every tech stock trivially maxed).
       // Now 30-80% range: LLY at 83% GM = 10, EME at 20% GM = 0. Meaningful.
       const gmS   = Math.max(0, Math.min(10, (gmPct - 0.30) / 0.05));
-
       const fcfConvS = Math.max(0, Math.min(10, (fundamentals.fcfConversion ?? 0.5) * 6.67));
       const roicVsHurdleS = Math.max(0, Math.min(10, ((fundamentals.roic - 0.15) / 0.10) * 10));
 
@@ -826,12 +713,12 @@ class PriceAnalyzer {
       // Small modifier (+0.7 to -1.8). Quality stays primary but price matters too.
       if (fundamentals.fcfYield != null) {
         const fy = fundamentals.fcfYield;
-        const valuationAdj = fy > 0.06  ? +0.7    // cheap (<17x FCF)
-                           : fy > 0.04  ? +0.4    // fair-to-cheap (<25x FCF)
-                           : fy > 0.025 ? +0.1    // roughly fair (<40x FCF)
-                           : fy > 0.015 ?  0      // expensive (40-67x FCF)
-                           : fy > 0.008 ? -0.8    // very expensive (67-125x FCF)
-                           : -1.8;                // speculative (>125x FCF)
+        const valuationAdj = fy > 0.06  ? +0.7
+                           : fy > 0.04  ? +0.4
+                           : fy > 0.025 ? +0.1
+                           : fy > 0.015 ?  0
+                           : fy > 0.008 ? -0.8
+                           : -1.8;
         const _preValFundScore = fundScore;
         fundScore = Math.max(0, Math.min(10, fundScore + valuationAdj));
         if (Math.abs(valuationAdj) >= 0.4) {
@@ -864,12 +751,12 @@ class PriceAnalyzer {
       // New: deep oversold scores AS HIGH as healthy uptrend. Overbought penalised.
       const rsi = technicals.rsi;
       let rsiS = 5;
-      if      (rsi < 25)               rsiS = 10;  // deep oversold on quality = strong entry
-      else if (rsi >= 25 && rsi < 40)  rsiS = 9;   // oversold = buy zone
-      else if (rsi >= 40 && rsi < 55)  rsiS = 7;   // transitioning — neutral
-      else if (rsi >= 55 && rsi <= 70) rsiS = 10;  // healthy uptrend — ideal zone
-      else if (rsi > 70 && rsi <= 80)  rsiS = 6;   // mildly overbought
-      else if (rsi > 80)               rsiS = 2;   // extended — avoid
+      if      (rsi < 25)               rsiS = 10;
+      else if (rsi >= 25 && rsi < 40)  rsiS = 9;
+      else if (rsi >= 40 && rsi < 55)  rsiS = 7;
+      else if (rsi >= 55 && rsi <= 70) rsiS = 10;
+      else if (rsi > 70 && rsi <= 80)  rsiS = 6;
+      else if (rsi > 80)               rsiS = 2;
 
       techScore = (trendS * 0.50) + (rsiS * 0.50);
     }
@@ -931,14 +818,12 @@ class PriceAnalyzer {
       else if (sold > 0 && effectiveBought === 0) {
         // Pure selling — distinguish heavy (score=2) from normal (score=3)
         // F09 FIX: use rawBought (not title-weighted bought) for this ratio check.
-        // bought has 1-3× title weighting; rawBought is the actual dollar amount.
-        // Using bought would make the heavy-sell threshold 3× harder to reach for CEO sales.
         // Use absolute $500K threshold — rawBought*5 with rawBought≈0 always returned 2
         insiderScore = sold > 500_000 ? 2 : 3;
       }
-      else if (sold > bought * 2)                 insiderScore = 3; // mixed, sell-dominant
-      else if (sold > bought)                     insiderScore = 4; // mixed, slight sell lean
-      else                                        insiderScore = 5; // neutral / balanced
+      else if (sold > bought * 2)                 insiderScore = 3;
+      else if (sold > bought)                     insiderScore = 4;
+      else                                        insiderScore = 5;
     }
 
     // ── 8-K / 6-K material event adjustment ────────────────────────────────────
@@ -952,7 +837,6 @@ class PriceAnalyzer {
       const decayMul  = Math.max(SCORING_PARAMS.EVENT_8K_MIN_DECAY, 1 - daysOld / SCORING_PARAMS.EVENT_8K_LOOKBACK_DAYS);
       const adj       = recent8K.scoreAdj * decayMul;
       if (recent8K.hint === 'critical') {
-        // Bankruptcy (1.03) or delisting (3.01) — override to 0, force SELL
         _8kCriticalOverride = true;
         logger.warn(`  🚨 CRITICAL 8-K: ${recent8K.label} — score overridden to 0`);
       } else {
@@ -961,7 +845,6 @@ class PriceAnalyzer {
       }
     }
 
-    // ── Composite weights ─────────────────────────────────────────────────────
     let finalScore;
     if (isETF) {
       if (ratings === null || ratings === undefined) {
@@ -969,7 +852,6 @@ class PriceAnalyzer {
       } else {
         finalScore = (techScore * 0.50) + (newsScore * 0.30) + (ratingScore * 0.20);
       }
-
       const er = typeof expenseRatio === 'number' ? expenseRatio : null;
       if (er != null) {
         const erPenalty = er < 0.10 ? 0.0
@@ -981,20 +863,14 @@ class PriceAnalyzer {
       }
     } else {
       if (insiderData === null) {
-        // No-insider formula: keep fund at 60%, distribute remaining 40% cleanly (sums to 1.00)
         finalScore = (fundScore * 0.60) + (ratingScore * 0.15) + (techScore * 0.15) + (newsScore * 0.10);
       } else {
-        // WEIGHTS v2 (Indian compounder mandate):
-        // Fund 50% (quality + valuation modifier embedded) | Insider 15% (was 25% — sparse signal)
-        // Rating 10% | Tech 8% (timing, not thesis) | News 7% (noise for long-term holder)
-        // Weights sum: 0.50+0.15+0.10+0.08+0.07 = 0.90 → scale to 1.0 by normalising.
-        // Cleanest: give remaining 0.10 to fundamentals (quality is the primary driver).
+        // F-002 FIX: corrected comment — actual weights already sum to 1.00, not 0.90.
+        // Fund 60% (quality + valuation adj + moat blend) | Insider 15% | Rating 10% | Tech 8% | News 7%
+        // Weights: 0.60+0.15+0.10+0.08+0.07 = 1.00 ✓
         finalScore = (fundScore * 0.60) + (insiderScore * 0.15) + (ratingScore * 0.10) + (techScore * 0.08) + (newsScore * 0.07);
-        // Effective: Fundamentals (incl. valuation adj + moat blend) = 60%, Insider = 15%,
-        // Analyst = 10%, Technical = 8%, News = 7% → sums to 1.00
       }
     }
-    // Critical 8-K override: bankruptcy or delisting forces score to 0
     const _finalTotal = _8kCriticalOverride ? 0 : Math.max(0, Math.min(10, finalScore));
 
     return {
@@ -1005,16 +881,11 @@ class PriceAnalyzer {
       news:                newsScore,
       insider:             insiderScore,
       _adjFcfMargin:       adjFcfMargin,
-      _8kCriticalOverride, // signals caller to force action = 'SELL'
+      _8kCriticalOverride,
     };
   }
 
   getSignal(score, marketRegime = 'NORMAL') {
-    // Calibrated for Indian buy-and-hold investor:
-    // - BUY bar raised (was 7.0) to 7.5 — requires genuine conviction
-    // - BEAR market raises bar further: 7.5 → 8.0 (hold with conviction, no CGT event)
-    // - Wide HOLD band (4.5-7.5) prevents churn from minor fluctuations
-    // - REDUCE only at 3.5 (was 4.0) — real structural breakdown only
     const buyThreshold       = marketRegime === 'BEAR' ? 8.0 : marketRegime === 'STRESSED' ? 7.8 : 7.5;
     const strongBuyThreshold = marketRegime === 'BEAR' ? 9.0 : 8.5;
     if (score >= strongBuyThreshold) return 'STRONG_BUY';
@@ -1040,7 +911,7 @@ async function getEdgarCIK(symbol) {
       const cached = await rc.get(`edgar_cik_${symbol.toUpperCase()}`).catch(() => null);
       if (cached) { _cikCache[symbol] = cached; return cached; }
     }
-  } catch (e) { /* cache miss — fall through to fetch */ }
+  } catch (e) { /* cache miss */ }
 
   try {
     const res = await axios.get(
@@ -1052,7 +923,6 @@ async function getEdgarCIK(symbol) {
     if (match) {
       const cik = String(match.cik_str).padStart(10, '0');
       _cikCache[symbol] = cik;
-      // Persist to Redis with 24h TTL — avoids re-downloading 8MB next run
       try {
         const rc = await getRedisClient();
         if (rc) await rc.set(`edgar_cik_${symbol.toUpperCase()}`, cik, { EX: 86400 }).catch(() => {});
@@ -1094,15 +964,7 @@ async function fetchSECStockBasedComp(symbol) {
   }
 }
 
-// ─── IFRS / US-GAAP DETECTION FOR ADR / FOREIGN FILERS ──────────────────────
-// Foreign private issuers (MELI, SCCO) file 20-F using IFRS accounting.
-// fetchSECCashFlow() uses us-gaap XBRL concepts which silently return null
-// for IFRS filers — giving them a clean bill of health they haven't earned.
-// This function detects the accounting standard from EDGAR company facts
-// and flags it so the dashboard can warn users comparing IFRS margins to GAAP.
-//
-// Cached per-run in memory (CIK lookup already cached in _cikCache).
-// Returns 'US-GAAP' | 'IFRS' | 'UNKNOWN'
+// ─── IFRS / US-GAAP DETECTION ────────────────────────────────────────────────
 
 const _accountingStdCache = {};
 
@@ -1147,9 +1009,6 @@ async function fetchFilingSentiment(symbol) {
     const s = sentRes.data?.sentiment;
     if (!s) return null;
 
-    // B12 FIX: normalise pos/neg to [0,1] range before calculation.
-    // If Finnhub ever returns values as percentages (0-100), the formula would
-    // clamp everything to 10. Defensive normalisation prevents silent score corruption.
     const posRaw = s.positive ?? 0;
     const negRaw = s.negative ?? 0;
     const pos = posRaw > 1 ? posRaw / 100 : posRaw;
@@ -1180,7 +1039,6 @@ async function fetchFilingSentiment(symbol) {
 //   - Returns daysOld so calculateScore can apply decay without re-computing
 
 const MATERIAL_ITEMS_8K = {
-  // Bearish / existential — score override in calculateScore
   '1.03': { label: 'BANKRUPTCY / RECEIVERSHIP',   hint: 'critical',  icon: '🚨', scoreAdj: -5.0 },
   '3.01': { label: 'DELISTING NOTICE',            hint: 'critical',  icon: '🚫', scoreAdj: -5.0 },
   '4.02': { label: 'Non-Reliance on Financials',  hint: 'negative',  icon: '🚨', scoreAdj: -3.0 },
@@ -1189,13 +1047,11 @@ const MATERIAL_ITEMS_8K = {
   '4.01': { label: 'Auditor Change',              hint: 'negative',  icon: '⚠️', scoreAdj: -1.5 },
   '2.03': { label: 'New Debt Obligation',         hint: 'negative',  icon: '💸', scoreAdj: -1.0 },
   '5.01': { label: 'Change in Control',           hint: 'negative',  icon: '👔', scoreAdj: -1.0 },
-  // Neutral — informational
   '2.02': { label: 'Earnings Release',            hint: 'neutral',   icon: '📊', scoreAdj:  0   },
   '5.02': { label: 'Director/Officer Change',     hint: 'neutral',   icon: '👔', scoreAdj:  0   },
   '7.01': { label: 'Reg FD Disclosure',           hint: 'neutral',   icon: '📢', scoreAdj:  0   },
   '8.01': { label: 'Other Material Event',        hint: 'neutral',   icon: '📌', scoreAdj:  0   },
   '1.01': { label: 'Material Agreement',          hint: 'neutral',   icon: '📋', scoreAdj:  0   },
-  // Positive
   '2.01': { label: 'Acquisition Completed',       hint: 'positive',  icon: '🤝', scoreAdj: +1.5 },
 };
 
@@ -1212,12 +1068,9 @@ async function fetchRecent8K(symbol, instrumentIsADR = false) {
     const filings = res.data?.filings?.recent;
     if (!filings?.form?.length) return null;
 
-    // 60-day lookback (was 30) — recency decay applied in calculateScore
     const sixtyDaysAgo = new Date();
     sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
 
-    // For ADRs (foreign filers): also watch 6-K (foreign equivalent of 8-K)
-    // For domestic: 8-K and 8-K/A (amendments)
     const targetForms = instrumentIsADR
       ? new Set(['6-K', '6-K/A'])
       : new Set(['8-K', '8-K/A']);
@@ -1227,7 +1080,9 @@ async function fetchRecent8K(symbol, instrumentIsADR = false) {
       if (!targetForms.has(formType)) continue;
 
       const filingDate = new Date(filings.filingDate[i]);
-      if (filingDate < sixtyDaysAgo) break; // sorted newest first
+      // E-002 FIX: continue not break — EDGAR order not guaranteed to be strictly newest-first.
+      // A single out-of-order filing would cause break to exit early, missing critical events.
+      if (filingDate < sixtyDaysAgo) continue;
 
       const isAmendment = formType.endsWith('/A');
       const daysOld = (Date.now() - filingDate.getTime()) / 86_400_000;
@@ -1250,7 +1105,6 @@ async function fetchRecent8K(symbol, instrumentIsADR = false) {
         };
       }
 
-      // 8-K / 8-K/A: check items array against expanded dictionary
       const items = (filings.items?.[i] || '').split(',').map(s => s.trim());
       for (const item of items) {
         const meta = MATERIAL_ITEMS_8K[item];
@@ -1402,11 +1256,13 @@ function appendCsvRow(csvPath, symbol, scoreObj, priceData, spyPrice, regimeStat
   fs.appendFileSync(csvPath, line);
 }
 
+// BUG-002 FIX: return null (not 0) when history is insufficient — consistent with computeNdReturn.
+// A silent 0 pushes spyReturn21d to 0 → marketRegime forced to NORMAL when SPY data is missing.
 function compute21dReturn(historyAsc) {
-  if (!historyAsc || historyAsc.length < 22) return 0;
+  if (!historyAsc || historyAsc.length < 22) return null;
   const recent = historyAsc[historyAsc.length - 1].c;
   const prior  = historyAsc[historyAsc.length - 21].c;
-  if (!prior) return 0; // F04: guard against divide-by-zero (delisted ticker, data glitch)
+  if (!prior) return null;
   return ((recent - prior) / prior) * 100;
 }
 
@@ -1417,9 +1273,6 @@ function compute21dReturn(historyAsc) {
  * never fired. This function takes the full history and indexes correctly.
  */
 function computeNdReturn(historyAsc, n) {
-  // B13 FIX: return null (not 0) when history is too short.
-  // Returning 0 misleads the spring evaluator into treating it as a flat period.
-  // null = "insufficient data" → spring check is guarded below.
   if (!historyAsc || historyAsc.length < n + 1) return null;
   const recent = historyAsc[historyAsc.length - 1].c;
   const prior  = historyAsc[historyAsc.length - 1 - n].c;
@@ -1430,7 +1283,7 @@ function computeNdReturn(historyAsc, n) {
 function computeMaxDrawdown(historyAsc) {
   if (!historyAsc || historyAsc.length < 10) return null;
   const window = historyAsc.slice(-252);
-  let peak = -Infinity; // B4 FIX: was window[0].c — first bar trivially equalled peak, masking true starting point
+  let peak = -Infinity;
   let maxDD = 0;
   for (const bar of window) {
     if (bar.c > peak) peak = bar.c;
@@ -1453,7 +1306,6 @@ async function getPreviousSpringDays(symbol) {
     .limit(1);
   if (!data?.length) return 0;
   const prev = data[0];
-  // B6 FIX: guard against null action (pre-migration rows where action column was null)
   if (!prev?.action) return 0;
   return ['SPRING_CANDIDATE', 'SPRING_CONFIRMED'].includes(prev.action) ? (prev.spring_days ?? 0) : 0;
 }
@@ -1465,7 +1317,6 @@ async function getPreviousSpringDays(symbol) {
 
 async function fetchInsiderCached(symbol, storage) {
   const cacheKey = `insider_cache_${symbol}`;
-
   try {
     const rc = await getRedisClient();
     if (rc) {
@@ -1504,13 +1355,7 @@ async function updateMarketData() {
     logger.info(`║     Date: ${TODAY}                                   ║`);
     logger.info('╚════════════════════════════════════════════════════════════╝');
 
-    // ── Market holiday check ──────────────────────────────────────────────────
-    // FORCE_RUN=true is injected by the YAML on workflow_dispatch triggers.
-    // Manual runs bypass the market-closed gate — use for weekend/holiday
-    // testing, backfills, or inspecting scores without waiting for market open.
-    // Scheduled runs always respect the holiday check.
     const _isManualRun = process.env.FORCE_RUN === 'true';
-    // B1 FIX: wrap in try/finally so quit() is always called even if isMarketClosedToday throws
     const _holidayRedis = createRedisClient({ url: process.env.REDIS_URL });
     _holidayRedis.on('error', () => {});
     await _holidayRedis.connect().catch(() => {});
@@ -1538,7 +1383,15 @@ async function updateMarketData() {
     const spyTechnicals = await analyzer.fetchTechnicals('SPY');
     if (!spyTechnicals) { logger.error('SPY fetch failed. Aborting.'); process.exit(1); }
 
+    // BUG-002 FIX: compute21dReturn now returns null for insufficient history.
+    // Guard here — SPY null is fatal since marketRegime depends entirely on spyReturn21d.
     const spyReturn21d = compute21dReturn(spyTechnicals.historyAsc);
+    if (spyReturn21d === null) {
+      logger.error('SPY 21d return is null — insufficient price history (<22 bars). Aborting run.');
+      const client = await getRedisClient();
+      if (client) await client.quit().catch(() => {});
+      process.exit(1);
+    }
     const spyPrice     = spyTechnicals.historyDesc[0].c;
 
     const spy21dSlice = spyTechnicals.historyAsc.slice(-21);
@@ -1569,9 +1422,7 @@ async function updateMarketData() {
       (sum, s) => sum + ((s.current_price || 0) * (s.quantity || 0)), 0
     );
 
-    // ── Batch-read all intraday news scores in ONE query before the stock loop ────
-    // Previously: 1 Supabase read per stock = 18 sequential queries adding ~3-4s latency.
-    // Now: 1 query for all symbols, built into a lookup map. Same data, 18× fewer round-trips.
+    // ── Batch intraday news ───────────────────────────────────────────────────
     const intradayNewsMap = {};
     try {
       const { data: allNewsRows, error: newsErr } = await supabase
@@ -1608,10 +1459,8 @@ async function updateMarketData() {
         logger.info(`\n${'─'.repeat(60)}`);
         logger.info(`Analyzing: ${stock.symbol}`);
 
-        // Use pre-fetched map (1 query for all stocks, done before loop)
         const intradayNewsScore = intradayNewsMap[stock.symbol] ?? null;
         if (intradayNewsScore !== null) {
-          const runs = []; // already aggregated — just log the final value
           logger.info(`  📰 Intraday news score: ${intradayNewsScore.toFixed(2)}`);
         } else {
           logger.info(`  ⚪ No intraday news logged today — using neutral 5.0`);
@@ -1620,7 +1469,6 @@ async function updateMarketData() {
         const instrumentProfile   = await fetchInstrumentType(stock.symbol, process.env.FINNHUB_API_KEY);
         const profileExpenseRatio = instrumentProfile.expenseRatio;
 
-        // Three-source ETF classification
         let fmpIsEtf = false;
         if (!instrumentProfile.isETF && stock.type !== 'ETF') {
           fmpIsEtf = await checkFmpIsEtf(stock.symbol);
@@ -1631,15 +1479,9 @@ async function updateMarketData() {
           fmpIsEtf              ||
           stock.type === 'ETF'
         );
-        // ADR detection: Finnhub type='DR' = Depositary Receipt (foreign company on US exchange)
-        // Examples in portfolio: MELI (Cayman/Argentine), SCCO (Peruvian)
-        // ADRs get 6-K monitoring instead of 8-K and IFRS accounting detection
         const instrumentIsADR = !instrumentIsETF && instrumentProfile.raw === 'DR';
         const instrumentTypeName = instrumentIsETF ? 'ETF' : instrumentProfile.raw;
 
-        // IFRS detection for ADRs — fetchSECCashFlow() uses us-gaap XBRL concepts
-        // which silently return null for IFRS filers. We detect the accounting standard
-        // upfront so we can flag it in Redis and warn users comparing IFRS/GAAP margins.
         let accountingStandard = 'US-GAAP';
         if (instrumentIsADR) {
           accountingStandard = await detectAccountingStandard(stock.symbol);
@@ -1656,10 +1498,6 @@ async function updateMarketData() {
           logger.info(`  ℹ️  ${instrumentTypeName}`);
         }
 
-        // ── Auto-refresh sector/name for stocks showing 'Unknown' ────────────
-        // Runs AFTER instrumentIsETF is defined. Uses instrumentProfile (already fetched above)
-        // to avoid a redundant second call to Finnhub profile2.
-        // FIX: was making a second axios.get to profile2 — now reuses the cached profile data.
         if (!instrumentIsETF && (stock.sector === 'Unknown' || !stock.sector || stock.name === stock.symbol)) {
           try {
             const fhName     = instrumentProfile.name     ?? null;
@@ -1682,7 +1520,7 @@ async function updateMarketData() {
                 await storage.writeData(portfolio);
               }
             }
-          } catch (e) { /* non-critical — never blocks the main loop */ }
+          } catch (e) { /* non-critical */ }
         }
 
         // E7/F07 FIX: fetchFilingSentiment was called AFTER Promise.all, adding ~2s serial latency
@@ -1695,18 +1533,14 @@ async function updateMarketData() {
           instrumentIsETF ? Promise.resolve(null) : fetchInsiderCached(stock.symbol, storage),
           instrumentIsETF ? Promise.resolve(null) : (typeof quantEngine.fetchSECCashFlow === 'function' ? quantEngine.fetchSECCashFlow(stock.symbol) : Promise.resolve(null)),
           instrumentIsETF ? Promise.resolve(null) : fetchSECStockBasedComp(stock.symbol),
-          // ETFs skip 8-K; ADRs get 6-K monitoring instead (foreign filer equivalent)
           instrumentIsETF ? Promise.resolve(null) : fetchRecent8K(stock.symbol, instrumentProfile.raw === 'DR'),
-          // Filing sentiment runs in parallel — independent of all other fetches
           instrumentIsETF ? Promise.resolve(null) : fetchFilingSentiment(stock.symbol),
         ]);
 
-        // Attach SBC to fundamentals object for calculateScore to use
         if (fundamentals && sbcMillions != null && sbcMillions > 0
             && fundamentals.marketCapM > 0 && fundamentals.fcfMargin > 0) {
           fundamentals.sbcMillions    = sbcMillions;
           fundamentals.sbcToMarketCap = parseFloat((sbcMillions / fundamentals.marketCapM).toFixed(4));
-          // sbcMargin is computed inside calculateScore (Fix #2)
         }
 
         const capexException       = secCapex?.capexException       ?? false;
@@ -1719,24 +1553,16 @@ async function updateMarketData() {
           fundamentals._earningsQualityFlag = earningsQualityFlag;
         }
 
-        // Calculate score. Pass intradayNewsScore as-is (null when none logged).
-        // B12 FIX: was intradayNewsScore ?? 5.0 — coercing null to 5.0 before passing
-        // caused the log to print "Using intraday news score: 5.00" even when no news was
-        // logged. Now null is passed and calculateScore defaults to 5.0 internally.
-        // TDZ FIX: maxDrawdown was declared AFTER calculateScore() used it as an arg.
-// JavaScript const has temporal dead zone — accessing before declaration throws
-// ReferenceError and crashes the entire stock loop. Moved here so it is
-// available at the call site. Also removed from the calculateScore arg list:
-// calculateScore() has no 12th param — it was being silently discarded anyway.
-const maxDrawdown   = technicals ? computeMaxDrawdown(technicals.historyAsc) : null;
+        // TDZ FIX: maxDrawdown declared before calculateScore to avoid temporal dead zone crash.
+        const maxDrawdown = technicals ? computeMaxDrawdown(technicals.historyAsc) : null;
 
         const scoreObj = analyzer.calculateScore(
           priceData, fundamentals, technicals,
           ratings, null, insiderData, capexException,
-          intradayNewsScore,   // null when no intraday news — calculateScore handles it
+          intradayNewsScore,
           instrumentIsETF,
           instrumentIsETF ? (profileExpenseRatio ?? null) : null,
-          recent8K             // 8-K/6-K event for recency-weighted score adjustment
+          recent8K
         );
 
         // B5 FIX: Capture raw GAAP FCF margin BEFORE mutating fundamentals.fcfMargin.
@@ -1745,8 +1571,9 @@ const maxDrawdown   = technicals ? computeMaxDrawdown(technicals.historyAsc) : n
         // Now both are available: raw for the DB column, adjusted for the scoring column.
         const _rawFcfMarginForDB = fundamentals?.fcfMargin ?? null;
         if (fundamentals && scoreObj._adjFcfMargin !== null) {
-          fundamentals.fcfMargin = scoreObj._adjFcfMargin; // adjusted — used by score
+          fundamentals.fcfMargin = scoreObj._adjFcfMargin;
         }
+
         const realizedVol   = technicals ? quantEngine.computeVolatility(technicals.historyAsc) : null;
         const momentumLabel = technicals ? quantEngine.evaluateMomentum(technicals.historyAsc) : 'NEUTRAL';
 
@@ -1754,8 +1581,6 @@ const maxDrawdown   = technicals ? computeMaxDrawdown(technicals.historyAsc) : n
         const fcfYield  = fundamentals?.fcfYield   ?? null;
         const revenueGrowthPct = fundamentals?._raw?.revenueGrowthPct ?? null;
         const grossMarginPct   = fundamentals?._raw?.grossMarginPct   ?? null;
-
-        // (filingSentiment now fetched in parallel via Promise.all above — E7/F07)
 
         if (instrumentIsETF) {
           logger.info(`  📊 [ETF] Tech(${scoreObj.tech.toFixed(1)}) Analyst(${scoreObj.rating.toFixed(1)}) News(${scoreObj.news.toFixed(1)}) → Total(${scoreObj.total.toFixed(1)}) | MaxDD: ${maxDrawdown ?? '—'}%`);
@@ -1775,12 +1600,10 @@ const maxDrawdown   = technicals ? computeMaxDrawdown(technicals.historyAsc) : n
 
         if (technicals && spyTechnicals) {
           beta = quantEngine.calculateBeta(technicals.historyAsc, spyTechnicals.historyAsc);
-          const stockReturn21d = compute21dReturn(technicals.historyAsc);
+          // BUG-002: compute21dReturn now returns null for insufficient history.
+          // Stock-level null → 0 is acceptable (stock may be new/thin data); SPY null is fatal (aborted above).
+          const stockReturn21d = compute21dReturn(technicals.historyAsc) ?? 0;
           excessReturn = quantEngine.calculateExcessReturn(stockReturn21d, beta, spyReturn21d);
-          // Widened regime thresholds for long-term compounder (was -3/-8, too tight).
-          // -3% over 21 days is normal volatility; false WATCH signals cost Indian CGT.
-          // -5/-12 calibrated for 3-7yr holding horizon.
-          const _rawRegime = quantEngine.classifyRegime(excessReturn);
           noiseDecay = excessReturn > -5  ? 'MARKET_NOISE'
                      : excessReturn > -12 ? 'WATCH'
                      : 'IDIOSYNCRATIC_DECAY';
@@ -1819,7 +1642,6 @@ const maxDrawdown   = technicals ? computeMaxDrawdown(technicals.historyAsc) : n
             ? quantEngine.evaluateFractalDecay(history252d, noiseDecay, { w1: _w1Days, w2: _w2Days })
             : noiseDecay;
 
-          // Guard: _w1Trigger etc. are private — may not be exported in all quant-engine versions
           const _hasW = typeof quantEngine._w1Trigger === 'function';
           w1 = (_hasW && history252d.length >= _w1Days) ? quantEngine._w1Trigger(history252d.slice(-_w1Days)) : false;
           w2 = (_hasW && history252d.length >= _w2Days) ? quantEngine._w2Trigger(history252d.slice(-_w2Days)) : false;
@@ -1837,7 +1659,6 @@ const maxDrawdown   = technicals ? computeMaxDrawdown(technicals.historyAsc) : n
 
           const history20d     = technicals.historyAsc.slice(-20);
           const prevSpringDays = await getPreviousSpringDays(stock.symbol);
-          // B1 FIX: was compute21dReturn(historyAsc.slice(-8)) → NaN (slice of 8 bars, then [8-21]=-13 → undefined)
           const excessReturn7d = computeNdReturn(technicals.historyAsc, 7);
 
           // B13: guard — null means < 8 bars of history, spring signal is unreliable
@@ -1847,8 +1668,11 @@ const maxDrawdown   = technicals ? computeMaxDrawdown(technicals.historyAsc) : n
           const _springQualThreshold = (fundamentals?._hypergrowthMode || (fundamentals?._moatScore ?? 0) > 6.5)
             ? 6.0 : 7.0;
           const _springExcessAdj = excessReturn7d !== null ? Math.max(excessReturn7d, -8) : null;
+          // S-001 FIX: removed Math.max(0.001) — the B01-ZB fix allows negative excess returns
+          // for spring detection, but the clamp silently converted them to near-zero positive,
+          // preventing springs on beaten-down quality stocks (exactly the use case we want).
           springSignal = _springExcessAdj !== null && scoreObj.fund > _springQualThreshold
-            ? quantEngine.evaluateSpring(history20d, scoreObj.fund, Math.max(_springExcessAdj, 0.001))
+            ? quantEngine.evaluateSpring(history20d, scoreObj.fund, _springExcessAdj)
             : false;
 
           if (springSignal) {
@@ -1870,8 +1694,6 @@ const maxDrawdown   = technicals ? computeMaxDrawdown(technicals.historyAsc) : n
           if (addSignal && !['TRIM_25', 'SELL', 'SPRING_CANDIDATE', 'SPRING_CONFIRMED'].includes(action)) action = 'ADD';
         }
 
-        // Critical 8-K override: bankruptcy (1.03) or delisting (3.01) forces SELL
-        // regardless of regime or spring status. Score was already overridden to 0.
         if (scoreObj._8kCriticalOverride) {
           action = 'SELL';
           logger.warn(`  🚨 CRITICAL 8-K OVERRIDE: action forced to SELL (${recent8K?.label})`);
@@ -1887,11 +1709,9 @@ const maxDrawdown   = technicals ? computeMaxDrawdown(technicals.historyAsc) : n
           : null;
         if (_gainPct !== null && !scoreObj._8kCriticalOverride) {
           if (action === 'SELL' && _gainPct > 100 && !w4) {
-            // Require W4 (252-day structural decline) before SELL on large winners
             action = 'TRIM_25';
             logger.info(`  🇮🇳 Tax gate: SELL→TRIM_25 (${_gainPct.toFixed(0)}% gain, no W4 confirmation)`);
           } else if (action === 'TRIM_25' && _gainPct > 200 && !w4) {
-            // Very large gain: downgrade TRIM to WATCH — W4 still absent
             action = 'WATCH';
             logger.info(`  🇮🇳 Tax gate: TRIM_25→WATCH (${_gainPct.toFixed(0)}% gain, no W4 — tax cost likely > protection value)`);
           }
@@ -1915,18 +1735,21 @@ const maxDrawdown   = technicals ? computeMaxDrawdown(technicals.historyAsc) : n
           await writeSupabaseQuarterlyFundamentals(
             stock.symbol, fundamentals, secCapex, _fiscalPeriod,
             fundamentals?._raw?.sharesOutstandingM ?? null,
-            _rawFcfMarginForDB  // B5: raw GAAP FCF margin before SBC adjustment
+            _rawFcfMarginForDB
           );
         }
 
         const redisUpdates = {
           latest_score:    Math.round(scoreObj.total * 10) / 10,
           signal:          action,
-          classic_signal:  analyzer.getSignal(scoreObj.total, marketRegime?.regime ?? 'NORMAL'),
+          // BUG-001 FIX: marketRegime is a plain string, not an object.
+          // marketRegime?.regime was always undefined → ?? 'NORMAL' always fired.
+          // classic_signal never adjusted for BEAR/STRESSED conditions.
+          classic_signal:  analyzer.getSignal(scoreObj.total, marketRegime ?? 'NORMAL'),
           instrument_type:       instrumentIsETF ? 'ETF' : (instrumentIsADR ? 'ADR' : 'Stock'),
           expense_ratio:         profileExpenseRatio ?? null,
-          accounting_standard:   accountingStandard,   // 'US-GAAP' | 'IFRS' | 'UNKNOWN'
-          is_foreign_filer:      instrumentIsADR,       // dashboard can show IFRS badge
+          accounting_standard:   accountingStandard,
+          is_foreign_filer:      instrumentIsADR,
           current_price:   priceData?.price        ?? stock.current_price,
           change_percent:  priceData?.changePercent ?? stock.change_percent,
           score_breakdown: scoreObj,
@@ -1985,8 +1808,6 @@ const maxDrawdown   = technicals ? computeMaxDrawdown(technicals.historyAsc) : n
         logger.info(`  ✅ ${stock.symbol} complete → ${action}`);
 
       } catch (e) {
-        // Single template string — avoids pino two-arg format which shows "- undefined" 
-        // when e.message is empty/undefined. Includes stack for root cause identification.
         const _eMsg = e instanceof Error ? e.message || e.constructor.name : String(e);
         const _eStack = e instanceof Error && e.stack
           ? ' | ' + e.stack.split(/\r?\n/).slice(1, 3).map(s => s.trim()).join(' > ')
