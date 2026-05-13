@@ -162,30 +162,59 @@ async function fetchEarningsPressRelease(symbol) {
       return null;
     }
 
-    const accessionRaw       = filings.accessionNumber[idx].replace(/-/g, '');
-    const accessionFormatted = filings.accessionNumber[idx];
-    const cikNum             = cik.replace(/^0+/, '');
+    const accessionRaw = filings.accessionNumber[idx].replace(/-/g, '');
+    const cikNum       = cik.replace(/^0+/, '');
 
-    const indexUrl = `https://www.sec.gov/Archives/edgar/data/${cikNum}/${accessionRaw}/${accessionFormatted}-index.htm`;
-    const indexRes = await axios.get(indexUrl, {
-      headers: { 'User-Agent': 'AlphaDashboard/1.0 (portfolio@example.com)' },
-      timeout: 8000,
-    });
+    // Use structured index.json instead of parsing index.htm HTML.
+    // index.json has { directory: { item: [{ name, type, size }] } } — reliable regardless
+    // of how the company names its exhibit files (ex991.htm, pressrelease.htm, etc.)
+    // This fixes the "no ex-99.1 found" failure for companies like CEG that use
+    // non-standard exhibit filenames.
+    const indexJsonUrl = `https://www.sec.gov/Archives/edgar/data/${cikNum}/${accessionRaw}/index.json`;
+    let ex991Name = null;
+    try {
+      const idxRes = await axios.get(indexJsonUrl, {
+        headers: { 'User-Agent': 'AlphaDashboard/1.0 (portfolio@example.com)' },
+        timeout: 8000,
+      });
+      const items = idxRes.data?.directory?.item ?? [];
+      // Find by document type 'EX-99.1' — works regardless of filename
+      const ex991Item = items.find(i =>
+        i.type === 'EX-99.1' ||
+        i.type === 'EX-99' ||
+        /ex-?99[-_.]?1/i.test(i.name ?? '')
+      );
+      ex991Name = ex991Item?.name ?? null;
+    } catch (e) {
+      console.warn(`  ${symbol}: index.json fetch failed (${e.message}) — trying filename regex fallback`);
+    }
 
-    const html        = indexRes.data;
-    const ex991Match  = html.match(
-      /href="([^"]*(?:ex-?99[-_.]?1|exhibit[-_]?99[-_.]?1|ex99[-_.]1|item99[-_.]?1)[^"]*\.htm[^"]*)"[^>]*>/i
-    );
+    // Fallback: if index.json failed, try index.htm HTML regex (original approach)
+    if (!ex991Name) {
+      try {
+        const accessionFormatted = filings.accessionNumber[idx];
+        const htmUrl = `https://www.sec.gov/Archives/edgar/data/${cikNum}/${accessionRaw}/${accessionFormatted}-index.htm`;
+        const htmRes = await axios.get(htmUrl, {
+          headers: { 'User-Agent': 'AlphaDashboard/1.0 (portfolio@example.com)' },
+          timeout: 8000,
+        });
+        const match = htmRes.data.match(
+          /href="([^"]*(?:ex-?99[-_.]?1|exhibit[-_]?99[-_.]?1|ex99[-_.]?1|pressrelease)[^"]*\.htm[^"]*)"[^>]*>/i
+        );
+        if (match) {
+          // Extract just the filename from the href
+          ex991Name = match[1].split('/').pop();
+        }
+      } catch (e) { /* htm fallback also failed */ }
+    }
 
-    if (!ex991Match) {
+    if (!ex991Name) {
       console.log(`  ${symbol}: 8-K filed but no ex-99.1 press release found`);
       return { summary: `8-K filed ${today}`, source: 'filing_index' };
     }
 
-    const docPath = ex991Match[1].startsWith('/')
-      ? ex991Match[1]
-      : `/Archives/edgar/data/${cikNum}/${accessionRaw}/${ex991Match[1]}`;
-    const docRes = await axios.get(`https://www.sec.gov${docPath}`, {
+    const docUrl = `https://www.sec.gov/Archives/edgar/data/${cikNum}/${accessionRaw}/${ex991Name}`;
+    const docRes = await axios.get(docUrl, {
       headers: { 'User-Agent': 'AlphaDashboard/1.0 (portfolio@example.com)' },
       timeout: 10000,
     });
