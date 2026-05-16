@@ -337,6 +337,28 @@ class PriceAnalyzer {
           else if (sharesYoY < -1) dilutionFlag = 'buyback';
         }
 
+        // ── Valuation ratios — all from existing Finnhub metric response ──────
+        // No additional API calls needed. These fields are in the same /stock/metric response.
+        const peTTM        = m.peTTM        > 0 ? parseFloat(m.peTTM.toFixed(1))        : null;
+        const forwardPE    = m.forwardPE    > 0 ? parseFloat(m.forwardPE.toFixed(1))    : null;
+        const psTTM        = m.psTTM        > 0 ? parseFloat(m.psTTM.toFixed(2))        : null;
+        const pbAnnual     = m.pbAnnual     > 0 ? parseFloat(m.pbAnnual.toFixed(2))     : null;
+        const evEbitdaTTM  = m.currentEv    > 0 && m.ebitdaTTM > 0
+          ? parseFloat((m.currentEv / m.ebitdaTTM).toFixed(1)) : null;
+        const netMarginTTM = m.netMarginTTM != null
+          ? parseFloat(m.netMarginTTM.toFixed(2)) : null;
+        const epsGrowth3Y  = m['epsGrowth3Y'] != null
+          ? parseFloat(m['epsGrowth3Y'].toFixed(2)) : null;
+
+        // PEG ratio: PE / EPS growth rate (use trailing PE and 3Y EPS CAGR)
+        // <1 = undervalued relative to growth, >2 = expensive relative to growth
+        // Use forward PE if trailing unavailable; use revenue growth as proxy if EPS growth missing
+        const _peForPeg  = forwardPE ?? peTTM ?? null;
+        const _growthPeg = epsGrowth3Y ?? ((m['revenueGrowth3Y'] || 0));
+        const pegRatio   = (_peForPeg != null && _growthPeg > 0)
+          ? parseFloat((_peForPeg / _growthPeg).toFixed(2))
+          : null;
+
         return {
           roic:          (m.roicTTM || m.roiAnnual || 0) / 100,
           fcfMargin:     fcfMarginRaw,
@@ -352,6 +374,15 @@ class PriceAnalyzer {
           _grossMargin5Y: grossMargin5Y,
           dilutionFlag,
           sharesYoYPct:  sharesYoY,
+          // New valuation ratios
+          peTTM,
+          forwardPE,
+          psTTM,
+          pbAnnual,
+          evEbitdaTTM,
+          netMarginTTM,
+          epsGrowth3Y,
+          pegRatio,
           _raw: {
             roicPct:            (m.roicTTM || m.roiAnnual || 0),
             grossMarginPct:     (m.grossMarginTTM || m.grossMarginAnnual || 0),
@@ -366,6 +397,11 @@ class PriceAnalyzer {
             sharesOutstandingM: sharesNow,
             cashM:      m.cashAndEquivalentsAnnual || 0,
             totalDebtM: m.totalDebtAnnual || 0,
+            netMarginPct:   netMarginTTM,
+            peTTM,
+            forwardPE,
+            psTTM,
+            pegRatio,
           }
         };
       }
@@ -1762,6 +1798,14 @@ async function updateMarketData() {
           moat_score:          moatScore,
           fcf_yield:           fcfYield != null ? parseFloat(fcfYield.toFixed(4)) : null,
           ev_fcf:              fundamentals?.evFcf != null ? parseFloat(fundamentals.evFcf.toFixed(1)) : null,
+          pe_ttm:              fundamentals?.peTTM       ?? null,
+          forward_pe:          fundamentals?.forwardPE   ?? null,
+          ps_ttm:              fundamentals?.psTTM       ?? null,
+          pb_annual:           fundamentals?.pbAnnual    ?? null,
+          ev_ebitda:           fundamentals?.evEbitdaTTM ?? null,
+          net_margin_pct:      fundamentals?.netMarginTTM ?? null,
+          eps_growth_3y:       fundamentals?.epsGrowth3Y ?? null,
+          peg_ratio:           fundamentals?.pegRatio    ?? null,
           max_drawdown:        maxDrawdown,
           revenue_growth_pct:  revenueGrowthPct != null ? parseFloat(revenueGrowthPct.toFixed(1)) : null,
           revenue_growth_3y:   fundamentals?._raw?.revenueGrowth3YPct != null ? parseFloat(fundamentals._raw.revenueGrowth3YPct.toFixed(1)) : null,
