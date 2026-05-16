@@ -563,25 +563,81 @@ const DetailPanel = ({ stock }) => {
             </div>
           )}
 
-          {!isETF && (fcfYieldPct != null || stock.ev_fcf != null) && (
-            <div className="detail-section">
-              <div className="detail-section-head">
-                <span className="detail-section-title">💰 Valuation</span>
+          {!isETF && (fcfYieldPct != null || stock.ev_fcf != null || stock.pe_ttm != null || stock.forward_pe != null) && (() => {
+            // PEG interpretation: <1 = undervalued vs growth, 1-2 = fair, >2 = expensive vs growth
+            const pegColor = stock.peg_ratio == null ? '#6b7280'
+                           : stock.peg_ratio < 1    ? '#059669'
+                           : stock.peg_ratio < 2    ? '#6b7280'
+                           : '#dc2626';
+            const evFcfColor = stock.ev_fcf == null ? '#6b7280'
+                             : stock.ev_fcf < 15    ? '#059669'
+                             : stock.ev_fcf < 25    ? '#6b7280'
+                             : stock.ev_fcf < 40    ? '#d97706'
+                             : '#dc2626';
+            return (
+              <div className="detail-section">
+                <div className="detail-section-head">
+                  <span className="detail-section-title">💰 Valuation</span>
+                </div>
+                <div className="detail-rows">
+                  {stock.forward_pe != null && (
+                    <FundRow label="Forward P/E"
+                      value={`${stock.forward_pe.toFixed(1)}×`}
+                      hint="Price vs next-12-month earnings estimate. The market's growth expectation baked into price."
+                      positive={stock.forward_pe < 25} />
+                  )}
+                  {stock.pe_ttm != null && (
+                    <FundRow label="Trailing P/E"
+                      value={`${stock.pe_ttm.toFixed(1)}×`}
+                      hint="Price vs trailing-12-month actual earnings."
+                      positive={stock.pe_ttm < 30} />
+                  )}
+                  {stock.peg_ratio != null && (
+                    <FundRow label="PEG Ratio"
+                      value={<span style={{ color: pegColor }}>{stock.peg_ratio.toFixed(2)}×</span>}
+                      hint="P/E divided by EPS growth rate. <1 = undervalued vs growth, 1-2 = fair, >2 = growth already priced in."
+                      positive={stock.peg_ratio < 1.5} />
+                  )}
+                  <FundRow label="FCF Yield"
+                    value={fcfYieldPct != null ? `${fcfYieldPct.toFixed(2)}%` : null}
+                    hint={fcfYieldPct != null
+                      ? `${fcfYieldPct > 5 ? 'Cheap entry' : fcfYieldPct > 3 ? 'Fair value' : fcfYieldPct > 1.5 ? 'Expensive' : 'Very expensive'} — FCF yield ${fcfYieldPct.toFixed(1)}%. >5% = strong cash return on price.`
+                      : 'FCF yield updates after next EOD run.'}
+                    positive={fcfYieldPct != null && fcfYieldPct > 3} />
+                  {stock.ev_fcf != null && (
+                    <FundRow label="EV/FCF"
+                      value={<span style={{ color: evFcfColor }}>{stock.ev_fcf.toFixed(1)}×</span>}
+                      hint="Enterprise value vs free cash flow. <15× = cheap, 15-25× = fair, >40× = expensive for a compounder."
+                      positive={stock.ev_fcf < 25} />
+                  )}
+                  {stock.ev_ebitda != null && (
+                    <FundRow label="EV/EBITDA"
+                      value={`${stock.ev_ebitda.toFixed(1)}×`}
+                      hint="Enterprise value vs EBITDA. Useful for capital-intensive or pre-FCF businesses. <12× = cheap."
+                      positive={stock.ev_ebitda < 15} />
+                  )}
+                  {stock.ps_ttm != null && (
+                    <FundRow label="Price/Sales"
+                      value={`${stock.ps_ttm.toFixed(1)}×`}
+                      hint="Price vs revenue. Useful when earnings are negative. >10× requires very high margin expectations."
+                      positive={stock.ps_ttm < 5} />
+                  )}
+                  {stock.net_margin_pct != null && (
+                    <FundRow label="Net Margin"
+                      value={`${stock.net_margin_pct.toFixed(1)}%`}
+                      hint="Net income as % of revenue (GAAP). High margin = pricing power + operational leverage."
+                      positive={stock.net_margin_pct > 15} />
+                  )}
+                  {stock.eps_growth_3y != null && (
+                    <FundRow label="EPS Growth (3Y)"
+                      value={`${stock.eps_growth_3y >= 0 ? '+' : ''}${stock.eps_growth_3y.toFixed(1)}%`}
+                      hint="3-year EPS CAGR. Compared against P/E in PEG ratio to assess if growth is priced in."
+                      positive={stock.eps_growth_3y > 10} />
+                  )}
+                </div>
               </div>
-              <div className="detail-rows">
-                <FundRow label="Free Cash Flow Yield"
-                  value={fcfYieldPct != null ? `${fcfYieldPct.toFixed(2)}%` : (stock.fcf_yield === 0 ? 'Pending data' : null)}
-                  hint={fcfYieldPct != null
-                    ? `FCF yield ${fcfYieldPct.toFixed(1)}% — ${fcfYieldPct > 5 ? 'cheap entry' : fcfYieldPct > 3 ? 'fair value' : fcfYieldPct > 1.5 ? 'expensive' : 'very expensive'}`
-                    : 'FCF yield will update after next EOD run.'}
-                  positive={fcfYieldPct != null && fcfYieldPct > 3} />
-                <FundRow label="EV/FCF"
-                  value={stock.ev_fcf != null ? `${stock.ev_fcf.toFixed(1)}×` : null}
-                  hint="Enterprise value vs free cash flow. Under 15× = cheap, 15-25× = fair, over 40× = expensive."
-                  positive={stock.ev_fcf != null ? stock.ev_fcf < 25 : undefined} />
-              </div>
-            </div>
-          )}
+            );
+          })()}
 
           {!isETF && (stock.momentum_label != null || stock.sma200 != null || stock.realized_vol != null) && (() => {
             const price = stock.current_price;
