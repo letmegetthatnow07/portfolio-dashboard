@@ -1183,6 +1183,251 @@ const FilingNarrativeCard = ({ symbol, filingForm }) => {
   );
 };
 
+
+// ── HistoryView ───────────────────────────────────────────────────────────────
+// Shows 15 or 30 days of score history per stock from Supabase daily_metrics.
+// Colour-codes each cell by score direction vs previous day.
+// Calendar picker lets Jake look further back.
+
+const SCORE_COLS = [
+  { key: 'total_score',   label: 'Total',   w: 55 },
+  { key: 'fund_score',    label: 'Fund',    w: 45 },
+  { key: 'tech_score',    label: 'Tech',    w: 45 },
+  { key: 'news_score',    label: 'News',    w: 45 },
+  { key: 'insider_score', label: 'Insider', w: 55 },
+  { key: 'signal',        label: 'Signal',  w: 90 },
+];
+
+const SIGNAL_COLOR = {
+  STRONG_BUY:        '#059669',
+  BUY:               '#10b981',
+  ADD:               '#34d399',
+  SPRING_CONFIRMED:  '#06b6d4',
+  SPRING_CANDIDATE:  '#67e8f9',
+  HOLD:              '#6b7280',
+  HOLD_NOISE:        '#4b5563',
+  MARKET_NOISE:      '#4b5563',
+  NORMAL:            '#4b5563',
+  WATCH:             '#d97706',
+  REDUCE:            '#f97316',
+  TRIM_25:           '#ef4444',
+  SELL:              '#dc2626',
+  IDIOSYNCRATIC_DECAY: '#991b1b',
+  INSUFFICIENT_DATA: '#374151',
+};
+
+function scoreCell(val, prev) {
+  if (val == null) return { bg: '#111', color: '#374151', text: '—' };
+  const num   = parseFloat(val);
+  const delta = prev != null ? num - parseFloat(prev) : 0;
+  const bg    = delta >  0.3 ? '#052e16'
+              : delta < -0.3 ? '#2d0a0a'
+              : '#0f1117';
+  const color = num >= 7.5 ? '#10b981'
+              : num >= 6.0 ? '#34d399'
+              : num >= 4.5 ? '#9ca3af'
+              : num >= 3.5 ? '#f97316'
+              : '#ef4444';
+  const arrow = delta >  0.3 ? ' ↑' : delta < -0.3 ? ' ↓' : '';
+  return { bg, color, text: num.toFixed(1) + arrow };
+}
+
+function fmtDate(iso) {
+  const d = new Date(iso + 'T12:00:00Z');
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+}
+
+const HistoryView = ({ stocks }) => {
+  const [days,      setDays]      = React.useState(15);
+  const [fromDate,  setFromDate]  = React.useState('');
+  const [toDate,    setToDate]    = React.useState('');
+  const [history,   setHistory]   = React.useState(null);
+  const [loading,   setLoading]   = React.useState(false);
+  const [error,     setError]     = React.useState(null);
+  const [useCustom, setUseCustom] = React.useState(false);
+
+  const symbols = (stocks || []).map(s => s.symbol);
+
+  const load = useCallback(async () => {
+    if (!symbols.length) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({ symbols: symbols.join(',') });
+      if (useCustom && fromDate && toDate) {
+        params.set('from', fromDate);
+        params.set('to',   toDate);
+      } else {
+        params.set('days', days);
+      }
+      const res = await fetch(`/api/portfolio/history?${params}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      setHistory(json);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [symbols.join(','), days, fromDate, toDate, useCustom]);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  if (loading) return (
+    <div style={{ padding: 40, textAlign: 'center', color: '#6b7280', fontSize: 13 }}>
+      Loading history…
+    </div>
+  );
+  if (error) return (
+    <div style={{ padding: 40, textAlign: 'center', color: '#dc2626', fontSize: 13 }}>
+      ⚠ {error}
+    </div>
+  );
+  if (!history) return null;
+
+  const { dates, rows } = history; // dates = ['2026-05-01', ...], rows = [{ symbol, data: { date: {col: val} } }]
+
+  return (
+    <div style={{ padding: '16px 0' }}>
+      {/* Controls */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12, color: '#6b7280', fontWeight: 600 }}>SHOW:</span>
+        {[15, 30].map(d => (
+          <button key={d} onClick={() => { setDays(d); setUseCustom(false); }}
+            style={{
+              padding: '4px 12px', borderRadius: 4, border: '1px solid',
+              fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-mono)',
+              background:   !useCustom && days === d ? 'var(--green)' : 'transparent',
+              borderColor:  !useCustom && days === d ? 'var(--green)' : '#374151',
+              color:        !useCustom && days === d ? '#000' : '#9ca3af',
+            }}>
+            {d}d
+          </button>
+        ))}
+        <span style={{ fontSize: 12, color: '#374151' }}>|</span>
+        <span style={{ fontSize: 12, color: '#6b7280', fontWeight: 600 }}>CUSTOM:</span>
+        <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)}
+          style={{ background: '#111', color: '#d4d4d0', border: '1px solid #374151',
+            borderRadius: 4, padding: '3px 8px', fontSize: 12, fontFamily: 'var(--font-mono)' }} />
+        <span style={{ color: '#6b7280', fontSize: 12 }}>→</span>
+        <input type="date" value={toDate} onChange={e => setToDate(e.target.value)}
+          style={{ background: '#111', color: '#d4d4d0', border: '1px solid #374151',
+            borderRadius: 4, padding: '3px 8px', fontSize: 12, fontFamily: 'var(--font-mono)' }} />
+        <button onClick={() => { setUseCustom(true); load(); }}
+          disabled={!fromDate || !toDate}
+          style={{
+            padding: '4px 12px', borderRadius: 4, border: '1px solid #374151',
+            fontSize: 12, cursor: fromDate && toDate ? 'pointer' : 'not-allowed',
+            background: useCustom ? 'var(--green)' : 'transparent',
+            color: useCustom ? '#000' : '#9ca3af',
+            fontFamily: 'var(--font-mono)',
+          }}>
+          Apply
+        </button>
+      </div>
+
+      {/* Grid */}
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ borderCollapse: 'collapse', fontSize: 11, fontFamily: 'var(--font-mono)', minWidth: '100%' }}>
+          <thead>
+            <tr>
+              {/* Stock name column */}
+              <th style={{ position: 'sticky', left: 0, zIndex: 2, background: '#0a0a0f',
+                textAlign: 'left', padding: '6px 12px 6px 4px', color: '#6b7280',
+                fontWeight: 700, letterSpacing: 1, borderBottom: '1px solid #1f2937',
+                minWidth: 90, whiteSpace: 'nowrap' }}>
+                STOCK
+              </th>
+              {/* Score type label row */}
+              {dates.map(date => (
+                <th key={date} colSpan={SCORE_COLS.length}
+                  style={{ textAlign: 'center', padding: '4px 2px',
+                    color: '#4b5563', fontWeight: 600, fontSize: 10,
+                    borderBottom: '1px solid #1f2937', borderLeft: '1px solid #1f2937',
+                    whiteSpace: 'nowrap' }}>
+                  {fmtDate(date)}
+                </th>
+              ))}
+            </tr>
+            <tr>
+              <th style={{ position: 'sticky', left: 0, zIndex: 2, background: '#0a0a0f',
+                borderBottom: '1px solid #1f2937' }} />
+              {dates.map(date =>
+                SCORE_COLS.map(col => (
+                  <th key={`${date}-${col.key}`}
+                    style={{ padding: '3px 2px', color: '#374151', fontWeight: 600,
+                      fontSize: 9, letterSpacing: 0.5, textAlign: 'center',
+                      borderBottom: '1px solid #1f2937',
+                      borderLeft: col.key === 'total_score' ? '1px solid #1f2937' : 'none',
+                      minWidth: col.w, whiteSpace: 'nowrap' }}>
+                    {col.label.toUpperCase()}
+                  </th>
+                ))
+              )}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, ri) => (
+              <tr key={row.symbol}
+                style={{ background: ri % 2 === 0 ? '#0a0a0f' : '#0d0d14' }}>
+                <td style={{ position: 'sticky', left: 0, zIndex: 1,
+                  background: ri % 2 === 0 ? '#0a0a0f' : '#0d0d14',
+                  padding: '5px 12px 5px 4px', fontWeight: 700, color: '#d4d4d0',
+                  borderBottom: '1px solid #0f1117', whiteSpace: 'nowrap' }}>
+                  {row.symbol}
+                </td>
+                {dates.map((date, di) => {
+                  const prev = di > 0 ? dates[di - 1] : null;
+                  const d    = row.data[date]      ?? {};
+                  const dp   = prev ? (row.data[prev] ?? {}) : {};
+                  return SCORE_COLS.map(col => {
+                    if (col.key === 'signal') {
+                      const sig = d.signal || null;
+                      return (
+                        <td key={`${date}-${col.key}`}
+                          style={{ padding: '5px 3px', textAlign: 'center',
+                            borderBottom: '1px solid #0f1117',
+                            borderLeft: '1px solid #1f2937' }}>
+                          {sig
+                            ? <span style={{ fontSize: 9, fontWeight: 700,
+                                color: SIGNAL_COLOR[sig] ?? '#6b7280',
+                                letterSpacing: 0.3 }}>
+                                {sig.replace(/_/g, ' ')}
+                              </span>
+                            : <span style={{ color: '#1f2937' }}>—</span>}
+                        </td>
+                      );
+                    }
+                    const cell = scoreCell(d[col.key], dp[col.key]);
+                    return (
+                      <td key={`${date}-${col.key}`}
+                        style={{ padding: '5px 3px', textAlign: 'center',
+                          background: cell.bg, color: cell.color, fontWeight: 600,
+                          borderBottom: '1px solid #0f1117',
+                          borderLeft: col.key === 'total_score' ? '1px solid #1f2937' : 'none' }}>
+                        {cell.text}
+                      </td>
+                    );
+                  });
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Legend */}
+      <div style={{ display: 'flex', gap: 16, marginTop: 12, fontSize: 10, color: '#4b5563', flexWrap: 'wrap' }}>
+        <span>↑ = improved &gt;0.3 pts vs prior day</span>
+        <span>↓ = declined &gt;0.3 pts vs prior day</span>
+        <span style={{ color: '#10b981' }}>■ green bg = improving</span>
+        <span style={{ color: '#ef4444' }}>■ red bg = deteriorating</span>
+        <span>Dates shown = trading days only</span>
+      </div>
+    </div>
+  );
+};
+
 // ── Modal ─────────────────────────────────────────────────────────────────────
 const Modal = ({ onClose, children, wide = false }) =>
   createPortal(
@@ -1198,6 +1443,7 @@ const Modal = ({ onClose, children, wide = false }) =>
 // ── Main Component ────────────────────────────────────────────────────────────
 const EnhancedPortfolioDashboard = () => {
   const [portfolio, setPortfolio] = useState([]);
+  const [activeTab, setActiveTab] = useState('portfolio'); // 'portfolio' | 'history'
   const [stats, setStats] = useState(null);
   const [marketRegime, setMarketRegime] = useState({ regime: 'NORMAL', spy21d: 0 });
   const [loading, setLoading] = useState(true);
@@ -1388,6 +1634,30 @@ const EnhancedPortfolioDashboard = () => {
         </div>
       </div>
 
+      {/* ── Tab Navigation ─────────────────────────────────────── */}
+      <div style={{
+        display: 'flex', gap: 0, marginBottom: 0,
+        borderBottom: '1px solid #1f2937',
+      }}>
+        {[
+          { id: 'portfolio', label: '📊 Portfolio' },
+          { id: 'history',   label: '📅 History' },
+        ].map(tab => (
+          <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+            style={{
+              padding: '10px 20px', border: 'none', cursor: 'pointer',
+              fontSize: 13, fontWeight: 600, fontFamily: 'var(--font-mono)',
+              background: 'transparent',
+              color:       activeTab === tab.id ? 'var(--green)' : '#6b7280',
+              borderBottom: activeTab === tab.id ? '2px solid var(--green)' : '2px solid transparent',
+              transition: 'all 0.15s',
+            }}>
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'portfolio' && (<>
       <div className="summary-section">
         <div className="stats-grid">
           <div className="stat-card accent-card">
@@ -1639,7 +1909,11 @@ const EnhancedPortfolioDashboard = () => {
         )}
       </div>
 
+      </>)}
       <CorrelationHeatmap />
+
+      {/* ── History Tab ──────────────────────────────────────────── */}
+      {activeTab === 'history' && <HistoryView stocks={portfolio} />}
 
       {/* Add / Edit Modal */}
       {showForm && (
