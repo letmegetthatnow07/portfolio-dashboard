@@ -1246,14 +1246,17 @@ const HistoryView = ({ stocks }) => {
   const [error,     setError]     = React.useState(null);
   const [useCustom, setUseCustom] = React.useState(false);
 
-  const symbols = (stocks || []).map(s => s.symbol);
+  // Stable string key: only changes when the set of symbols changes, not on every
+  // new array reference. Extracted to a variable so react-hooks/exhaustive-deps
+  // can statically verify the useCallback dependency array.
+  const symbolsKey = (stocks || []).map(s => s.symbol).join(',');
 
   const load = useCallback(async () => {
-    if (!symbols.length) return;
+    if (!symbolsKey) return;
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams({ symbols: symbols.join(',') });
+      const params = new URLSearchParams({ symbols: symbolsKey });
       if (useCustom && fromDate && toDate) {
         params.set('from', fromDate);
         params.set('to',   toDate);
@@ -1269,7 +1272,7 @@ const HistoryView = ({ stocks }) => {
     } finally {
       setLoading(false);
     }
-  }, [symbols.join(','), days, fromDate, toDate, useCustom]);
+  }, [symbolsKey, days, fromDate, toDate, useCustom]);
 
   React.useEffect(() => { load(); }, [load]);
 
