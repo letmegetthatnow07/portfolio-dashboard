@@ -15,15 +15,24 @@
  *
  * FIXES applied vs previous version:
  *   FIX-A: lowConfidence flag now correctly set for pairs with 15-29 shared return observations.
- *          Was: n < 30 returned null before lowConfidence could ever be true (dead code).
- *          Now: n < 15 → null (absolute minimum), 15-29 → r with lowConfidence:true, 30+ → full confidence.
- *   FIX-B: _dataPoints now stores r1.length (actual return observations used in Pearson)
- *          not shared.length (price date count, which is off-by-1).
- *   FIX-C: _dataPoints is now included in the Redis payload so dashboard can display data quality.
+ *   FIX-B: _dataPoints now stores r1.length (actual return observations used in Pearson).
+ *   FIX-C: _dataPoints is now included in the Redis payload.
  *   FIX-D: Multi-day gap detection skips returns that span >3 calendar days (halts, new listings).
- *          This prevents inflated single-return observations from distorting the correlation.
- *   FIX-E: Single Redis connection reused across the entire run (was two separate open/close cycles).
- *   FIX-F: WEAK_SIGNAL verdict is now documented alongside the conviction gates.
+ *   FIX-E: Single Redis connection reused across the entire run.
+ *   FIX-F: WEAK_SIGNAL verdict is documented alongside the conviction gates.
+ *
+ * NEW in this version:
+ *   FIX-G (root cause of stale matrix): the Supabase read used .limit(10000), but Supabase/PostgREST
+ *          caps every response at 1000 rows. Because the query was ordered oldest-first, the run only
+ *          ever saw the OLDEST 1000 rows — newer days and newly added tickers were silently dropped.
+ *          Now: filtered to current portfolio symbols + last ~400 days, and paginated with .range()
+ *          until every row is read.
+ *   FIX-H: CSV parsing was split(',') — rows whose price is >= 1,000 are quoted ("1,002.75") and were
+ *          silently discarded (LLY, MELI, GEV, ...). Now uses a quote-aware parser.
+ *   FIX-I: Stock splits (e.g. CRWD 772 -> 194 on 2026-07-02) produced a single ~-75% "return" that
+ *          dominated the Pearson for that ticker. Daily moves larger than SPLIT_GUARD_ABS are now
+ *          treated as split/data errors and that observation is skipped (logged). Set to Infinity
+ *          to disable.
  */
 
 const fs   = require('fs');
@@ -45,6 +54,9 @@ const supabase = createSupabaseClient(
   { realtime: { transport: _ws } }
 );
 
+// FIX-I: any single-day move larger than this is treated as a split / bad print, not a return.
+const SPLIT_GUARD_ABS = 0.40;
+
 // ── Normalise any date string to ISO YYYY-MM-DD ──────────────────────────────
 // Handles: "2/18/2025", "02/18/2025", "2025-02-18"
 function toISO(dateStr) {
@@ -59,20 +71,32 @@ function toISO(dateStr) {
   return null;
 }
 
+// FIX-H: quote-aware CSV line parser (handles "1,002.75" style fields).
+function parseCsvLine(line) {
+  const out = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') { cur += '"'; i++; }
+      else inQuotes = !inQuotes;
+    } else if (ch === ',' && !inQuotes) {
+      out.push(cur);
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  out.push(cur);
+  return out;
+}
+
 // ── Returns-based Pearson correlation ────────────────────────────────────────
-// FIX-A: Three-tier minimum, not a hard n<30 cutoff.
-//
 // n < 15:  Absolute minimum — too few points for any meaningful number. Return null.
-// n 15-29: Low-confidence zone. Pearson r is computed and returned, but flagged
-//          with lowConfidence:true so the dashboard can shade it. The 95% CI at
-//          n=15 is roughly ±0.50 around the estimate, so it should be treated as
-//          indicative, not reliable. Better to show a shaded estimate than '—' for
-//          pairs that are genuinely accumulating history.
-// n >= 30: Full confidence. 95% CI narrows to ±0.35 at n=30, ±0.18 at n=100.
-//          This is the level at which correlation-based position sizing decisions
-//          become defensible.
-//
-// Do not lower the full-confidence threshold below 30 — see methodology note above.
+// n 15-29: Low-confidence zone. r is returned but flagged lowConfidence:true.
+// n >= 30: Full confidence.
+// Do not lower the full-confidence threshold below 30.
 //
 // Returns: { r, n, lowConfidence }
 function calculatePearson(x, y) {
@@ -94,6 +118,34 @@ function _pearson(x, y, n) {
   return denom === 0 ? null : num / denom;
 }
 
+// FIX-G: read EVERY daily_metrics row for the given symbols since sinceISO.
+// PostgREST returns at most 1000 rows per request no matter what .limit() says,
+// so we page with .range() until a short page comes back.
+async function fetchAllDailyPrices(symbols, sinceISO) {
+  const PAGE = 1000;
+  const all  = [];
+  for (let from = 0; ; from += PAGE) {
+    let q = supabase
+      .from('daily_metrics')
+      .select('symbol, date, price')
+      .gte('date', sinceISO)
+      .order('date',   { ascending: true })
+      .order('symbol', { ascending: true })   // deterministic order so pages never overlap/skip
+      .range(from, from + PAGE - 1);
+    if (symbols && symbols.length) q = q.in('symbol', symbols);
+
+    const { data, error } = await q;
+    if (error) {
+      console.warn(`⚠ Supabase page ${from}-${from + PAGE - 1} failed: ${error.message}`);
+      break;
+    }
+    if (!data || !data.length) break;
+    all.push(...data);
+    if (data.length < PAGE) break;
+  }
+  return all;
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 async function runCorrelationEngine() {
   console.log('═══════════════════════════════════════════════════════════');
@@ -108,57 +160,8 @@ async function runCorrelationEngine() {
   redisClient.on('error', err => console.error('Redis error:', err.message));
   await redisClient.connect();
 
-  // STEP 1: CSV seed data
-  const csvPath = path.resolve(__dirname, '../data/historical_prices.csv');
-  if (fs.existsSync(csvPath)) {
-    const lines = fs.readFileSync(csvPath, 'utf8')
-      .split('\n').filter(l => l.trim().length > 0);
-    lines.shift(); // skip header
-    let csvRows = 0;
-    lines.forEach(line => {
-      const cols = line.split(',');
-      if (cols.length < 4) return;
-      const ticker  = cols[0].trim();
-      const isoDate = toISO(cols[2].trim());
-      const price   = parseFloat(cols[3].trim());
-      if (!ticker || !isoDate || isNaN(price) || price <= 0) return;
-      if (!priceData[ticker]) priceData[ticker] = {};
-      priceData[ticker][isoDate] = price;
-      allDates.add(isoDate);
-      csvRows++;
-    });
-    console.log(`✓ CSV: ${csvRows} rows loaded`);
-  } else {
-    console.warn('⚠ historical_prices.csv not found — Supabase only');
-  }
-
-  // STEP 2: Supabase live data (overwrites CSV on same date — more authoritative)
-  const { data: liveData, error: liveError } = await supabase
-    .from('daily_metrics')
-    .select('symbol, date, price')
-    .order('date', { ascending: true })
-    .limit(10000);
-
-  if (liveError) console.warn(`⚠ Supabase warning: ${liveError.message}`);
-
-  if (liveData?.length) {
-    let supaRows = 0;
-    liveData.forEach(row => {
-      const isoDate = toISO(row.date);
-      const price   = parseFloat(row.price);
-      if (!row.symbol || !isoDate || isNaN(price) || price <= 0) return;
-      if (!priceData[row.symbol]) priceData[row.symbol] = {};
-      priceData[row.symbol][isoDate] = price;
-      allDates.add(isoDate);
-      supaRows++;
-    });
-    console.log(`✓ Supabase: ${supaRows} rows merged`);
-  }
-
-  // STEP 3: Filter to CURRENT portfolio only
-  // Redis portfolio is the source of truth for what's currently tracked.
-  // Deleted stocks disappear from the matrix on the next run.
-  // FIX-E: Use the already-open redisClient, not a new one.
+  // STEP 0: Current portfolio (source of truth for which tickers to include).
+  // Read first so the Supabase query can be filtered to just these symbols.
   let portfolioSymbols = null;
   try {
     const raw = await redisClient.get('portfolio');
@@ -173,6 +176,61 @@ async function runCorrelationEngine() {
     console.warn(`⚠ Portfolio filter unavailable (${e.message}) — using all tickers from price data`);
   }
 
+  // STEP 1: CSV seed data
+  const csvPath = path.resolve(__dirname, '../data/historical_prices.csv');
+  if (fs.existsSync(csvPath)) {
+    const lines = fs.readFileSync(csvPath, 'utf8')
+      .split('\n').filter(l => l.trim().length > 0);
+    lines.shift(); // skip header
+    let csvRows = 0, csvSkipped = 0;
+    lines.forEach(line => {
+      const cols = parseCsvLine(line.replace(/\r$/, ''));   // FIX-H
+      if (cols.length < 4) return;
+      const ticker  = cols[0].trim();
+      const isoDate = toISO(cols[2].trim());
+      const price   = parseFloat(cols[3].replace(/,/g, '').trim());
+      if (!ticker || !isoDate || isNaN(price) || price <= 0) { csvSkipped++; return; }
+      if (!priceData[ticker]) priceData[ticker] = {};
+      priceData[ticker][isoDate] = price;
+      allDates.add(isoDate);
+      csvRows++;
+    });
+    console.log(`✓ CSV: ${csvRows} rows loaded${csvSkipped ? ` (${csvSkipped} unparseable rows skipped)` : ''}`);
+  } else {
+    console.warn('⚠ historical_prices.csv not found — Supabase only');
+  }
+
+  // STEP 2: Supabase live data (overwrites CSV on same date — more authoritative)
+  // FIX-G: paginated + filtered. ~400 calendar days comfortably covers 250 trading days.
+  const sinceDate = new Date();
+  sinceDate.setDate(sinceDate.getDate() - 400);
+  const sinceISO = sinceDate.toISOString().split('T')[0];
+
+  const liveData = await fetchAllDailyPrices(
+    portfolioSymbols ? [...portfolioSymbols] : null,
+    sinceISO
+  );
+
+  if (liveData.length) {
+    let supaRows = 0;
+    let newestLive = '';
+    liveData.forEach(row => {
+      const isoDate = toISO(row.date);
+      const price   = parseFloat(row.price);
+      if (!row.symbol || !isoDate || isNaN(price) || price <= 0) return;
+      if (!priceData[row.symbol]) priceData[row.symbol] = {};
+      priceData[row.symbol][isoDate] = price;
+      allDates.add(isoDate);
+      if (isoDate > newestLive) newestLive = isoDate;
+      supaRows++;
+    });
+    console.log(`✓ Supabase: ${supaRows} rows merged (newest live date: ${newestLive || 'none'})`);
+  } else {
+    console.warn('⚠ Supabase returned no rows — matrix will rely on CSV only');
+  }
+
+  // STEP 3: Filter to CURRENT portfolio only
+  // Deleted stocks disappear from the matrix on the next run.
   if (portfolioSymbols) {
     for (const ticker of Object.keys(priceData)) {
       if (!portfolioSymbols.has(ticker.toUpperCase())) {
@@ -187,26 +245,26 @@ async function runCorrelationEngine() {
   const tickers     = Object.keys(priceData).sort();
 
   console.log(`✓ Window: ${sortedDates[0]} → ${sortedDates[sortedDates.length - 1]} (${sortedDates.length} days)`);
-  console.log(`✓ Tickers: ${tickers.join(', ')}\n`);
+  console.log(`✓ Tickers: ${tickers.join(', ')}`);
+
+  // Freshness report — makes a stale feed obvious in the Actions log.
+  const todayISO = new Date().toISOString().split('T')[0];
+  for (const t of tickers) {
+    const dts = Object.keys(priceData[t]).sort();
+    const last = dts[dts.length - 1];
+    const ageDays = Math.round((new Date(todayISO) - new Date(last)) / 86_400_000);
+    console.log(`  ${t.padEnd(6)} ${dts.length} prices · last ${last}${ageDays > 5 ? `  ⚠ STALE (${ageDays}d old)` : ''}`);
+  }
+  console.log('');
 
   // STEP 5: Returns-based correlation matrix
-  // FIX-D: Skip return observations where the price gap spans >3 calendar days.
-  //        A stock missing on day 5 would otherwise produce a return from day 4→6
-  //        that spans 2 trading days, inflating single-observation volatility.
-  //        3 calendar days = covers weekends (Fri→Mon). Beyond that, it's a halt
-  //        or new listing and the return is not comparable with daily returns.
-  //
-  // FIX-B: Store r1.length (return observations) not shared.length (price dates).
-  //        shared.length - 1 = number of consecutive pairs. But after gap-skipping,
-  //        the actual return count may be lower. r1.length is the authoritative count.
-  //
-  // FIX-C: dataPoints included in Redis payload.
-  //
-  // FIX-A: lowConfidence now correctly set for 15-29 observations.
+  // FIX-D: skip return observations where the price gap spans >3 calendar days.
+  // FIX-I: skip observations where either stock moved more than SPLIT_GUARD_ABS in a day.
   console.log('Calculating returns matrix...');
   const matrix         = {};
   const lowConfidence  = {};  // { t1: { t2: true } } — pairs with 15-29 shared returns
   const dataPoints     = {};  // { t1: { t2: n } }    — actual return count per pair
+  const splitSkips     = {};  // { ticker: count }
 
   const MAX_GAP_DAYS = 3; // calendar days — covers Fri→Mon weekends
 
@@ -232,8 +290,15 @@ async function runCorrelationEngine() {
         const p1t = priceData[t1][td], p1p = priceData[t1][pd];
         const p2t = priceData[t2][td], p2p = priceData[t2][pd];
         if (p1p > 0 && p2p > 0) {
-          r1.push((p1t - p1p) / p1p);
-          r2.push((p2t - p2p) / p2p);
+          const ret1 = (p1t - p1p) / p1p;
+          const ret2 = (p2t - p2p) / p2p;
+
+          // FIX-I: split / bad-print guard
+          if (Math.abs(ret1) > SPLIT_GUARD_ABS) { splitSkips[t1] = (splitSkips[t1] || 0) + 1; continue; }
+          if (Math.abs(ret2) > SPLIT_GUARD_ABS) { splitSkips[t2] = (splitSkips[t2] || 0) + 1; continue; }
+
+          r1.push(ret1);
+          r2.push(ret2);
         }
       }
 
@@ -246,24 +311,23 @@ async function runCorrelationEngine() {
         lowConfidence[t1][t2] = true;
       }
 
-      // FIX-B: store actual return observations (not price date count)
-      // FIX-C: stored in separate object, included in Redis payload below
+      // FIX-B / FIX-C: actual return observations per pair
       if (i < j) {
         if (!dataPoints[t1]) dataPoints[t1] = {};
-        dataPoints[t1][t2] = returnCount; // r1.length — actual Pearson input count
+        dataPoints[t1][t2] = returnCount;
       }
     }
   }
   console.log('✓ Matrix complete');
+  for (const [t, c] of Object.entries(splitSkips)) {
+    console.log(`  ↳ ${t}: ignored daily moves > ${(SPLIT_GUARD_ABS * 100).toFixed(0)}% (likely split/bad print) — counted across all pairs: ${c}`);
+  }
 
   // STEP 6: Multi-window regime stats — 21d AND 63d per symbol
   //
-  // Why two windows?
-  //   21d = recent momentum (can be noisy — one earnings beat inflates it)
-  //   63d = one quarter of structural behaviour (harder to fake)
-  //
+  // 21d = recent momentum (can be noisy — one earnings beat inflates it)
+  // 63d = one quarter of structural behaviour (harder to fake)
   // A RECOMMEND verdict only fires when BOTH windows agree on the winner.
-  // This prevents switching based on a single good month.
 
   const now = new Date();
 
@@ -374,8 +438,6 @@ async function runCorrelationEngine() {
   //   RECOMMEND   — winnerScore >= 4: clear multi-gate evidence for one ticker
   //   WEAK_SIGNAL — winnerScore  < 4: winner identified but evidence is thin
   //   MONITOR     — tied, blocked, or insufficient data: no recommendation yet
-  //
-  // FIX-F: WEAK_SIGNAL is documented here alongside the conviction gates.
 
   const THRESHOLD      = 0.65;
   const MIN_ALPHA_EDGE = 2.0;   // % — minimum meaningful alpha difference (G5)
@@ -441,7 +503,7 @@ async function runCorrelationEngine() {
           reasons.push(`weak 63d confirmation (+${alphaEdge63.toFixed(1)}%)`);
         }
 
-        // G7: Quality score higher over 63d (bonus, not a hard veto — see methodology note)
+        // G7: Quality score higher over 63d (bonus, not a hard veto)
         const qualEdge = (s.qual63 ?? 0) - (oS.qual63 ?? 0);
         if (qualEdge > 0.5) {
           score += 2;
@@ -539,8 +601,6 @@ async function runCorrelationEngine() {
   console.log(`✓ ${insights.length} pairs flagged — RECOMMEND:${recommends} WEAK:${weakSignals} MONITOR:${monitors}`);
 
   // STEP 8: Save to Redis
-  // FIX-C: dataPoints now included in the payload.
-  // FIX-E: reusing the already-open redisClient.
   try {
     await redisClient.set('portfolio_correlation', JSON.stringify({
       lastUpdated: new Date().toISOString(),
@@ -550,7 +610,7 @@ async function runCorrelationEngine() {
       tickers,
       matrix,
       lowConfidence,  // pairs with 15-29 shared return observations — for dashboard shading
-      dataPoints,     // FIX-C: actual return count per upper-triangle pair — for data quality display
+      dataPoints,     // actual return count per upper-triangle pair — for data quality display
       insights,
       threshold: THRESHOLD,
     }));
