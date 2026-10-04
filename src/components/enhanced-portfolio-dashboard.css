@@ -427,6 +427,71 @@ input, select { font-family: var(--font-ui); }
 .news-desc { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
 .no-news { text-align: center; color: var(--text-muted); padding: 44px 24px; font-size: 13px; }
 
+/* ── History Tab ─────────────────────────────────────────────────────────────
+   Light-theme, per-stock collapsible cards. Each card's table scrolls
+   vertically (newest date first) instead of the old all-dates-as-columns
+   layout that needed horizontal scrolling.                                   */
+.history-toolbar-label {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--text-dim); font-weight: 600;
+}
+.history-date-input {
+  background: var(--bg-input); border: 1px solid var(--border-light);
+  border-radius: var(--r-sm); padding: 7px 10px; font-size: 13px;
+  font-family: var(--font-mono); color: var(--text-main); outline: none;
+  transition: border-color var(--transition);
+}
+.history-date-input:focus { border-color: var(--text-muted); }
+.history-sep { color: var(--text-dim); font-size: 12px; }
+
+.history-list { display: flex; flex-direction: column; gap: 12px; }
+
+.history-card {
+  background: var(--bg-card); border: 1px solid var(--border-light);
+  border-radius: var(--r-lg); box-shadow: var(--shadow-sm); overflow: hidden;
+}
+.history-card-header {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 18px; cursor: pointer;
+  transition: background var(--transition);
+}
+.history-card-header:hover { background: var(--bg-raised); }
+.history-card-id { display: flex; flex-direction: column; min-width: 64px; }
+.history-card-symbol { font-family: var(--font-mono); font-size: 14px; font-weight: 700; color: var(--text-main); }
+.history-card-days { font-size: 10px; color: var(--text-dim); margin-top: 2px; white-space: nowrap; }
+.history-card-spacer { flex: 1; }
+.history-card-latest { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); white-space: nowrap; }
+
+.history-card-body { border-top: 1px solid var(--border-light); max-height: 380px; overflow-y: auto; }
+.history-table { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 12px; }
+.history-table thead th {
+  position: sticky; top: 0; background: var(--bg-raised); z-index: 1;
+  text-align: left; padding: 8px 14px; font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted);
+  border-bottom: 1px solid var(--border-light); white-space: nowrap;
+}
+.history-table td {
+  padding: 7px 14px; border-bottom: 1px solid var(--border-light);
+  color: var(--text-main); white-space: nowrap;
+}
+.history-table tbody tr:last-child td { border-bottom: none; }
+.history-table tbody tr:hover { background: var(--bg-raised); }
+.history-row-empty td { color: var(--text-dim); font-style: italic; }
+.history-sub-score { color: var(--text-muted); }
+.history-delta { font-size: 10px; margin-left: 5px; font-weight: 700; }
+.history-delta.up   { color: var(--green); }
+.history-delta.down { color: var(--red); }
+
+.signal-badge-sm { padding: 2px 8px; font-size: 9px; border-radius: 4px; }
+
+.history-empty-note {
+  padding: 16px 18px; font-size: 12px; color: var(--text-dim); font-style: italic;
+}
+.history-legend {
+  display: flex; gap: 18px; margin-top: 14px; font-size: 10.5px;
+  color: var(--text-dim); flex-wrap: wrap;
+}
+
 /* ── Scrollbars ──────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
