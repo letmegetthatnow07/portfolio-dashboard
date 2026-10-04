@@ -1185,56 +1185,33 @@ const FilingNarrativeCard = ({ symbol, filingForm }) => {
 
 
 // ── HistoryView ───────────────────────────────────────────────────────────────
-// Shows 15 or 30 days of score history per stock from Supabase daily_metrics.
-// Colour-codes each cell by score direction vs previous day.
-// Calendar picker lets Jake look further back.
-
-const SCORE_COLS = [
-  { key: 'total_score',   label: 'Total',   w: 55 },
-  { key: 'fund_score',    label: 'Fund',    w: 45 },
-  { key: 'tech_score',    label: 'Tech',    w: 45 },
-  { key: 'news_score',    label: 'News',    w: 45 },
-  { key: 'insider_score', label: 'Insider', w: 55 },
-  { key: 'signal',        label: 'Signal',  w: 90 },
-];
-
-const SIGNAL_COLOR = {
-  STRONG_BUY:        '#059669',
-  BUY:               '#10b981',
-  ADD:               '#34d399',
-  SPRING_CONFIRMED:  '#06b6d4',
-  SPRING_CANDIDATE:  '#67e8f9',
-  HOLD:              '#6b7280',
-  HOLD_NOISE:        '#4b5563',
-  MARKET_NOISE:      '#4b5563',
-  NORMAL:            '#4b5563',
-  WATCH:             '#d97706',
-  REDUCE:            '#f97316',
-  TRIM_25:           '#ef4444',
-  SELL:              '#dc2626',
-  IDIOSYNCRATIC_DECAY: '#991b1b',
-  INSUFFICIENT_DATA: '#374151',
-};
-
-function scoreCell(val, prev) {
-  if (val == null) return { bg: '#111', color: '#374151', text: '—' };
-  const num   = parseFloat(val);
-  const delta = prev != null ? num - parseFloat(prev) : 0;
-  const bg    = delta >  0.3 ? '#052e16'
-              : delta < -0.3 ? '#2d0a0a'
-              : '#0f1117';
-  const color = num >= 7.5 ? '#10b981'
-              : num >= 6.0 ? '#34d399'
-              : num >= 4.5 ? '#9ca3af'
-              : num >= 3.5 ? '#f97316'
-              : '#ef4444';
-  const arrow = delta >  0.3 ? ' ↑' : delta < -0.3 ? ' ↓' : '';
-  return { bg, color, text: num.toFixed(1) + arrow };
-}
+// Per-stock collapsible cards, newest date first. Each card's table scrolls
+// vertically on its own (max-height + overflow-y) instead of the dashboard
+// needing to scroll sideways through a wide dates-as-columns grid. Matches
+// the light theme used everywhere else (ScoreRing, signal-badge, pill, etc.)
+// so History reads as part of the same app instead of a separate dark panel.
 
 function fmtDate(iso) {
   const d = new Date(iso + 'T12:00:00Z');
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+}
+
+// Walks dates (ascending) backward to find the most recent day this stock
+// actually has a row for — a stock added partway through the range won't
+// have data on every date, so we can't just read the last date in the array.
+function latestEntryFor(row, datesAsc) {
+  for (let i = datesAsc.length - 1; i >= 0; i--) {
+    const dt = datesAsc[i];
+    if (row.data[dt]) return { date: dt, ...row.data[dt] };
+  }
+  return null;
+}
+
+function signalBadgeClass(signalKey) {
+  const sCfg = sig(signalKey);
+  if (sCfg.tier === 'bull') return 'signal-bull';
+  if (sCfg.tier === 'bear') return ['WATCH', 'TRIM_25'].includes(signalKey || '') ? 'signal-bear-soft' : 'signal-bear-hard';
+  return 'signal-neutral';
 }
 
 const HistoryView = ({ stocks }) => {
@@ -1245,6 +1222,7 @@ const HistoryView = ({ stocks }) => {
   const [loading,   setLoading]   = React.useState(false);
   const [error,     setError]     = React.useState(null);
   const [useCustom, setUseCustom] = React.useState(false);
+  const [expanded,  setExpanded]  = React.useState(() => new Set());
 
   // Stable string key: only changes when the set of symbols changes, not on every
   // new array reference. Extracted to a variable so react-hooks/exhaustive-deps
@@ -1276,156 +1254,160 @@ const HistoryView = ({ stocks }) => {
 
   React.useEffect(() => { load(); }, [load]);
 
+  const toggleExpand = (symbol) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(symbol)) next.delete(symbol); else next.add(symbol);
+      return next;
+    });
+  };
+
   if (loading) return (
-    <div style={{ padding: 40, textAlign: 'center', color: '#6b7280', fontSize: 13 }}>
-      Loading history…
+    <div className="loading-wrap" style={{ minHeight: '30vh' }}>
+      <div className="loading-ring" />
     </div>
   );
   if (error) return (
-    <div style={{ padding: 40, textAlign: 'center', color: '#dc2626', fontSize: 13 }}>
-      ⚠ {error}
-    </div>
+    <div className="no-results">⚠ {error}</div>
   );
   if (!history) return null;
 
-  const { dates, rows } = history; // dates = ['2026-05-01', ...], rows = [{ symbol, data: { date: {col: val} } }]
+  const { dates, rows } = history; // dates ascending; rows = [{ symbol, data: { date: {col: val} } }]
+  const datesDesc = [...dates].reverse();
 
   return (
     <div style={{ padding: '16px 0' }}>
-      {/* Controls */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 12, color: '#6b7280', fontWeight: 600 }}>SHOW:</span>
-        {[15, 30].map(d => (
-          <button key={d} onClick={() => { setDays(d); setUseCustom(false); }}
-            style={{
-              padding: '4px 12px', borderRadius: 4, border: '1px solid',
-              fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-mono)',
-              background:   !useCustom && days === d ? 'var(--green)' : 'transparent',
-              borderColor:  !useCustom && days === d ? 'var(--green)' : '#374151',
-              color:        !useCustom && days === d ? '#000' : '#9ca3af',
-            }}>
-            {d}d
-          </button>
-        ))}
-        <span style={{ fontSize: 12, color: '#374151' }}>|</span>
-        <span style={{ fontSize: 12, color: '#6b7280', fontWeight: 600 }}>CUSTOM:</span>
-        <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)}
-          style={{ background: '#111', color: '#d4d4d0', border: '1px solid #374151',
-            borderRadius: 4, padding: '3px 8px', fontSize: 12, fontFamily: 'var(--font-mono)' }} />
-        <span style={{ color: '#6b7280', fontSize: 12 }}>→</span>
-        <input type="date" value={toDate} onChange={e => setToDate(e.target.value)}
-          style={{ background: '#111', color: '#d4d4d0', border: '1px solid #374151',
-            borderRadius: 4, padding: '3px 8px', fontSize: 12, fontFamily: 'var(--font-mono)' }} />
-        <button onClick={() => { setUseCustom(true); load(); }}
+      {/* Controls — reuses the same pill/results-count language as the Portfolio tab */}
+      <div className="controls-section">
+        <div className="filter-pills">
+          {[15, 30].map(d => (
+            <button key={d}
+              className={`pill ${!useCustom && days === d ? 'pill-active' : ''}`}
+              onClick={() => { setDays(d); setUseCustom(false); }}>
+              {d}d
+            </button>
+          ))}
+        </div>
+        <span className="history-toolbar-label">Custom</span>
+        <input type="date" className="history-date-input" value={fromDate} onChange={e => setFromDate(e.target.value)} />
+        <span className="history-sep">→</span>
+        <input type="date" className="history-date-input" value={toDate} onChange={e => setToDate(e.target.value)} />
+        <button className="btn-secondary"
           disabled={!fromDate || !toDate}
-          style={{
-            padding: '4px 12px', borderRadius: 4, border: '1px solid #374151',
-            fontSize: 12, cursor: fromDate && toDate ? 'pointer' : 'not-allowed',
-            background: useCustom ? 'var(--green)' : 'transparent',
-            color: useCustom ? '#000' : '#9ca3af',
-            fontFamily: 'var(--font-mono)',
-          }}>
+          onClick={() => { setUseCustom(true); load(); }}>
           Apply
         </button>
+        <div className="results-count">{rows.length} of {stocks.length} tracked</div>
       </div>
 
-      {/* Grid */}
-      <div style={{ overflowX: 'auto' }}>
-        <table style={{ borderCollapse: 'collapse', fontSize: 11, fontFamily: 'var(--font-mono)', minWidth: '100%' }}>
-          <thead>
-            <tr>
-              {/* Stock name column */}
-              <th style={{ position: 'sticky', left: 0, zIndex: 2, background: '#0a0a0f',
-                textAlign: 'left', padding: '6px 12px 6px 4px', color: '#6b7280',
-                fontWeight: 700, letterSpacing: 1, borderBottom: '1px solid #1f2937',
-                minWidth: 90, whiteSpace: 'nowrap' }}>
-                STOCK
-              </th>
-              {/* Score type label row */}
-              {dates.map(date => (
-                <th key={date} colSpan={SCORE_COLS.length}
-                  style={{ textAlign: 'center', padding: '4px 2px',
-                    color: '#4b5563', fontWeight: 600, fontSize: 10,
-                    borderBottom: '1px solid #1f2937', borderLeft: '1px solid #1f2937',
-                    whiteSpace: 'nowrap' }}>
-                  {fmtDate(date)}
-                </th>
-              ))}
-            </tr>
-            <tr>
-              <th style={{ position: 'sticky', left: 0, zIndex: 2, background: '#0a0a0f',
-                borderBottom: '1px solid #1f2937' }} />
-              {dates.map(date =>
-                SCORE_COLS.map(col => (
-                  <th key={`${date}-${col.key}`}
-                    style={{ padding: '3px 2px', color: '#374151', fontWeight: 600,
-                      fontSize: 9, letterSpacing: 0.5, textAlign: 'center',
-                      borderBottom: '1px solid #1f2937',
-                      borderLeft: col.key === 'total_score' ? '1px solid #1f2937' : 'none',
-                      minWidth: col.w, whiteSpace: 'nowrap' }}>
-                    {col.label.toUpperCase()}
-                  </th>
-                ))
-              )}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, ri) => (
-              <tr key={row.symbol}
-                style={{ background: ri % 2 === 0 ? '#0a0a0f' : '#0d0d14' }}>
-                <td style={{ position: 'sticky', left: 0, zIndex: 1,
-                  background: ri % 2 === 0 ? '#0a0a0f' : '#0d0d14',
-                  padding: '5px 12px 5px 4px', fontWeight: 700, color: '#d4d4d0',
-                  borderBottom: '1px solid #0f1117', whiteSpace: 'nowrap' }}>
-                  {row.symbol}
-                </td>
-                {dates.map((date, di) => {
-                  const prev = di > 0 ? dates[di - 1] : null;
-                  const d    = row.data[date]      ?? {};
-                  const dp   = prev ? (row.data[prev] ?? {}) : {};
-                  return SCORE_COLS.map(col => {
-                    if (col.key === 'signal') {
-                      const sig = d.signal || null;
-                      return (
-                        <td key={`${date}-${col.key}`}
-                          style={{ padding: '5px 3px', textAlign: 'center',
-                            borderBottom: '1px solid #0f1117',
-                            borderLeft: '1px solid #1f2937' }}>
-                          {sig
-                            ? <span style={{ fontSize: 9, fontWeight: 700,
-                                color: SIGNAL_COLOR[sig] ?? '#6b7280',
-                                letterSpacing: 0.3 }}>
-                                {sig.replace(/_/g, ' ')}
-                              </span>
-                            : <span style={{ color: '#1f2937' }}>—</span>}
-                        </td>
-                      );
-                    }
-                    const cell = scoreCell(d[col.key], dp[col.key]);
-                    return (
-                      <td key={`${date}-${col.key}`}
-                        style={{ padding: '5px 3px', textAlign: 'center',
-                          background: cell.bg, color: cell.color, fontWeight: 600,
-                          borderBottom: '1px solid #0f1117',
-                          borderLeft: col.key === 'total_score' ? '1px solid #1f2937' : 'none' }}>
-                        {cell.text}
-                      </td>
-                    );
-                  });
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {rows.length === 0 ? (
+        <div className="no-results">No score history yet for the selected range.</div>
+      ) : (
+        <div className="history-list">
+          {rows.map(row => {
+            const latest  = latestEntryFor(row, dates);
+            const isOpen  = expanded.has(row.symbol);
+            const daysCovered = Object.keys(row.data).length;
 
-      {/* Legend */}
-      <div style={{ display: 'flex', gap: 16, marginTop: 12, fontSize: 10, color: '#4b5563', flexWrap: 'wrap' }}>
-        <span>↑ = improved &gt;0.3 pts vs prior day</span>
-        <span>↓ = declined &gt;0.3 pts vs prior day</span>
-        <span style={{ color: '#10b981' }}>■ green bg = improving</span>
-        <span style={{ color: '#ef4444' }}>■ red bg = deteriorating</span>
-        <span>Dates shown = trading days only</span>
+            return (
+              <div className="history-card" key={row.symbol}>
+                <div className="history-card-header" onClick={() => toggleExpand(row.symbol)}>
+                  <div className="history-card-id">
+                    <span className="history-card-symbol">{row.symbol}</span>
+                    <span className="history-card-days">{daysCovered} day{daysCovered === 1 ? '' : 's'} tracked</span>
+                  </div>
+
+                  {latest && <ScoreRing score={latest.total_score} />}
+
+                  {latest?.signal && (
+                    <span className={`signal-badge signal-badge-sm ${signalBadgeClass(latest.signal)}`}>
+                      {sig(latest.signal).label}
+                    </span>
+                  )}
+
+                  <span className="history-card-spacer" />
+
+                  {latest && <span className="history-card-latest">as of {fmtDate(latest.date)}</span>}
+
+                  <button className={`btn-icon btn-expand${isOpen ? ' btn-expand-active' : ''}`}
+                    title={isOpen ? 'Collapse' : 'Expand history'}>
+                    {isOpen ? '▲' : '▼'}
+                  </button>
+                </div>
+
+                {isOpen && (
+                  <div className="history-card-body">
+                    <table className="history-table">
+                      <thead>
+                        <tr>
+                          <th>Date</th>
+                          <th>Total</th>
+                          <th>Fund</th>
+                          <th>Tech</th>
+                          <th>News</th>
+                          <th>Insider</th>
+                          <th>Signal</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {datesDesc.map((date, di) => {
+                          // di is the index into datesDesc; the chronologically-prior day
+                          // (for the delta arrow) is the NEXT row down, i.e. datesDesc[di + 1].
+                          const d  = row.data[date] ?? null;
+                          const dp = datesDesc[di + 1] ? (row.data[datesDesc[di + 1]] ?? null) : null;
+
+                          if (!d) {
+                            return (
+                              <tr key={date} className="history-row-empty">
+                                <td>{fmtDate(date)}</td>
+                                <td colSpan={6}>— no data this day —</td>
+                              </tr>
+                            );
+                          }
+
+                          const delta = (d.total_score != null && dp?.total_score != null)
+                            ? d.total_score - dp.total_score : null;
+                          const deltaUp   = delta != null && delta > 0.3;
+                          const deltaDown = delta != null && delta < -0.3;
+
+                          return (
+                            <tr key={date}>
+                              <td>{fmtDate(date)}</td>
+                              <td>
+                                <span style={{ color: scoreCol(d.total_score), fontWeight: 700 }}>
+                                  {d.total_score != null ? d.total_score.toFixed(1) : '—'}
+                                </span>
+                                {deltaUp   && <span className="history-delta up">▲</span>}
+                                {deltaDown && <span className="history-delta down">▼</span>}
+                              </td>
+                              <td className="history-sub-score">{d.fund_score    != null ? d.fund_score.toFixed(1)    : '—'}</td>
+                              <td className="history-sub-score">{d.tech_score    != null ? d.tech_score.toFixed(1)    : '—'}</td>
+                              <td className="history-sub-score">{d.news_score    != null ? d.news_score.toFixed(1)    : '—'}</td>
+                              <td className="history-sub-score">{d.insider_score != null ? d.insider_score.toFixed(1) : '—'}</td>
+                              <td>
+                                {d.signal ? (
+                                  <span className={`signal-badge signal-badge-sm ${signalBadgeClass(d.signal)}`}>
+                                    {sig(d.signal).label}
+                                  </span>
+                                ) : <span style={{ color: 'var(--text-dim)' }}>—</span>}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="history-legend">
+        <span>▲ / ▼ = Total score moved &gt;0.3 pts vs the prior trading day</span>
+        <span>— no data this day — = pipeline didn't score this stock that day (new addition or a skipped run)</span>
+        <span>Click a row to expand its full history</span>
       </div>
     </div>
   );
@@ -1912,8 +1894,8 @@ const EnhancedPortfolioDashboard = () => {
         )}
       </div>
 
-      </>)}
       <CorrelationHeatmap />
+      </>)}
 
       {/* ── History Tab ──────────────────────────────────────────── */}
       {activeTab === 'history' && <HistoryView stocks={portfolio} />}
