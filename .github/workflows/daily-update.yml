@@ -5,26 +5,22 @@ name: Market & News Data Pipeline
 # GitHub Actions cron runs in UTC. Eastern Time observes DST:
 #   EST (Nov → Mar): UTC-5     EDT (Mar → Nov): UTC-4
 #
-# The cron times below are chosen as the best UTC compromise so that
-# scheduled slots land at reasonable ET times in BOTH EST and EDT:
-#
 #   Slot 1  13:30 UTC  =  8:30 AM EST  /  9:30 AM EDT  (at market open)
 #   Slot 2  17:00 UTC  = 12:00 PM EST  /  1:00 PM EDT  (midday)
 #   Slot 3  20:45 UTC  =  3:45 PM EST  /  4:45 PM EDT  (near/post close)
 #   Master  22:00 UTC  =  5:00 PM EST  /  6:00 PM EDT  (well after close)
 #
-# OLD PROBLEM (fixed):
-#   Slot 1 was 14:00 UTC = 9:00 AM EST but 10:00 AM EDT —
-#   missing the opening 30 minutes of the session every day Mar-Nov.
-#   Slot 3 was 21:15 UTC = 4:15 PM EST but 5:15 PM EDT.
+# WHY SEPARATE JOBS: GitHub Actions delays of 15-90 mins used to make the old
+# single-job design run news instead of master. Separate jobs with separate
+# schedule triggers eliminate this.
 #
-# MANUAL RUNS: workflow_dispatch sets FORCE_RUN=true in the step env.
-# The scripts check this var and skip the market-closed gate so you can
-# run master/news/matrix on weekends/holidays without the job exiting early.
+# MANUAL RUNS: workflow_dispatch sets FORCE_RUN=true so scripts skip the
+# market-closed gate (and the compounder screen re-screens everything).
 #
-# WHY TWO JOBS: the old single-job design used HOUR=$(date -u +"%H") to route.
-# GitHub Actions delays of 15-90 mins caused news to run instead of master.
-# Separate jobs with separate schedule triggers eliminate this completely.
+# COMPOUNDER SCREEN: runs as the LAST step of the EOD master job (after filing
+# narrative, so thesis status is fresh) and as its own manual job ("screen").
+# Nightly it re-screens the portfolio and any pending/stale watchlist stocks
+# (capped per run); status changes are protected by hysteresis in the script.
 
 on:
   schedule:
@@ -44,6 +40,7 @@ on:
           - master
           - news
           - matrix
+          - screen
 
 permissions:
   contents: write
@@ -54,13 +51,12 @@ env:
 jobs:
 
   # ════════════════════════════════════════════════════════════════════════════
-  # JOB 1: EOD MASTER
-  # Runs at 22:00 UTC — after US market close in both EST and EDT.
-  # FORCE_RUN=true on manual dispatch bypasses the market-closed gate.
+  # JOB 1: EOD MASTER (+ matrix, earnings, filing narrative, compounder screen)
   # ════════════════════════════════════════════════════════════════════════════
   eod-master:
     name: EOD Master + Matrix
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     if: >-
       (github.event_name == 'schedule' && github.event.schedule == '0 22 * * 1-5') ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.run_type == 'master')
@@ -118,6 +114,18 @@ jobs:
           GEMINI_API_KEY:       ${{ secrets.GEMINI_API_KEY }}
         run: npm run filing-narrative || true
 
+      # Compounder screen: portfolio + pending/stale watchlist. Never fails the pipeline.
+      # Uses Finnhub (2 calls/stock), FMP estimates (1 call/stock, optional), Polygon (sector ETFs, 5/min).
+      - name: Run Compounder Screen
+        working-directory: backend
+        env:
+          REDIS_URL:            ${{ secrets.REDIS_URL }}
+          FINNHUB_API_KEY:      ${{ secrets.FINNHUB_API_KEY }}
+          FMP_API_KEY:          ${{ secrets.FMP_API_KEY }}
+          POLYGON_API_KEY:      ${{ secrets.POLYGON_API_KEY }}
+          WATCHLIST_MAX_PER_RUN: '60'
+        run: npm run multibagger || true
+
       - name: Configure git
         run: |
           git config --local user.email "action@github.com"
@@ -131,9 +139,7 @@ jobs:
           git push || true
 
   # ════════════════════════════════════════════════════════════════════════════
-  # JOB 2: INTRADAY NEWS
-  # 3 slots per day — DST-aware UTC times (see header for full breakdown).
-  # FORCE_RUN=true on manual dispatch bypasses any market-closed logic.
+  # JOB 2: INTRADAY NEWS — 3 slots per day
   # ════════════════════════════════════════════════════════════════════════════
   intraday-news:
     name: Intraday News Update
@@ -168,9 +174,7 @@ jobs:
         run: npm run update:news
 
   # ════════════════════════════════════════════════════════════════════════════
-  # JOB 3: MATRIX ONLY (manual trigger)
-  # Recalculates correlation matrix without the full master pipeline.
-  # Use after adding/removing stocks for immediate correlation update.
+  # JOB 3: MATRIX ONLY (manual) — recalculate correlations after adding/removing stocks
   # ════════════════════════════════════════════════════════════════════════════
   correlation-matrix:
     name: Correlation Matrix Only
@@ -196,8 +200,38 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: npm run generate-correlation
 
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 4: COMPOUNDER SCREEN ONLY (manual) — FORCE_RUN=true re-screens everything
+  # Use after adding many stocks to the Screener tab, or to refresh all results.
+  # ════════════════════════════════════════════════════════════════════════════
+  multibagger-screen:
+    name: Compounder Screen Only
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    if: >-
+      github.event_name == 'workflow_dispatch' && github.event.inputs.run_type == 'screen'
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm install
+
+      - name: Run compounder screen
+        working-directory: backend
+        env:
+          REDIS_URL:            ${{ secrets.REDIS_URL }}
+          FINNHUB_API_KEY:      ${{ secrets.FINNHUB_API_KEY }}
+          FMP_API_KEY:          ${{ secrets.FMP_API_KEY }}
+          POLYGON_API_KEY:      ${{ secrets.POLYGON_API_KEY }}
+          WATCHLIST_MAX_PER_RUN: '60'
+          FORCE_RUN: 'true'
+        run: npm run multibagger
+
 # ─── SCHEDULE SUMMARY ─────────────────────────────────────────────────────────
-# 30 13 * * 1-5  = Mon-Fri  8:30 AM EST /  9:30 AM EDT  → intraday-news slot 1
-#  0 17 * * 1-5  = Mon-Fri 12:00 PM EST /  1:00 PM EDT  → intraday-news slot 2
-# 45 20 * * 1-5  = Mon-Fri  3:45 PM EST /  4:45 PM EDT  → intraday-news slot 3
-#  0 22 * * 1-5  = Mon-Fri  5:00 PM EST /  6:00 PM EDT  → eod-master
+# 30 13 * * 1-5  → intraday-news slot 1     0 17 * * 1-5 → intraday-news slot 2
+# 45 20 * * 1-5  → intraday-news slot 3     0 22 * * 1-5 → eod-master (… → compounder screen)
