@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import './enhanced-portfolio-dashboard.css';
 import CorrelationHeatmap from './CorrelationHeatmap';
+import { useFeedback } from './ui-feedback';
+import { MultibaggerBadge, MultibaggerPanel, ScreenerView } from './MultibaggerViews';
 
 // ── Signal Configuration ──────────────────────────────────────────────────────
 const SIGNAL_CFG = {
@@ -84,6 +86,10 @@ const SIGNAL_CFG = {
 
 
 const sig = (s) => SIGNAL_CFG[s || ''] || { color: '#6b7280', label: s || 'Pending', tier: 'flat', action: '', why: '' };
+
+// Indian tax on foreign (US) shares: LTCG 12.5% if held > 24 months, STCG at slab rate.
+// Surcharge + 4% cess push the all-in LTCG to roughly 15% at the top. Verify with your CA.
+const EXIT_TAX_EST = 0.15;
 
 // ── Formatting Utilities ──────────────────────────────────────────────────────
 const fmtUSD = (n, compact = false) => {
@@ -459,7 +465,7 @@ const FundRow = ({ label, value, hint, positive }) => {
 };
 
 // ── Detail Panel ──────────────────────────────────────────────────────────────
-const DetailPanel = ({ stock }) => {
+const DetailPanel = ({ stock, mb, onRescreen, rescreening }) => {
   const fcfYieldPct = (stock.fcf_yield != null && stock.fcf_yield > 0) ? (stock.fcf_yield * 100) : null;
   const sbcPct = stock.sbc_to_market_cap;
   const filingScore = stock.filing_sentiment;
@@ -490,18 +496,25 @@ const DetailPanel = ({ stock }) => {
             <div style={{
               padding: '8px 12px', borderRadius: 8, marginBottom: 4,
               background: '#fff7ed10', border: '1px solid #fed7aa40',
-              display: 'flex', alignItems: 'flex-start', gap: 8,
+              display: 'flex', alignItems: 'flex-start', gap: 8, flexBasis: '100%',
             }}>
               <span style={{ fontSize: 14, flexShrink: 0 }}>🇮🇳</span>
-              <div style={{ fontSize: 11, color: '#fbbf24', lineHeight: 1.5 }}>
+              <div style={{ fontSize: 11, color: '#b45309', lineHeight: 1.5 }}>
                 <strong>Tax consideration:</strong>{' '}
                 This position has a <strong>{gainPct.toFixed(0)}% unrealised gain</strong>{' '}
-                (~${Math.abs(gainAmt).toFixed(0)} USD).{' '}
+                (~${Math.abs(gainAmt).toFixed(0)} USD). Selling costs roughly{' '}
+                <strong>~${Math.abs(gainAmt * EXIT_TAX_EST).toFixed(0)}</strong> in tax: 12.5% LTCG (about 15% with surcharge and cess)
+                if held over 24 months, otherwise your slab rate.{' '}
                 {gainPct > 100
-                  ? 'The system requires W4 confirmation before escalating to SELL on large winners.'
-                  : 'Review whether the signal strength justifies the capital gains tax bill (20% LTCG / 30% STCG).'}
+                  ? 'The system requires W4 confirmation before escalating to SELL on large winners. '
+                  : ''}
+                Exit for a broken thesis, not for price weakness.
               </div>
             </div>
+          )}
+
+          {!isETF && (
+            <MultibaggerPanel result={mb} onRescreen={onRescreen} busy={rescreening} />
           )}
 
           {isETF && (
@@ -915,8 +928,7 @@ const DetailPanel = ({ stock }) => {
 
 
 // ── EarningsCard ──────────────────────────────────────────────────────────────
-// Lazy-fetches /api/portfolio/:symbol/earnings on first expand.
-// Shows next earnings date + last 4 quarters of EPS surprise vs consensus.
+// Lazy-fetches /api/portfolio/earnings-event/:symbol on first expand.
 const EarningsCard = ({ symbol }) => {
   const [data, setData] = React.useState(null);
   const [loading, setLoading] = React.useState(false);
@@ -932,7 +944,6 @@ const EarningsCard = ({ symbol }) => {
       if (res.status === 204) { setData({}); return; } // no earnings event yet — show empty state
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
-      // Route wraps payload in { status, symbol, event, timestamp } — unwrap it
       setData(json.event ?? json);
     } catch (e) {
       setError(e.message || 'Failed to load');
@@ -957,10 +968,6 @@ const EarningsCard = ({ symbol }) => {
           {loading && <p style={{ fontSize: 11, color: '#6b7280', margin: '4px 0' }}>Loading…</p>}
           {error && <p style={{ fontSize: 11, color: '#dc2626', margin: '4px 0' }}>⚠ {error}</p>}
           {data && !loading && (() => {
-            // After unwrapping json.event, data has shape from earnings-event.js:
-            // { gemini: { summary, eps_beat, revenue_beat, guidance_direction,
-            //   thesis_confirms, thesis_risks, management_confidence },
-            //   quarter, year, estimates: { eps, revenue }, pressRelease }
             const g          = data.gemini ?? {};
             const summary    = g.summary            ?? null;
             const epsBeat    = g.eps_beat            ?? null;
@@ -1012,13 +1019,13 @@ const EarningsCard = ({ symbol }) => {
                     <div style={{ fontSize: 10, color: '#6b7280', fontWeight: 700, marginBottom: 4 }}>
                       AI VERDICT
                     </div>
-                    <p style={{ fontSize: 11, color: '#d4d4d0', lineHeight: 1.6, margin: 0 }}>{summary}</p>
+                    <p style={{ fontSize: 11, color: '#4b4b46', lineHeight: 1.6, margin: 0 }}>{summary}</p>
                   </div>
                 )}
                 {confirms.length > 0 && (
                   <div style={{ marginTop: 8 }}>
                     <div style={{ fontSize: 10, color: '#059669', fontWeight: 700, marginBottom: 4 }}>THESIS CONFIRMS</div>
-                    <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11, color: '#d4d4d0', lineHeight: 1.6 }}>
+                    <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11, color: '#4b4b46', lineHeight: 1.6 }}>
                       {confirms.map((c, i) => <li key={i}>{c}</li>)}
                     </ul>
                   </div>
@@ -1026,7 +1033,7 @@ const EarningsCard = ({ symbol }) => {
                 {risks.length > 0 && (
                   <div style={{ marginTop: 6 }}>
                     <div style={{ fontSize: 10, color: '#dc2626', fontWeight: 700, marginBottom: 4 }}>THESIS RISKS</div>
-                    <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11, color: '#d4d4d0', lineHeight: 1.6 }}>
+                    <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11, color: '#4b4b46', lineHeight: 1.6 }}>
                       {risks.map((r, i) => <li key={i}>{r}</li>)}
                     </ul>
                   </div>
@@ -1046,10 +1053,7 @@ const EarningsCard = ({ symbol }) => {
 };
 
 // ── FilingNarrativeCard ────────────────────────────────────────────────────────
-// Lazy-fetches /api/portfolio/:symbol/filing-narrative on first expand.
-// Displays Gemini-generated MD&A summary + risk factor bullets + evidence/uncertainty flags.
-// Only rendered when filing_sentiment is present (Gemini has processed this ticker).
-// IFRS/foreign-filer note is shown for 20-F/6-K filers (MELI, SCCO).
+// Lazy-fetches /api/portfolio/filing-narrative/:symbol on first expand. Display only (not a scoring input).
 const FilingNarrativeCard = ({ symbol, filingForm }) => {
   const [data, setData] = React.useState(null);
   const [loading, setLoading] = React.useState(false);
@@ -1067,7 +1071,6 @@ const FilingNarrativeCard = ({ symbol, filingForm }) => {
       if (res.status === 204) { setData({}); return; } // no narrative yet — show empty state
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
-      // Route wraps payload in { status, symbol, narrative, timestamp } — unwrap it
       setData(json.narrative ?? json);
     } catch (e) {
       setError(e.message || 'Failed to load');
@@ -1097,8 +1100,6 @@ const FilingNarrativeCard = ({ symbol, filingForm }) => {
           {loading && <p style={{ fontSize: 11, color: '#6b7280', margin: '4px 0' }}>Loading…</p>}
           {error && <p style={{ fontSize: 11, color: '#dc2626', margin: '4px 0' }}>⚠ {error}</p>}
           {data && !loading && (() => {
-            // Route returns raw Redis payload: { gemini: { summary, thesis_risks, ... }, form, filed }
-            // Normalise to flat fields the card uses.
             const g             = data.gemini ?? {};
             const mdaSummary    = g.summary          ?? null;
             const riskFactors   = g.thesis_risks      ?? [];
@@ -1117,7 +1118,7 @@ const FilingNarrativeCard = ({ symbol, filingForm }) => {
             return (
               <div>
                 <p style={{ fontSize: 10, color: '#6b7280', fontStyle: 'italic', margin: '0 0 8px', lineHeight: 1.5 }}>
-                  AI-interpreted summary of SEC filing text. Not a scoring input — display only.
+                  AI-interpreted summary of SEC filing text. Display only for the quality score; the compounder screen reads the thesis status.
                 </p>
 
                 {thesisStatus && (
@@ -1137,14 +1138,14 @@ const FilingNarrativeCard = ({ symbol, filingForm }) => {
                 {mdaSummary && (
                   <div style={{ marginBottom: 10 }}>
                     <div style={{ fontSize: 10, color: '#6b7280', fontWeight: 700, marginBottom: 4 }}>MD&A SUMMARY</div>
-                    <p style={{ fontSize: 11, color: '#d4d4d0', lineHeight: 1.6, margin: 0 }}>{mdaSummary}</p>
+                    <p style={{ fontSize: 11, color: '#4b4b46', lineHeight: 1.6, margin: 0 }}>{mdaSummary}</p>
                   </div>
                 )}
 
                 {riskFactors.length > 0 && (
                   <div style={{ marginBottom: 10 }}>
                     <div style={{ fontSize: 10, color: '#6b7280', fontWeight: 700, marginBottom: 4 }}>KEY RISK FACTORS</div>
-                    <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11, color: '#d4d4d0', lineHeight: 1.6 }}>
+                    <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11, color: '#4b4b46', lineHeight: 1.6 }}>
                       {riskFactors.map((r, i) => <li key={i}>{r}</li>)}
                     </ul>
                   </div>
@@ -1155,8 +1156,8 @@ const FilingNarrativeCard = ({ symbol, filingForm }) => {
                     <div style={{ fontSize: 10, color: '#6b7280', fontWeight: 700, marginBottom: 4 }}>EVIDENCE FROM FILING</div>
                     {evidenceQuotes.map((q, i) => (
                       <div key={i} style={{
-                        fontSize: 10, color: '#9ca3af', fontStyle: 'italic',
-                        borderLeft: '2px solid #374151', paddingLeft: 8, marginBottom: 4, lineHeight: 1.5,
+                        fontSize: 10, color: '#6b6b65', fontStyle: 'italic',
+                        borderLeft: '2px solid #d0cfc9', paddingLeft: 8, marginBottom: 4, lineHeight: 1.5,
                       }}>"{q}"</div>
                     ))}
                   </div>
@@ -1185,33 +1186,55 @@ const FilingNarrativeCard = ({ symbol, filingForm }) => {
 
 
 // ── HistoryView ───────────────────────────────────────────────────────────────
-// Per-stock collapsible cards, newest date first. Each card's table scrolls
-// vertically on its own (max-height + overflow-y) instead of the dashboard
-// needing to scroll sideways through a wide dates-as-columns grid. Matches
-// the light theme used everywhere else (ScoreRing, signal-badge, pill, etc.)
-// so History reads as part of the same app instead of a separate dark panel.
+// Shows 15 or 30 days of score history per stock from Supabase daily_metrics.
+// Colour-codes each cell by score direction vs previous day.
+
+const SCORE_COLS = [
+  { key: 'total_score',   label: 'Total',   w: 55 },
+  { key: 'fund_score',    label: 'Fund',    w: 45 },
+  { key: 'tech_score',    label: 'Tech',    w: 45 },
+  { key: 'news_score',    label: 'News',    w: 45 },
+  { key: 'insider_score', label: 'Insider', w: 55 },
+  { key: 'signal',        label: 'Signal',  w: 90 },
+];
+
+const SIGNAL_COLOR = {
+  STRONG_BUY:        '#059669',
+  BUY:               '#10b981',
+  ADD:               '#34d399',
+  SPRING_CONFIRMED:  '#06b6d4',
+  SPRING_CANDIDATE:  '#67e8f9',
+  HOLD:              '#6b7280',
+  HOLD_NOISE:        '#4b5563',
+  MARKET_NOISE:      '#4b5563',
+  NORMAL:            '#4b5563',
+  WATCH:             '#d97706',
+  REDUCE:            '#f97316',
+  TRIM_25:           '#ef4444',
+  SELL:              '#dc2626',
+  IDIOSYNCRATIC_DECAY: '#991b1b',
+  INSUFFICIENT_DATA: '#374151',
+};
+
+function scoreCell(val, prev) {
+  if (val == null) return { bg: '#111', color: '#374151', text: '—' };
+  const num   = parseFloat(val);
+  const delta = prev != null ? num - parseFloat(prev) : 0;
+  const bg    = delta >  0.3 ? '#052e16'
+              : delta < -0.3 ? '#2d0a0a'
+              : '#0f1117';
+  const color = num >= 7.5 ? '#10b981'
+              : num >= 6.0 ? '#34d399'
+              : num >= 4.5 ? '#9ca3af'
+              : num >= 3.5 ? '#f97316'
+              : '#ef4444';
+  const arrow = delta >  0.3 ? ' ↑' : delta < -0.3 ? ' ↓' : '';
+  return { bg, color, text: num.toFixed(1) + arrow };
+}
 
 function fmtDate(iso) {
   const d = new Date(iso + 'T12:00:00Z');
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
-}
-
-// Walks dates (ascending) backward to find the most recent day this stock
-// actually has a row for — a stock added partway through the range won't
-// have data on every date, so we can't just read the last date in the array.
-function latestEntryFor(row, datesAsc) {
-  for (let i = datesAsc.length - 1; i >= 0; i--) {
-    const dt = datesAsc[i];
-    if (row.data[dt]) return { date: dt, ...row.data[dt] };
-  }
-  return null;
-}
-
-function signalBadgeClass(signalKey) {
-  const sCfg = sig(signalKey);
-  if (sCfg.tier === 'bull') return 'signal-bull';
-  if (sCfg.tier === 'bear') return ['WATCH', 'TRIM_25'].includes(signalKey || '') ? 'signal-bear-soft' : 'signal-bear-hard';
-  return 'signal-neutral';
 }
 
 const HistoryView = ({ stocks }) => {
@@ -1222,11 +1245,7 @@ const HistoryView = ({ stocks }) => {
   const [loading,   setLoading]   = React.useState(false);
   const [error,     setError]     = React.useState(null);
   const [useCustom, setUseCustom] = React.useState(false);
-  const [expanded,  setExpanded]  = React.useState(() => new Set());
 
-  // Stable string key: only changes when the set of symbols changes, not on every
-  // new array reference. Extracted to a variable so react-hooks/exhaustive-deps
-  // can statically verify the useCallback dependency array.
   const symbolsKey = (stocks || []).map(s => s.symbol).join(',');
 
   const load = useCallback(async () => {
@@ -1254,160 +1273,151 @@ const HistoryView = ({ stocks }) => {
 
   React.useEffect(() => { load(); }, [load]);
 
-  const toggleExpand = (symbol) => {
-    setExpanded(prev => {
-      const next = new Set(prev);
-      if (next.has(symbol)) next.delete(symbol); else next.add(symbol);
-      return next;
-    });
-  };
-
   if (loading) return (
-    <div className="loading-wrap" style={{ minHeight: '30vh' }}>
-      <div className="loading-ring" />
+    <div style={{ padding: 40, textAlign: 'center', color: '#6b7280', fontSize: 13 }}>
+      Loading history…
     </div>
   );
   if (error) return (
-    <div className="no-results">⚠ {error}</div>
+    <div style={{ padding: 40, textAlign: 'center', color: '#dc2626', fontSize: 13 }}>
+      ⚠ {error}
+    </div>
   );
   if (!history) return null;
 
-  const { dates, rows } = history; // dates ascending; rows = [{ symbol, data: { date: {col: val} } }]
-  const datesDesc = [...dates].reverse();
+  const { dates, rows } = history;
 
   return (
     <div style={{ padding: '16px 0' }}>
-      {/* Controls — reuses the same pill/results-count language as the Portfolio tab */}
-      <div className="controls-section">
-        <div className="filter-pills">
-          {[15, 30].map(d => (
-            <button key={d}
-              className={`pill ${!useCustom && days === d ? 'pill-active' : ''}`}
-              onClick={() => { setDays(d); setUseCustom(false); }}>
-              {d}d
-            </button>
-          ))}
-        </div>
-        <span className="history-toolbar-label">Custom</span>
-        <input type="date" className="history-date-input" value={fromDate} onChange={e => setFromDate(e.target.value)} />
-        <span className="history-sep">→</span>
-        <input type="date" className="history-date-input" value={toDate} onChange={e => setToDate(e.target.value)} />
-        <button className="btn-secondary"
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12, color: '#6b7280', fontWeight: 600 }}>SHOW:</span>
+        {[15, 30].map(d => (
+          <button key={d} onClick={() => { setDays(d); setUseCustom(false); }}
+            style={{
+              padding: '4px 12px', borderRadius: 4, border: '1px solid',
+              fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-mono)',
+              background:   !useCustom && days === d ? 'var(--green)' : 'transparent',
+              borderColor:  !useCustom && days === d ? 'var(--green)' : '#374151',
+              color:        !useCustom && days === d ? '#000' : '#9ca3af',
+            }}>
+            {d}d
+          </button>
+        ))}
+        <span style={{ fontSize: 12, color: '#374151' }}>|</span>
+        <span style={{ fontSize: 12, color: '#6b7280', fontWeight: 600 }}>CUSTOM:</span>
+        <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)}
+          style={{ background: '#111', color: '#d4d4d0', border: '1px solid #374151',
+            borderRadius: 4, padding: '3px 8px', fontSize: 12, fontFamily: 'var(--font-mono)' }} />
+        <span style={{ color: '#6b7280', fontSize: 12 }}>→</span>
+        <input type="date" value={toDate} onChange={e => setToDate(e.target.value)}
+          style={{ background: '#111', color: '#d4d4d0', border: '1px solid #374151',
+            borderRadius: 4, padding: '3px 8px', fontSize: 12, fontFamily: 'var(--font-mono)' }} />
+        <button onClick={() => { setUseCustom(true); load(); }}
           disabled={!fromDate || !toDate}
-          onClick={() => { setUseCustom(true); load(); }}>
+          style={{
+            padding: '4px 12px', borderRadius: 4, border: '1px solid #374151',
+            fontSize: 12, cursor: fromDate && toDate ? 'pointer' : 'not-allowed',
+            background: useCustom ? 'var(--green)' : 'transparent',
+            color: useCustom ? '#000' : '#9ca3af',
+            fontFamily: 'var(--font-mono)',
+          }}>
           Apply
         </button>
-        <div className="results-count">{rows.length} of {stocks.length} tracked</div>
       </div>
 
-      {rows.length === 0 ? (
-        <div className="no-results">No score history yet for the selected range.</div>
-      ) : (
-        <div className="history-list">
-          {rows.map(row => {
-            const latest  = latestEntryFor(row, dates);
-            const isOpen  = expanded.has(row.symbol);
-            const daysCovered = Object.keys(row.data).length;
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ borderCollapse: 'collapse', fontSize: 11, fontFamily: 'var(--font-mono)', minWidth: '100%' }}>
+          <thead>
+            <tr>
+              <th style={{ position: 'sticky', left: 0, zIndex: 2, background: '#0a0a0f',
+                textAlign: 'left', padding: '6px 12px 6px 4px', color: '#6b7280',
+                fontWeight: 700, letterSpacing: 1, borderBottom: '1px solid #1f2937',
+                minWidth: 90, whiteSpace: 'nowrap' }}>
+                STOCK
+              </th>
+              {dates.map(date => (
+                <th key={date} colSpan={SCORE_COLS.length}
+                  style={{ textAlign: 'center', padding: '4px 2px',
+                    color: '#4b5563', fontWeight: 600, fontSize: 10,
+                    borderBottom: '1px solid #1f2937', borderLeft: '1px solid #1f2937',
+                    whiteSpace: 'nowrap' }}>
+                  {fmtDate(date)}
+                </th>
+              ))}
+            </tr>
+            <tr>
+              <th style={{ position: 'sticky', left: 0, zIndex: 2, background: '#0a0a0f',
+                borderBottom: '1px solid #1f2937' }} />
+              {dates.map(date =>
+                SCORE_COLS.map(col => (
+                  <th key={`${date}-${col.key}`}
+                    style={{ padding: '3px 2px', color: '#374151', fontWeight: 600,
+                      fontSize: 9, letterSpacing: 0.5, textAlign: 'center',
+                      borderBottom: '1px solid #1f2937',
+                      borderLeft: col.key === 'total_score' ? '1px solid #1f2937' : 'none',
+                      minWidth: col.w, whiteSpace: 'nowrap' }}>
+                    {col.label.toUpperCase()}
+                  </th>
+                ))
+              )}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, ri) => (
+              <tr key={row.symbol}
+                style={{ background: ri % 2 === 0 ? '#0a0a0f' : '#0d0d14' }}>
+                <td style={{ position: 'sticky', left: 0, zIndex: 1,
+                  background: ri % 2 === 0 ? '#0a0a0f' : '#0d0d14',
+                  padding: '5px 12px 5px 4px', fontWeight: 700, color: '#d4d4d0',
+                  borderBottom: '1px solid #0f1117', whiteSpace: 'nowrap' }}>
+                  {row.symbol}
+                </td>
+                {dates.map((date, di) => {
+                  const prev = di > 0 ? dates[di - 1] : null;
+                  const d    = row.data[date]      ?? {};
+                  const dp   = prev ? (row.data[prev] ?? {}) : {};
+                  return SCORE_COLS.map(col => {
+                    if (col.key === 'signal') {
+                      const sg = d.signal || null;
+                      return (
+                        <td key={`${date}-${col.key}`}
+                          style={{ padding: '5px 3px', textAlign: 'center',
+                            borderBottom: '1px solid #0f1117',
+                            borderLeft: '1px solid #1f2937' }}>
+                          {sg
+                            ? <span style={{ fontSize: 9, fontWeight: 700,
+                                color: SIGNAL_COLOR[sg] ?? '#6b7280',
+                                letterSpacing: 0.3 }}>
+                                {sg.replace(/_/g, ' ')}
+                              </span>
+                            : <span style={{ color: '#1f2937' }}>—</span>}
+                        </td>
+                      );
+                    }
+                    const cell = scoreCell(d[col.key], dp[col.key]);
+                    return (
+                      <td key={`${date}-${col.key}`}
+                        style={{ padding: '5px 3px', textAlign: 'center',
+                          background: cell.bg, color: cell.color, fontWeight: 600,
+                          borderBottom: '1px solid #0f1117',
+                          borderLeft: col.key === 'total_score' ? '1px solid #1f2937' : 'none' }}>
+                        {cell.text}
+                      </td>
+                    );
+                  });
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
-            return (
-              <div className="history-card" key={row.symbol}>
-                <div className="history-card-header" onClick={() => toggleExpand(row.symbol)}>
-                  <div className="history-card-id">
-                    <span className="history-card-symbol">{row.symbol}</span>
-                    <span className="history-card-days">{daysCovered} day{daysCovered === 1 ? '' : 's'} tracked</span>
-                  </div>
-
-                  {latest && <ScoreRing score={latest.total_score} />}
-
-                  {latest?.signal && (
-                    <span className={`signal-badge signal-badge-sm ${signalBadgeClass(latest.signal)}`}>
-                      {sig(latest.signal).label}
-                    </span>
-                  )}
-
-                  <span className="history-card-spacer" />
-
-                  {latest && <span className="history-card-latest">as of {fmtDate(latest.date)}</span>}
-
-                  <button className={`btn-icon btn-expand${isOpen ? ' btn-expand-active' : ''}`}
-                    title={isOpen ? 'Collapse' : 'Expand history'}>
-                    {isOpen ? '▲' : '▼'}
-                  </button>
-                </div>
-
-                {isOpen && (
-                  <div className="history-card-body">
-                    <table className="history-table">
-                      <thead>
-                        <tr>
-                          <th>Date</th>
-                          <th>Total</th>
-                          <th>Fund</th>
-                          <th>Tech</th>
-                          <th>News</th>
-                          <th>Insider</th>
-                          <th>Signal</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {datesDesc.map((date, di) => {
-                          // di is the index into datesDesc; the chronologically-prior day
-                          // (for the delta arrow) is the NEXT row down, i.e. datesDesc[di + 1].
-                          const d  = row.data[date] ?? null;
-                          const dp = datesDesc[di + 1] ? (row.data[datesDesc[di + 1]] ?? null) : null;
-
-                          if (!d) {
-                            return (
-                              <tr key={date} className="history-row-empty">
-                                <td>{fmtDate(date)}</td>
-                                <td colSpan={6}>— no data this day —</td>
-                              </tr>
-                            );
-                          }
-
-                          const delta = (d.total_score != null && dp?.total_score != null)
-                            ? d.total_score - dp.total_score : null;
-                          const deltaUp   = delta != null && delta > 0.3;
-                          const deltaDown = delta != null && delta < -0.3;
-
-                          return (
-                            <tr key={date}>
-                              <td>{fmtDate(date)}</td>
-                              <td>
-                                <span style={{ color: scoreCol(d.total_score), fontWeight: 700 }}>
-                                  {d.total_score != null ? d.total_score.toFixed(1) : '—'}
-                                </span>
-                                {deltaUp   && <span className="history-delta up">▲</span>}
-                                {deltaDown && <span className="history-delta down">▼</span>}
-                              </td>
-                              <td className="history-sub-score">{d.fund_score    != null ? d.fund_score.toFixed(1)    : '—'}</td>
-                              <td className="history-sub-score">{d.tech_score    != null ? d.tech_score.toFixed(1)    : '—'}</td>
-                              <td className="history-sub-score">{d.news_score    != null ? d.news_score.toFixed(1)    : '—'}</td>
-                              <td className="history-sub-score">{d.insider_score != null ? d.insider_score.toFixed(1) : '—'}</td>
-                              <td>
-                                {d.signal ? (
-                                  <span className={`signal-badge signal-badge-sm ${signalBadgeClass(d.signal)}`}>
-                                    {sig(d.signal).label}
-                                  </span>
-                                ) : <span style={{ color: 'var(--text-dim)' }}>—</span>}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      <div className="history-legend">
-        <span>▲ / ▼ = Total score moved &gt;0.3 pts vs the prior trading day</span>
-        <span>— no data this day — = pipeline didn't score this stock that day (new addition or a skipped run)</span>
-        <span>Click a row to expand its full history</span>
+      <div style={{ display: 'flex', gap: 16, marginTop: 12, fontSize: 10, color: '#4b5563', flexWrap: 'wrap' }}>
+        <span>↑ = improved &gt;0.3 pts vs prior day</span>
+        <span>↓ = declined &gt;0.3 pts vs prior day</span>
+        <span style={{ color: '#10b981' }}>■ green bg = improving</span>
+        <span style={{ color: '#ef4444' }}>■ red bg = deteriorating</span>
+        <span>Dates shown = trading days only</span>
       </div>
     </div>
   );
@@ -1427,8 +1437,9 @@ const Modal = ({ onClose, children, wide = false }) =>
 
 // ── Main Component ────────────────────────────────────────────────────────────
 const EnhancedPortfolioDashboard = () => {
+  const { toast, confirm, node: feedbackNode } = useFeedback();
   const [portfolio, setPortfolio] = useState([]);
-  const [activeTab, setActiveTab] = useState('portfolio'); // 'portfolio' | 'history'
+  const [activeTab, setActiveTab] = useState('portfolio'); // 'portfolio' | 'history' | 'screener'
   const [stats, setStats] = useState(null);
   const [marketRegime, setMarketRegime] = useState({ regime: 'NORMAL', spy21d: 0 });
   const [loading, setLoading] = useState(true);
@@ -1443,6 +1454,16 @@ const EnhancedPortfolioDashboard = () => {
   const [editingId, setEditingId] = useState(null);
   const [newsModalStock, setNewsModalStock] = useState(null);
   const [expandedRow, setExpandedRow] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [mbData, setMbData] = useState({});          // { SYMBOL: compounder-screen result }
+  const [rescreening, setRescreening] = useState(null);
+
+  const refreshMb = useCallback(async () => {
+    try {
+      const r = await fetch('/api/portfolio/multibagger');
+      if (r.ok) { const j = await r.json(); setMbData(j.portfolio || {}); }
+    } catch (_e) { /* non-critical */ }
+  }, []);
 
   const fetchPortfolio = useCallback(async () => {
     try {
@@ -1462,13 +1483,14 @@ const EnhancedPortfolioDashboard = () => {
             if (mrData?.regime) setMarketRegime(mrData);
           }
         } catch (_e) { /* non-critical */ }
+        refreshMb();
       }
     } catch (_err) {
       console.error('Portfolio fetch failed');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [refreshMb]);
 
   useEffect(() => {
     fetchPortfolio();
@@ -1476,36 +1498,90 @@ const EnhancedPortfolioDashboard = () => {
     return () => clearInterval(interval);
   }, [fetchPortfolio]);
 
+  // Screen one portfolio stock (after it is added, or on demand from the detail panel)
+  const screenPortfolioStock = async (sym, { quiet = false } = {}) => {
+    const id = toast.loading(`Screening ${sym} for compounder potential…`);
+    try {
+      const res = await fetch('/api/portfolio/multibagger', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol: sym }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `Screen failed (${res.status})`);
+      const st = body.result?.status;
+      if (st === 'PASS') toast.update(id, 'success', `${sym} passes the compounder screen`);
+      else if (st === 'FAIL') toast.update(id, 'info', `${sym} does not pass the compounder screen. Open its row for the reasons.`);
+      else toast.update(id, 'info', st === 'NOT_APPLICABLE' ? `${sym} is an ETF: not screened` : `${sym}: not enough data to screen`);
+      await refreshMb();
+    } catch (err) {
+      toast.update(id, 'error', err.message);
+    }
+    return quiet;
+  };
+
   const handleAddStock = async (e) => {
-    e.preventDefault();
-    if (!formData.symbol || !formData.quantity || !formData.average_price) return;
+    e?.preventDefault?.();
+    if (!formData.symbol || !formData.quantity || !formData.average_price) {
+      toast.error('Enter a symbol, quantity and average cost.');
+      return;
+    }
+    const sym = formData.symbol;
+    setSaving(true);
+    const id = toast.loading(`Adding ${sym} to portfolio…`);
     try {
       const res = await fetch('/api/portfolio/add', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData),
       });
-      if (res.ok) { setShowForm(false); fetchPortfolio(); }
-    } catch (_err) { console.error('Add failed'); }
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `Request failed (${res.status})`);
+      toast.update(id, 'success', `${sym} added to portfolio`);
+      setShowForm(false);
+      fetchPortfolio();
+      if (formData.type !== 'ETF') screenPortfolioStock(sym);
+    } catch (err) {
+      toast.update(id, 'error', err.message);
+    } finally { setSaving(false); }
   };
 
   const handleEditStock = async (e) => {
-    e.preventDefault();
+    e?.preventDefault?.();
     if (!editingId) return;
+    const sym = formData.symbol;
+    setSaving(true);
+    const id = toast.loading(`Saving changes to ${sym}…`);
     try {
       const res = await fetch(`/api/portfolio/edit/${editingId}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData),
       });
-      if (res.ok) { setShowForm(false); setEditingId(null); fetchPortfolio(); }
-    } catch (_err) { console.error('Edit failed'); }
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `Request failed (${res.status})`);
+      toast.update(id, 'success', `${sym} updated`);
+      setShowForm(false); setEditingId(null);
+      fetchPortfolio();
+    } catch (err) {
+      toast.update(id, 'error', err.message);
+    } finally { setSaving(false); }
   };
 
-  const handleDeleteStock = async (id) => {
-    if (!window.confirm('Remove this asset from the portfolio?')) return;
+  const handleDeleteStock = async (stock) => {
+    const ok = await confirm({
+      title: `Remove ${stock.symbol}?`,
+      message: 'The position is removed from your portfolio and tracking. Historical scores are kept.',
+      confirmLabel: 'Remove', tone: 'danger',
+    });
+    if (!ok) return;
+    const id = toast.loading(`Removing ${stock.symbol}…`);
     try {
-      const res = await fetch(`/api/portfolio/delete/${id}`, { method: 'DELETE' });
-      if (res.ok) fetchPortfolio();
-    } catch (_err) { console.error('Delete failed'); }
+      const res = await fetch(`/api/portfolio/delete/${stock.id}`, { method: 'DELETE' });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `Request failed (${res.status})`);
+      toast.update(id, 'success', `${stock.symbol} removed`);
+      fetchPortfolio();
+    } catch (err) {
+      toast.update(id, 'error', err.message);
+    }
   };
 
   const openEditForm = (stock) => {
@@ -1519,23 +1595,31 @@ const EnhancedPortfolioDashboard = () => {
     setShowForm(true);
   };
 
-  const openAddForm = () => {
+  const openAddForm = (prefill = {}) => {
     setFormMode('add');
     setEditingId(null);
-    setFormData({ symbol: '', name: '', quantity: '', average_price: '', type: 'Stock', sector: '' });
+    setFormData({ symbol: prefill.symbol || '', name: prefill.name || '', quantity: '', average_price: '', type: 'Stock', sector: '' });
     setShowForm(true);
   };
 
   const toggleRow = (symbol) => setExpandedRow(prev => prev === symbol ? null : symbol);
 
+  const isStock = (s) => s.instrument_type !== 'ETF';
+  const BULL = ['ADD', 'SPRING_CONFIRMED', 'SPRING_CANDIDATE', 'STRONG_BUY', 'BUY'];
+  const BEAR = ['WATCH', 'TRIM_25', 'REDUCE', 'SELL', 'IDIOSYNCRATIC_DECAY'];
+
   const getFilteredPortfolio = () => {
     let filtered = [...portfolio];
     if (filterSignal === 'BULLISH')
-      filtered = filtered.filter(s => ['ADD', 'SPRING_CONFIRMED', 'SPRING_CANDIDATE', 'STRONG_BUY', 'BUY'].includes(s.signal || ''));
+      filtered = filtered.filter(s => BULL.includes(s.signal || ''));
     else if (filterSignal === 'NOISE')
       filtered = filtered.filter(s => ['HOLD_NOISE', 'MARKET_NOISE', 'HOLD', 'NORMAL'].includes(s.signal || '') || s.regime === 'MARKET_NOISE');
     else if (filterSignal === 'BEARISH')
-      filtered = filtered.filter(s => ['WATCH', 'TRIM_25', 'REDUCE', 'SELL', 'IDIOSYNCRATIC_DECAY'].includes(s.signal || ''));
+      filtered = filtered.filter(s => BEAR.includes(s.signal || ''));
+    else if (filterSignal === 'MB_PASS')
+      filtered = filtered.filter(s => isStock(s) && mbData[s.symbol]?.status === 'PASS');
+    else if (filterSignal === 'MB_FAIL')
+      filtered = filtered.filter(s => isStock(s) && mbData[s.symbol]?.status === 'FAIL');
 
     return filtered.sort((a, b) => {
       if (sortBy === 'moat') return (b.moat_score || 0) - (a.moat_score || 0);
@@ -1571,8 +1655,11 @@ const EnhancedPortfolioDashboard = () => {
 
   const avgScore = portfolio.length
     ? (portfolio.reduce((s, x) => s + (x.latest_score || 0), 0) / portfolio.length).toFixed(1) : '—';
-  const bullCount = portfolio.filter(s => ['ADD', 'SPRING_CONFIRMED', 'SPRING_CANDIDATE', 'STRONG_BUY', 'BUY'].includes(s.signal || '')).length;
-  const bearCount = portfolio.filter(s => ['WATCH', 'TRIM_25', 'REDUCE', 'SELL', 'IDIOSYNCRATIC_DECAY'].includes(s.signal || '')).length;
+  const bullCount = portfolio.filter(s => BULL.includes(s.signal || '')).length;
+  const bearCount = portfolio.filter(s => BEAR.includes(s.signal || '')).length;
+
+  const screenedStocks = portfolio.filter(s => isStock(s) && ['PASS', 'FAIL'].includes(mbData[s.symbol]?.status));
+  const passCount = screenedStocks.filter(s => mbData[s.symbol].status === 'PASS').length;
 
   if (loading && portfolio.length === 0) {
     return (
@@ -1615,7 +1702,7 @@ const EnhancedPortfolioDashboard = () => {
               Last: {lastUpdate.toLocaleTimeString()}
             </div>
           )}
-          <button onClick={openAddForm} className="btn-primary">+ Add Stock</button>
+          <button onClick={() => openAddForm()} className="btn-primary">+ Add Stock</button>
         </div>
       </div>
 
@@ -1626,6 +1713,7 @@ const EnhancedPortfolioDashboard = () => {
       }}>
         {[
           { id: 'portfolio', label: '📊 Portfolio' },
+          { id: 'screener',  label: '🔎 Screener' },
           { id: 'history',   label: '📅 History' },
         ].map(tab => (
           <button key={tab.id} onClick={() => setActiveTab(tab.id)}
@@ -1669,6 +1757,12 @@ const EnhancedPortfolioDashboard = () => {
               {(stats && stats.averageScore != null ? stats.averageScore : avgScore)}<span className="stat-unit">/10</span>
             </div>
           </div>
+          <div className="stat-card" title="Stocks that pass the 5-year, after-tax compounder screen">
+            <div className="stat-label">Compounder Fit</div>
+            <div className="stat-value" style={{ color: screenedStocks.length === 0 ? 'var(--text-muted)' : passCount === screenedStocks.length ? 'var(--green)' : 'var(--amber)' }}>
+              {screenedStocks.length === 0 ? '—' : passCount}<span className="stat-unit">{screenedStocks.length ? `/${screenedStocks.length}` : ''}</span>
+            </div>
+          </div>
           <div className="stat-card">
             <div className="stat-label">Buy Signals</div>
             <div className="stat-value" style={{ color: bullCount > 0 ? 'var(--green)' : 'var(--text-muted)' }}>{bullCount}</div>
@@ -1687,6 +1781,8 @@ const EnhancedPortfolioDashboard = () => {
             { v: 'BULLISH', l: '▲ Buy Signals' },
             { v: 'NOISE', l: '— Noise' },
             { v: 'BEARISH', l: '▼ Risk Alerts' },
+            { v: 'MB_PASS', l: '✓ Compounders' },
+            { v: 'MB_FAIL', l: '⚑ Failed screen' },
           ].map(({ v, l }) => (
             <button key={v}
               className={`pill ${filterSignal === v ? 'pill-active' : ''}`}
@@ -1734,7 +1830,6 @@ const EnhancedPortfolioDashboard = () => {
                   const sCfg = sig(stock.signal);
                   const isExpanded = expandedRow === stock.symbol;
 
-                  // Weight assessment (REDESIGNED)
                   const score = (stock.latest_score != null ? stock.latest_score : 5);
                   const wPct = totalVal > 0 ? (tv / totalVal) * 100 : 0;
                   const wa = getWeightAssessment(wPct, score, stock.signal || '', portfolio, mr, stock.instrument_type === 'ETF', stock.excess_return);
@@ -1785,11 +1880,11 @@ const EnhancedPortfolioDashboard = () => {
                               </span>
                             </div>
                           )}
+                          {isStock(stock) && <MultibaggerBadge result={mbData[stock.symbol]} />}
                         </td>
 
                         {/* Context column: quantitative context only — NO regime label.
-                            The signal badge in Recommendation already encodes the regime.
-                            Showing it here too creates two conflicting signals. */}
+                            The signal badge in Recommendation already encodes the regime. */}
                         <td>
                           {stock.excess_return != null && (
                             <div
@@ -1816,7 +1911,6 @@ const EnhancedPortfolioDashboard = () => {
                         </td>
 
                         <td>
-                          {/* Signal badge — primary output. Bold and prominent. */}
                           <span
                             title={[sCfg.why, sCfg.action].filter(Boolean).join(' → ')}
                             className={`signal-badge ${
@@ -1827,9 +1921,8 @@ const EnhancedPortfolioDashboard = () => {
                             style={{ fontSize: 13, padding: '4px 10px', fontWeight: 800, letterSpacing: '0.01em' }}>
                             {sCfg.label}
                           </span>
-                          {/* Action text — the "what to do" instruction, visually subordinate but readable */}
                           {sCfg.action && (
-                            <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 4, lineHeight: 1.4, maxWidth: 145, fontStyle: 'italic' }}>
+                            <div style={{ fontSize: 11, color: '#6b6b65', marginTop: 4, lineHeight: 1.4, maxWidth: 145, fontStyle: 'italic' }}>
                               {sCfg.action}
                             </div>
                           )}
@@ -1881,10 +1974,18 @@ const EnhancedPortfolioDashboard = () => {
                           </button>
                           <button onClick={() => setNewsModalStock(stock)} className="btn-icon" title="Intelligence">📰</button>
                           <button onClick={() => openEditForm(stock)} className="btn-icon" title="Edit">✏️</button>
-                          <button onClick={() => handleDeleteStock(stock.id)} className="btn-icon btn-icon-danger" title="Remove">✕</button>
+                          <button onClick={() => handleDeleteStock(stock)} className="btn-icon btn-icon-danger" title="Remove">✕</button>
                         </td>
                       </tr>
-                      {isExpanded && <DetailPanel key={`detail-${stock.id}`} stock={stock} />}
+                      {isExpanded && (
+                        <DetailPanel
+                          key={`detail-${stock.id}`}
+                          stock={stock}
+                          mb={mbData[stock.symbol]}
+                          rescreening={rescreening === stock.symbol}
+                          onRescreen={async () => { setRescreening(stock.symbol); await screenPortfolioStock(stock.symbol); setRescreening(null); }}
+                        />
+                      )}
                     </React.Fragment>
                   );
                 })}
@@ -1897,20 +1998,29 @@ const EnhancedPortfolioDashboard = () => {
       <CorrelationHeatmap />
       </>)}
 
+      {/* ── Screener Tab ─────────────────────────────────────────── */}
+      {activeTab === 'screener' && (
+        <ScreenerView
+          toast={toast}
+          confirm={confirm}
+          onPromote={(symbol, name) => { setActiveTab('portfolio'); openAddForm({ symbol, name }); }}
+        />
+      )}
+
       {/* ── History Tab ──────────────────────────────────────────── */}
       {activeTab === 'history' && <HistoryView stocks={portfolio} />}
 
       {/* Add / Edit Modal */}
       {showForm && (
-        <Modal onClose={() => setShowForm(false)}>
+        <Modal onClose={() => !saving && setShowForm(false)}>
           <div className="modal-header">
             <div className="modal-header-text">
               <h2>{formMode === 'add' ? 'Add Stock' : 'Edit Position'}</h2>
               <p className="modal-sub-label">
-                {formMode === 'add' ? 'Enter ticker to begin tracking. Sector is auto-detected.' : `Editing ${formData.symbol}`}
+                {formMode === 'add' ? 'Enter a ticker to begin tracking. Sector is auto-detected and the stock is screened automatically.' : `Editing ${formData.symbol}`}
               </p>
             </div>
-            <button className="btn-close" onClick={() => setShowForm(false)}>✕</button>
+            <button className="btn-close" onClick={() => setShowForm(false)} disabled={saving}>✕</button>
           </div>
           <div className="modal-body">
             <div className="form-grid">
@@ -1942,7 +2052,8 @@ const EnhancedPortfolioDashboard = () => {
               </div>
               <div className="form-group">
                 <label>Type</label>
-                <select value={formData.type} onChange={e => setFormData({ ...formData, type: e.target.value })}>
+                <select value={formData.type} disabled={formMode === 'edit'}
+                  onChange={e => setFormData({ ...formData, type: e.target.value })}>
                   <option>Stock</option>
                   <option>ETF</option>
                 </select>
@@ -1950,10 +2061,10 @@ const EnhancedPortfolioDashboard = () => {
             </div>
           </div>
           <div className="modal-footer">
-            <button type="button" onClick={() => setShowForm(false)} className="btn-secondary">Cancel</button>
-            <button type="button" className="btn-primary"
+            <button type="button" onClick={() => setShowForm(false)} className="btn-secondary" disabled={saving}>Cancel</button>
+            <button type="button" className="btn-primary" disabled={saving}
               onClick={formMode === 'add' ? handleAddStock : handleEditStock}>
-              {formMode === 'add' ? 'Add to Portfolio' : 'Save Changes'}
+              {saving ? 'Saving…' : formMode === 'add' ? 'Add to Portfolio' : 'Save Changes'}
             </button>
           </div>
         </Modal>
@@ -2023,8 +2134,10 @@ const EnhancedPortfolioDashboard = () => {
       <p style={{ textAlign: 'center', fontSize: 11, color: '#9ca3af', marginTop: 12, lineHeight: 1.6 }}>
         Alpha Compounder · For informational purposes only. Not financial advice.
         All signals are systematic — always apply your own judgement.{' '}
-        <strong style={{ color: '#d97706' }}>Indian investors: weigh CGT (20% LTCG / 30% STCG) before acting on any sell signal.</strong>
+        <strong style={{ color: '#d97706' }}>Indian investors: exits cost 12.5% LTCG (about 15% with surcharge and cess) after 24 months, your slab rate before that. Sell for a broken thesis, not for price weakness.</strong>
       </p>
+
+      {feedbackNode}
     </div>
   );
 };
