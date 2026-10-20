@@ -1,7 +1,9 @@
 // api/portfolio/multibagger.js
 //   GET  -> { generatedAt, portfolio: {SYM: result}, watchlist: {SYM: result} }
 //   POST { symbol } -> screens one PORTFOLIO stock now (used right after a stock is added)
-// The full nightly/manual run lives in backend/scripts/multibagger-screen.js.
+// The weekly portfolio thesis check and the full run live in backend/scripts/multibagger-screen.js.
+// Only portfolio stocks are screened here: the stock must exist in the portfolio, because the screen reads
+// the old quality engine's output from it and the result is stored under the portfolio.
 import { createClient } from 'redis';
 import mb from '../../backend/lib/multibagger.js';
 
@@ -31,18 +33,26 @@ export default async function handler(req, res) {
 
     const portfolio = parse(await client.get('portfolio')) || { stocks: [] };
     const stock = (portfolio.stocks || []).find(s => s.symbol.toUpperCase() === symbol) || null;
-    if (stock && (stock.instrument_type === 'ETF' || stock.type === 'ETF')) {
+    if (!stock) return res.status(404).json({ error: `${symbol} is not in the portfolio. Use the Screener tab for stocks you do not own.` });
+    if (stock.instrument_type === 'ETF' || stock.type === 'ETF') {
       return res.status(200).json({ result: { symbol, status: 'NOT_APPLICABLE', verdict: 'NOT_APPLICABLE' } });
     }
+    const held = (Number(stock.quantity) || 0) > 0;
 
     const inputs = await mb.fetchInputs(symbol, process.env.FINNHUB_API_KEY, process.env.FMP_API_KEY || null);
     if (mb.isEtfProfile(inputs.profile)) {
-      return res.status(200).json({ result: { symbol, status: 'NOT_APPLICABLE', verdict: 'NOT_APPLICABLE' } });
+      const etfResult = mb.screen({ symbol, profile: inputs.profile, isETF: true, source: 'portfolio', held });
+      blob.portfolio[symbol] = etfResult;                    // keep the stored result consistent with what we just learned
+      await client.set(mb.KEY, JSON.stringify(blob));
+      return res.status(200).json({ result: etfResult });
     }
     const sectorCache = parse(await client.get('sector_health')) || { data: {} };
     const filing = parse(await client.get(`filing_narrative_${symbol}`));
     const earnings = parse(await client.get(`earnings_event_${symbol}`));
-    const result = mb.screen({ symbol, ...inputs, stock, filing, earnings, sectorHealth: sectorCache.data, prev: blob.portfolio[symbol] || null, source: 'portfolio' });
+    const result = mb.screen({ symbol, ...inputs, stock, filing, earnings, sectorHealth: sectorCache.data, prev: blob.portfolio[symbol] || null, source: 'portfolio', held });
+
+    // Advisory entry-timing overlay (PASS names only; a short timeout keeps the request fast; failure is non-fatal)
+    try { await mb.attachTiming(result, { polyKey: process.env.POLYGON_API_KEY, fmpKey: process.env.FMP_API_KEY, timeoutMs: 6000 }); } catch (_) { /* optional */ }
 
     blob.portfolio[symbol] = result;
     await client.set(mb.KEY, JSON.stringify(blob));
