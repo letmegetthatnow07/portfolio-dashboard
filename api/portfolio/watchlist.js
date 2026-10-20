@@ -1,8 +1,10 @@
 // api/portfolio/watchlist.js  — the Screener tab's list of checked stocks
-//   GET                         -> { entries: [{symbol,name,addedAt,status,screenedAt}], results: {SYM: fullResult} }
+//   GET                         -> { entries: [{symbol,name,addedAt,status,screenedAt,stale}], results: {SYM: fullResult} }
 //   POST {symbol}               -> add (status PENDING). ETFs are rejected: screener is for stocks only.
 //   POST ?action=screen&symbol= -> run the screen for one stock now (UI "Run screen" calls this per stock)
 //   DELETE ?symbol=             -> remove
+// Watchlist stocks are NOT owned (held=false) and are not in the old quality engine yet, so their quality gate is UNVERIFIED:
+// the best a watchlist stock can be is a PROVISIONAL candidate. Quality is confirmed once it is added to the portfolio.
 import { createClient } from 'redis';
 import mb from '../../backend/lib/multibagger.js';
 
@@ -42,10 +44,12 @@ export default async function handler(req, res) {
         const sectorCache = parse(await client.get('sector_health')) || { data: {} };
         const filing = parse(await client.get(`filing_narrative_${symbol}`));
         const earnings = parse(await client.get(`earnings_event_${symbol}`));
-        const result = mb.screen({ symbol, ...inputs, filing, earnings, sectorHealth: sectorCache.data, prev: blob.watchlist[symbol] || null, source: 'watchlist' });
+        const result = mb.screen({ symbol, ...inputs, filing, earnings, sectorHealth: sectorCache.data, prev: blob.watchlist[symbol] || null, source: 'watchlist', held: false });
+        try { await mb.attachTiming(result, { polyKey: process.env.POLYGON_API_KEY, fmpKey: process.env.FMP_API_KEY, timeoutMs: 6000 }); } catch (_) { /* optional */ }
         blob.watchlist[symbol] = result;
         entry.status = mb.statusOf(result);
         entry.screenedAt = result.asOf;
+        entry.stale = !!result.stale;
         entry.name = result.name || entry.name;
         await client.set('watchlist', JSON.stringify(wl));
         await client.set(mb.KEY, JSON.stringify(blob));
@@ -58,7 +62,7 @@ export default async function handler(req, res) {
         .then(r => (r.ok ? r.json() : {})).catch(() => ({}));
       if (mb.isEtfProfile(profile)) return res.status(400).json({ error: `${symbol} is an ETF. The screener is for individual stocks only.` });
       if (!profile?.name) return res.status(404).json({ error: `Could not find ticker ${symbol}` });
-      const entry = { symbol, name: profile.name, addedAt: new Date().toISOString(), status: 'PENDING', screenedAt: null };
+      const entry = { symbol, name: profile.name, addedAt: new Date().toISOString(), status: 'PENDING', screenedAt: null, stale: false };
       wl.entries.unshift(entry);
       await client.set('watchlist', JSON.stringify(wl));
       return res.status(201).json({ entry });
