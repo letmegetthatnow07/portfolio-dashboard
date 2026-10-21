@@ -7,9 +7,10 @@
  *   npm run multibagger                    # portfolio stocks that are DUE + pending/stale watchlist
  *   npm run multibagger -- --force         # re-screen everything (ignores cadence and caches)
  *   npm run multibagger -- --only=CRWD     # one symbol
+ *   npm run multibagger -- --watchlist-only  # only pending/stale watchlist stocks (what the Screener 'Run' button triggers on GitHub)
  *   npm run multibagger -- --estimates=CRWD  # DIAGNOSTIC: show FMP analyst-estimate fields + how they parse (no writes)
  *
- * CADENCE: the portfolio thesis check is WEEKLY per stock (REFRESH_DAYS). A stock is re-checked sooner when
+ * CADENCE: the portfolio thesis check runs every 15 days per stock (MB_REFRESH_DAYS to change; the quality check itself is DAILY in daily-update.js). A stock is re-checked sooner when
  *   - the old quality engine turned bearish (TRIM_25 / SELL / REDUCE), a critical 8-K appeared, or the score dropped sharply
  *   - a new earnings or filing analysis landed since the last check
  *   - its last result is stale or missing
@@ -33,6 +34,7 @@ const PRICE_MAX_AGE_MS = 7 * 86400000;        // a sector price leg older than t
 const args = process.argv.slice(2);
 const FORCE = args.includes('--force') || process.env.FORCE_RUN === 'true';
 const ONLY = (args.find(a => a.startsWith('--only=')) || '').split('=')[1]?.toUpperCase() || null;
+const WATCHLIST_ONLY = args.includes('--watchlist-only');
 const DIAG = (args.find(a => a.startsWith('--estimates=')) || '').split('=')[1]?.toUpperCase() || null;
 const DAY = 86400000;
 const parse = raw => { try { return raw ? JSON.parse(raw) : null; } catch { return null; } };
@@ -158,8 +160,8 @@ async function main() {
   console.log(`MULTIBAGGER SCREEN  force=${FORCE} only=${ONLY || '-'}  cadence=${mb.PARAMS.REFRESH_DAYS}d  tax=${(mb.PARAMS.EXIT_TAX * 100).toFixed(1)}%`);
 
   // ── Portfolio: weekly thesis check (+ event triggers) ──────────────────────
-  const stocks = (portfolio.stocks || []).filter(s => s.instrument_type !== 'ETF' && s.type !== 'ETF').filter(s => !ONLY || s.symbol === ONLY);
-  const newPortfolio = ONLY ? { ...blob.portfolio } : {};
+  const stocks = WATCHLIST_ONLY ? [] : (portfolio.stocks || []).filter(s => s.instrument_type !== 'ETF' && s.type !== 'ETF').filter(s => !ONLY || s.symbol === ONLY);
+  const newPortfolio = (ONLY || WATCHLIST_ONLY) ? { ...blob.portfolio } : {};   // a partial run must never drop stored portfolio results
   let checked = 0, skippedFresh = 0;
   for (const s of stocks) {
     const prev = blob.portfolio[s.symbol] || null;
@@ -180,7 +182,7 @@ async function main() {
     await mb.sleep(SLEEP_MS);
   }
   blob.portfolio = newPortfolio;
-  console.log(`Portfolio: ${checked} checked, ${skippedFresh} still fresh (weekly cadence)`);
+  console.log(`Portfolio: ${checked} checked, ${skippedFresh} not due yet (re-check every ${mb.PARAMS.REFRESH_DAYS} days)`);
 
   // ── Watchlist (pending first, then stale; capped per run) ─────────────────
   const wl = parse(await redis.get('watchlist')) || { entries: [] };
