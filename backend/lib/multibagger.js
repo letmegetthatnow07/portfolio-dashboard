@@ -3,14 +3,14 @@
  * MULTIBAGGER / ALPHA-COMPOUNDER SCREEN  (methodology lives here)
  *
  * Dependency-free (global fetch, Node 18+). Used by backend/scripts/multibagger-screen.js
- * (nightly runner, weekly per-stock cadence) and api/portfolio/{multibagger,watchlist}.js (on demand).
+ * (runner: each portfolio stock is re-checked every 15 days, or sooner on a trigger) and api/portfolio/{multibagger,watchlist}.js (on demand).
  * Individual operating companies only: ETFs/funds return NOT_APPLICABLE (same classification as the old engine).
  *
  * TWO LAYERS, ONE CONTRACT
  *   Layer 1 = the OLD quality engine (daily-update.js: score_fund, W3/W4 cascade, signal). Untouched.
  *             It owns "is this a quality compounder" and every trim/sell signal.
- *   Layer 2 = this screen. It owns "does the multibagger thesis hold". Portfolio stocks are re-checked weekly
- *             (or sooner when a new filing/earnings analysis lands, a critical 8-K appears, or the old engine turns bearish).
+ *   Layer 2 = this screen. It owns "does the multibagger thesis hold". Portfolio stocks are re-checked every 15 days
+ *             (MB_REFRESH_DAYS to change; or sooner when a new filing/earnings analysis lands, a critical 8-K appears, or the old engine turns bearish).
  *   businessVerdict (verdict/status)  = what the business is under the rules.
  *   portfolioAction (action)          = what to do, and it depends on OWNERSHIP (held / not held).
  *   Gate: ALPHA_COMPOUNDER / MULTIBAGGER need layer 1 to pass (score_fund >= 6.0 to enter, >= 5.0 to stay, no structural decay,
@@ -69,7 +69,7 @@ const PARAMS = {
   // hysteresis: an actual holding with a confirmed PASS only fails below these
   EXIT_SCORE: 45, EXIT_CAGR: 0.17, EXIT_MIN_GROWTH: 0.08,
   CONFIRM_RUNS: 2, CONFIRM_DAYS: 5, HISTORY_LEN: 12,
-  REFRESH_DAYS: 5,                       // portfolio thesis re-check cadence (weekly)
+  REFRESH_DAYS: Number(process.env.MB_REFRESH_DAYS) > 0 ? Number(process.env.MB_REFRESH_DAYS) : 15,   // portfolio thesis re-check cadence (default every 15 days)
   STALE_MAX_DAYS: 30,                    // a stale confirmed state is kept this long, then it becomes NO_DATA
   IMPLIED_CAP_LIMIT_M: 5_000_000, CYCLICAL_HAIRCUT: 0.6, CACHE_DAYS: 7,
   // top line: EPS growth must be backed by revenue growth
