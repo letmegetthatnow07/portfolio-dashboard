@@ -14,13 +14,23 @@ name: Market & News Data Pipeline
 # single-job design run news instead of master. Separate jobs with separate
 # schedule triggers eliminate this.
 #
-# MANUAL RUNS: workflow_dispatch sets FORCE_RUN=true so scripts skip the
-# market-closed gate (and the compounder screen re-screens everything).
+# ONE RUN AT A TIME: every job reads and rewrites the shared Redis "portfolio"
+# object. The concurrency group below makes runs queue instead of overlapping,
+# so a news run can never overwrite the master run's scores (or the reverse).
 #
-# COMPOUNDER SCREEN: runs as the LAST step of the EOD master job (after filing
-# narrative, so thesis status is fresh) and as its own manual job ("screen").
-# Nightly it re-screens the portfolio and any pending/stale watchlist stocks
-# (capped per run); status changes are protected by hysteresis in the script.
+# TWO LAYERS OF CHECKS
+#   DAILY   eod-master  → quality / alpha-compounder score, regime and signals (daily-update.js)
+#   PERIODIC multibagger → thesis check: every portfolio stock is re-checked every 15 days
+#           (or sooner on a trigger: new filing/earnings analysis, critical 8-K, old-engine sell signal).
+#           It runs as the LAST step of the nightly master job and only does the stocks that are due.
+#
+# MANUAL RUNS (Actions tab, or the Screener tab's "Run" button, which dispatches these):
+#   master    full EOD run
+#   news      intraday news run
+#   matrix    correlation matrix only
+#   screen    re-check EVERYTHING now (portfolio + watchlist), ignores the 15-day cadence
+#   watchlist screen only pending/stale watchlist stocks (what the Screener "Run" button uses)
+# workflow_dispatch sets FORCE_RUN=true for master/news/screen so the scripts skip the market-closed gate.
 
 on:
   schedule:
@@ -41,9 +51,14 @@ on:
           - news
           - matrix
           - screen
+          - watchlist
 
 permissions:
   contents: write
+
+concurrency:
+  group: portfolio-pipeline
+  cancel-in-progress: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -51,7 +66,7 @@ env:
 jobs:
 
   # ════════════════════════════════════════════════════════════════════════════
-  # JOB 1: EOD MASTER (+ matrix, earnings, filing narrative, compounder screen)
+  # JOB 1: EOD MASTER (+ matrix, earnings, filing narrative, periodic thesis check)
   # ════════════════════════════════════════════════════════════════════════════
   eod-master:
     name: EOD Master + Matrix
@@ -114,16 +129,18 @@ jobs:
           GEMINI_API_KEY:       ${{ secrets.GEMINI_API_KEY }}
         run: npm run filing-narrative || true
 
-      # Compounder screen: portfolio + pending/stale watchlist. Never fails the pipeline.
-      # Uses Finnhub (2 calls/stock), FMP estimates (1 call/stock, optional), Polygon (sector ETFs, 5/min).
-      - name: Run Compounder Screen
+      # Periodic multibagger thesis check. Runs AFTER the quality engine, filing and earnings analyses so it always
+      # reads today's quality score and analyses. Only portfolio stocks that are due (15 days, or triggered) are
+      # re-checked, plus pending/stale watchlist stocks. Never fails the pipeline.
+      - name: Run Compounder Thesis Check
         working-directory: backend
         env:
-          REDIS_URL:            ${{ secrets.REDIS_URL }}
-          FINNHUB_API_KEY:      ${{ secrets.FINNHUB_API_KEY }}
-          FMP_API_KEY:          ${{ secrets.FMP_API_KEY }}
-          POLYGON_API_KEY:      ${{ secrets.POLYGON_API_KEY }}
+          REDIS_URL:             ${{ secrets.REDIS_URL }}
+          FINNHUB_API_KEY:       ${{ secrets.FINNHUB_API_KEY }}
+          FMP_API_KEY:           ${{ secrets.FMP_API_KEY }}
+          POLYGON_API_KEY:       ${{ secrets.POLYGON_API_KEY }}
           WATCHLIST_MAX_PER_RUN: '60'
+          MB_REFRESH_DAYS:       '15'
         run: npm run multibagger || true
 
       - name: Configure git
@@ -201,15 +218,17 @@ jobs:
         run: npm run generate-correlation
 
   # ════════════════════════════════════════════════════════════════════════════
-  # JOB 4: COMPOUNDER SCREEN ONLY (manual) — FORCE_RUN=true re-screens everything
-  # Use after adding many stocks to the Screener tab, or to refresh all results.
+  # JOB 4: COMPOUNDER SCREEN (manual). Started from the Actions tab or the Screener tab's "Run" button.
+  #   run_type = screen    → re-check EVERYTHING now (portfolio + watchlist), ignoring the 15-day cadence
+  #   run_type = watchlist → only pending/stale watchlist stocks; the stored portfolio results are left untouched
   # ════════════════════════════════════════════════════════════════════════════
   multibagger-screen:
-    name: Compounder Screen Only
+    name: Compounder Screen (manual)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     if: >-
-      github.event_name == 'workflow_dispatch' && github.event.inputs.run_type == 'screen'
+      github.event_name == 'workflow_dispatch' &&
+      (github.event.inputs.run_type == 'screen' || github.event.inputs.run_type == 'watchlist')
 
     steps:
       - uses: actions/checkout@v4
@@ -224,14 +243,15 @@ jobs:
       - name: Run compounder screen
         working-directory: backend
         env:
-          REDIS_URL:            ${{ secrets.REDIS_URL }}
-          FINNHUB_API_KEY:      ${{ secrets.FINNHUB_API_KEY }}
-          FMP_API_KEY:          ${{ secrets.FMP_API_KEY }}
-          POLYGON_API_KEY:      ${{ secrets.POLYGON_API_KEY }}
+          REDIS_URL:             ${{ secrets.REDIS_URL }}
+          FINNHUB_API_KEY:       ${{ secrets.FINNHUB_API_KEY }}
+          FMP_API_KEY:           ${{ secrets.FMP_API_KEY }}
+          POLYGON_API_KEY:       ${{ secrets.POLYGON_API_KEY }}
           WATCHLIST_MAX_PER_RUN: '60'
-          FORCE_RUN: 'true'
-        run: npm run multibagger
+          MB_REFRESH_DAYS:       '15'
+          FORCE_RUN: ${{ github.event.inputs.run_type == 'screen' && 'true' || 'false' }}
+        run: npm run multibagger -- ${{ github.event.inputs.run_type == 'watchlist' && '--watchlist-only' || '' }}
 
 # ─── SCHEDULE SUMMARY ─────────────────────────────────────────────────────────
 # 30 13 * * 1-5  → intraday-news slot 1     0 17 * * 1-5 → intraday-news slot 2
-# 45 20 * * 1-5  → intraday-news slot 3     0 22 * * 1-5 → eod-master (… → compounder screen)
+# 45 20 * * 1-5  → intraday-news slot 3     0 22 * * 1-5 → eod-master (… → periodic thesis check)
