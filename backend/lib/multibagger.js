@@ -483,7 +483,8 @@ function preserveOrExpire(prev, held, reason, base = {}) {
   const staleDays = (Date.now() - Date.parse(staleSince)) / DAY_MS;
   if (confirmed && staleDays <= PARAMS.STALE_MAX_DAYS) {
     const urgent = prev.action === 'REVIEW_EXIT' || prev.action === 'THESIS_AT_RISK';
-    const action = !held ? 'STALE_NO_BUY' : (prev.status === 'PASS' && !urgent ? 'DATA_STALE' : prev.action);
+    // ownership decides the vocabulary: a watchlist result that became a holding must never keep a CANDIDATE_* action
+    const action = !held ? 'STALE_NO_BUY' : urgent ? prev.action : prev.status === 'PASS' ? 'DATA_STALE' : 'HOLD_WATCH';
     return {
       ...prev, held, stale: true, staleReason: reason, staleSince, lastAttempt: now, action,
       reasons: [`Data unavailable (${reason}). Showing the last valid assessment from ${String(prev.asOf).slice(0, 10)}; no new buying until it is refreshed.`, ...(prev.reasons || []).filter(r => !String(r).startsWith('Data unavailable'))],
