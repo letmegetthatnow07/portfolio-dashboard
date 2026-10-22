@@ -6,6 +6,7 @@
 // the old quality engine's output from it and the result is stored under the portfolio.
 import { createClient } from 'redis';
 import mb from '../../backend/lib/multibagger.js';
+import store from '../../backend/lib/mb-store.js';
 
 let redisClient = null;
 async function getRedisClient() {
@@ -24,6 +25,13 @@ export default async function handler(req, res) {
     const client = await getRedisClient();
     const blob = parse(await client.get(mb.KEY)) || mb.emptyBlob();
 
+    if (req.method === 'GET' && req.query?.history) {
+      // Permanent history from Supabase (newest first): GET /api/portfolio/multibagger?history=CRWD
+      const sym = String(req.query.history).trim().toUpperCase();
+      if (!/^[A-Z][A-Z0-9.\-]{0,9}$/.test(sym)) return res.status(400).json({ error: 'Valid symbol required' });
+      try { return res.status(200).json({ symbol: sym, rows: await store.readHistory(sym, Number(req.query.limit) || 60) }); }
+      catch (e) { return res.status(200).json({ symbol: sym, rows: [], warning: e.message }); }   // the dashboard falls back to the Redis history
+    }
     if (req.method === 'GET') return res.status(200).json(blob);
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
@@ -56,6 +64,7 @@ export default async function handler(req, res) {
 
     blob.portfolio[symbol] = result;
     await client.set(mb.KEY, JSON.stringify(blob));
+    await store.saveResults([{ result, source: 'portfolio' }]);   // permanent history; never throws
     return res.status(200).json({ result });
   } catch (err) {
     console.error('[multibagger API]', err.message);
