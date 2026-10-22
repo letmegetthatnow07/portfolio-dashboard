@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import './enhanced-portfolio-dashboard.css';
 import CorrelationHeatmap from './CorrelationHeatmap';
 import { useFeedback } from './ui-feedback';
-import { MultibaggerBadge, MultibaggerPanel, ScreenerView } from './MultibaggerViews';
+import { ScreenerView, MultibaggerTab } from './MultibaggerViews';
 
 // ── Signal Configuration ──────────────────────────────────────────────────────
 const SIGNAL_CFG = {
@@ -86,6 +86,10 @@ const SIGNAL_CFG = {
 
 
 const sig = (s) => SIGNAL_CFG[s || ''] || { color: '#6b7280', label: s || 'Pending', tier: 'flat', action: '', why: '' };
+const sigClass = (cfg, signal) =>
+  cfg.tier === 'bull' ? 'signal-bull'
+    : cfg.tier === 'bear' && ['WATCH', 'TRIM_25'].includes(signal || '') ? 'signal-bear-soft'
+      : cfg.tier === 'bear' ? 'signal-bear-hard' : 'signal-neutral';
 
 // Indian tax on foreign (US) shares: LTCG 12.5% if held > 24 months, STCG at slab rate.
 // Surcharge + 4% cess push the all-in LTCG to roughly 15% at the top. Verify with your CA.
@@ -120,7 +124,7 @@ const moatCol = (s) => {
   return '#dc2626';
 };
 
-// ── Weight Assessment (REDESIGNED) ────────────────────────────────────────────
+// ── Weight Assessment ─────────────────────────────────────────────────────────
 // Uses score-relative ratio instead of hard caps as primary metric.
 // Color reflects how well the actual weight aligns with quality contribution.
 // Signal context adjusts interpretation (bullish+underweight = opportunity, etc.)
@@ -465,7 +469,9 @@ const FundRow = ({ label, value, hint, positive }) => {
 };
 
 // ── Detail Panel ──────────────────────────────────────────────────────────────
-const DetailPanel = ({ stock, mb, onRescreen, rescreening }) => {
+// NOTE: the multibagger thesis is NOT shown here any more. It lives in its own "Multibagger" tab
+// so it is never mixed up with the daily quality score and buy/sell signal.
+const DetailPanel = ({ stock }) => {
   const fcfYieldPct = (stock.fcf_yield != null && stock.fcf_yield > 0) ? (stock.fcf_yield * 100) : null;
   const sbcPct = stock.sbc_to_market_cap;
   const filingScore = stock.filing_sentiment;
@@ -511,10 +517,6 @@ const DetailPanel = ({ stock, mb, onRescreen, rescreening }) => {
                 Exit for a broken thesis, not for price weakness.
               </div>
             </div>
-          )}
-
-          {!isETF && (
-            <MultibaggerPanel result={mb} onRescreen={onRescreen} busy={rescreening} />
           )}
 
           {isETF && (
@@ -1118,7 +1120,7 @@ const FilingNarrativeCard = ({ symbol, filingForm }) => {
             return (
               <div>
                 <p style={{ fontSize: 10, color: '#6b7280', fontStyle: 'italic', margin: '0 0 8px', lineHeight: 1.5 }}>
-                  AI-interpreted summary of SEC filing text. Display only for the quality score; the compounder screen reads the thesis status.
+                  AI-interpreted summary of SEC filing text. Display only for the quality score; the Multibagger check reads the thesis status.
                 </p>
 
                 {thesisStatus && (
@@ -1186,56 +1188,102 @@ const FilingNarrativeCard = ({ symbol, filingForm }) => {
 
 
 // ── HistoryView ───────────────────────────────────────────────────────────────
-// Shows 15 or 30 days of score history per stock from Supabase daily_metrics.
-// Colour-codes each cell by score direction vs previous day.
-
+// Vertical layout: one collapsible card per stock, newest date first, light theme.
+// Header = latest score, change vs the previous day, signal and a mini score trend.
+// Body   = a table (one row per trading day) with ▲/▼ against the day before.
 const SCORE_COLS = [
-  { key: 'total_score',   label: 'Total',   w: 55 },
-  { key: 'fund_score',    label: 'Fund',    w: 45 },
-  { key: 'tech_score',    label: 'Tech',    w: 45 },
-  { key: 'news_score',    label: 'News',    w: 45 },
-  { key: 'insider_score', label: 'Insider', w: 55 },
-  { key: 'signal',        label: 'Signal',  w: 90 },
+  { key: 'fund_score',    label: 'Fund' },
+  { key: 'tech_score',    label: 'Tech' },
+  { key: 'analyst_score', label: 'Analyst' },
+  { key: 'news_score',    label: 'News' },
+  { key: 'insider_score', label: 'Insider' },
 ];
-
-const SIGNAL_COLOR = {
-  STRONG_BUY:        '#059669',
-  BUY:               '#10b981',
-  ADD:               '#34d399',
-  SPRING_CONFIRMED:  '#06b6d4',
-  SPRING_CANDIDATE:  '#67e8f9',
-  HOLD:              '#6b7280',
-  HOLD_NOISE:        '#4b5563',
-  MARKET_NOISE:      '#4b5563',
-  NORMAL:            '#4b5563',
-  WATCH:             '#d97706',
-  REDUCE:            '#f97316',
-  TRIM_25:           '#ef4444',
-  SELL:              '#dc2626',
-  IDIOSYNCRATIC_DECAY: '#991b1b',
-  INSUFFICIENT_DATA: '#374151',
-};
-
-function scoreCell(val, prev) {
-  if (val == null) return { bg: '#111', color: '#374151', text: '—' };
-  const num   = parseFloat(val);
-  const delta = prev != null ? num - parseFloat(prev) : 0;
-  const bg    = delta >  0.3 ? '#052e16'
-              : delta < -0.3 ? '#2d0a0a'
-              : '#0f1117';
-  const color = num >= 7.5 ? '#10b981'
-              : num >= 6.0 ? '#34d399'
-              : num >= 4.5 ? '#9ca3af'
-              : num >= 3.5 ? '#f97316'
-              : '#ef4444';
-  const arrow = delta >  0.3 ? ' ↑' : delta < -0.3 ? ' ↓' : '';
-  return { bg, color, text: num.toFixed(1) + arrow };
-}
 
 function fmtDate(iso) {
   const d = new Date(iso + 'T12:00:00Z');
-  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
+
+const Delta = ({ now, prev, thresh = 0.3 }) => {
+  if (now == null || prev == null) return null;
+  const d = now - prev;
+  if (Math.abs(d) < thresh) return null;
+  return <span className={`history-delta ${d > 0 ? 'up' : 'down'}`}>{d > 0 ? '▲' : '▼'}{Math.abs(d).toFixed(1)}</span>;
+};
+
+const HistoryCard = ({ symbol, dates, data, open, onToggle }) => {
+  // newest first, only days this stock actually has a row for
+  const days = [...dates].reverse().filter(d => data[d]);
+  const latest = days[0] ? data[days[0]] : null;
+  const prevRow = days[1] ? data[days[1]] : null;
+  const trend = [...days].slice(0, 15).reverse().map(d => data[d]?.total_score).filter(v => v != null);
+  const lo = trend.length ? Math.min(...trend) : 0, hi = trend.length ? Math.max(...trend) : 1;
+  const cfg = latest?.signal ? sig(latest.signal) : null;
+
+  return (
+    <div className="history-card">
+      <div className="history-card-header" onClick={onToggle}>
+        <span className="history-chevron">{open ? '▼' : '▶'}</span>
+        <div className="history-card-id">
+          <span className="history-card-symbol">{symbol}</span>
+          <span className="history-card-days">{days.length} trading day{days.length === 1 ? '' : 's'}</span>
+        </div>
+        <span className="history-spark" title="Total score trend, oldest to newest">
+          {trend.map((v, i) => (
+            <i key={i} className={i > 0 ? (v > trend[i - 1] ? 'up' : v < trend[i - 1] ? 'down' : '') : ''}
+              style={{ height: `${hi === lo ? 60 : 25 + ((v - lo) / (hi - lo)) * 75}%` }} />
+          ))}
+        </span>
+        <div className="history-card-spacer" />
+        {latest?.total_score != null && (
+          <span className="history-card-score" style={{ color: scoreCol(latest.total_score) }}>
+            {latest.total_score.toFixed(1)}<Delta now={latest.total_score} prev={prevRow?.total_score} />
+          </span>
+        )}
+        {cfg && <span className={`signal-badge signal-badge-sm ${sigClass(cfg, latest.signal)}`}>{cfg.label}</span>}
+        {days[0] && <span className="history-card-latest">{fmtDate(days[0])}</span>}
+      </div>
+      {open && (
+        <div className="history-card-body">
+          {days.length === 0 ? (
+            <div className="history-empty-note">No history stored for this stock in the selected range.</div>
+          ) : (
+            <table className="history-table">
+              <thead>
+                <tr>
+                  <th>Date</th><th>Total</th>
+                  {SCORE_COLS.map(c => <th key={c.key}>{c.label}</th>)}
+                  <th>Signal</th><th>Price</th>
+                </tr>
+              </thead>
+              <tbody>
+                {days.map((d, i) => {
+                  const row = data[d], prev = days[i + 1] ? data[days[i + 1]] : null;
+                  const sc = row.signal ? sig(row.signal) : null;
+                  return (
+                    <tr key={d}>
+                      <td>{fmtDate(d)}</td>
+                      <td className="history-total" style={{ color: scoreCol(row.total_score) }}>
+                        {row.total_score != null ? row.total_score.toFixed(1) : '—'}<Delta now={row.total_score} prev={prev?.total_score} />
+                      </td>
+                      {SCORE_COLS.map(c => (
+                        <td key={c.key} className="history-sub-score">
+                          {row[c.key] != null ? row[c.key].toFixed(1) : '—'}<Delta now={row[c.key]} prev={prev?.[c.key]} thresh={0.5} />
+                        </td>
+                      ))}
+                      <td>{sc ? <span className={`signal-badge signal-badge-sm ${sigClass(sc, row.signal)}`}>{sc.label}</span> : '—'}</td>
+                      <td className="history-price">{row.price != null ? fmtUSD(row.price) : '—'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const HistoryView = ({ stocks }) => {
   const [days,      setDays]      = React.useState(15);
@@ -1245,6 +1293,7 @@ const HistoryView = ({ stocks }) => {
   const [loading,   setLoading]   = React.useState(false);
   const [error,     setError]     = React.useState(null);
   const [useCustom, setUseCustom] = React.useState(false);
+  const [openSet,   setOpenSet]   = React.useState(() => new Set());
 
   const symbolsKey = (stocks || []).map(s => s.symbol).join(',');
 
@@ -1262,8 +1311,7 @@ const HistoryView = ({ stocks }) => {
       }
       const res = await fetch(`/api/portfolio/history?${params}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json();
-      setHistory(json);
+      setHistory(await res.json());
     } catch (e) {
       setError(e.message);
     } finally {
@@ -1273,151 +1321,52 @@ const HistoryView = ({ stocks }) => {
 
   React.useEffect(() => { load(); }, [load]);
 
-  if (loading) return (
-    <div style={{ padding: 40, textAlign: 'center', color: '#6b7280', fontSize: 13 }}>
-      Loading history…
-    </div>
-  );
-  if (error) return (
-    <div style={{ padding: 40, textAlign: 'center', color: '#dc2626', fontSize: 13 }}>
-      ⚠ {error}
-    </div>
-  );
+  const toggle = (sym) => setOpenSet(prev => { const n = new Set(prev); n.has(sym) ? n.delete(sym) : n.add(sym); return n; });
+
+  if (loading && !history) return <div className="no-results">Loading history…</div>;
+  if (error) return <div className="no-results" style={{ color: 'var(--red)' }}>⚠ {error}</div>;
   if (!history) return null;
 
-  const { dates, rows } = history;
+  const { dates = [], rows = [] } = history;
+  const allOpen = rows.length > 0 && rows.every(r => openSet.has(r.symbol));
 
   return (
     <div style={{ padding: '16px 0' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 12, color: '#6b7280', fontWeight: 600 }}>SHOW:</span>
+      <div className="history-toolbar">
+        <span className="history-toolbar-label">Show</span>
         {[15, 30].map(d => (
           <button key={d} onClick={() => { setDays(d); setUseCustom(false); }}
-            style={{
-              padding: '4px 12px', borderRadius: 4, border: '1px solid',
-              fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-mono)',
-              background:   !useCustom && days === d ? 'var(--green)' : 'transparent',
-              borderColor:  !useCustom && days === d ? 'var(--green)' : '#374151',
-              color:        !useCustom && days === d ? '#000' : '#9ca3af',
-            }}>
-            {d}d
-          </button>
+            className={`pill ${!useCustom && days === d ? 'pill-active' : ''}`}>{d} days</button>
         ))}
-        <span style={{ fontSize: 12, color: '#374151' }}>|</span>
-        <span style={{ fontSize: 12, color: '#6b7280', fontWeight: 600 }}>CUSTOM:</span>
-        <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)}
-          style={{ background: '#111', color: '#d4d4d0', border: '1px solid #374151',
-            borderRadius: 4, padding: '3px 8px', fontSize: 12, fontFamily: 'var(--font-mono)' }} />
-        <span style={{ color: '#6b7280', fontSize: 12 }}>→</span>
-        <input type="date" value={toDate} onChange={e => setToDate(e.target.value)}
-          style={{ background: '#111', color: '#d4d4d0', border: '1px solid #374151',
-            borderRadius: 4, padding: '3px 8px', fontSize: 12, fontFamily: 'var(--font-mono)' }} />
-        <button onClick={() => { setUseCustom(true); load(); }}
-          disabled={!fromDate || !toDate}
-          style={{
-            padding: '4px 12px', borderRadius: 4, border: '1px solid #374151',
-            fontSize: 12, cursor: fromDate && toDate ? 'pointer' : 'not-allowed',
-            background: useCustom ? 'var(--green)' : 'transparent',
-            color: useCustom ? '#000' : '#9ca3af',
-            fontFamily: 'var(--font-mono)',
-          }}>
-          Apply
+        <span className="history-sep">|</span>
+        <span className="history-toolbar-label">Custom</span>
+        <input type="date" className="history-date-input" value={fromDate} onChange={e => setFromDate(e.target.value)} />
+        <span className="history-sep">→</span>
+        <input type="date" className="history-date-input" value={toDate} onChange={e => setToDate(e.target.value)} />
+        <button className={`pill ${useCustom ? 'pill-active' : ''}`} disabled={!fromDate || !toDate}
+          onClick={() => { setUseCustom(true); load(); }}>Apply</button>
+        <button className="btn-secondary" style={{ marginLeft: 'auto', padding: '6px 14px' }}
+          onClick={() => setOpenSet(allOpen ? new Set() : new Set(rows.map(r => r.symbol)))}>
+          {allOpen ? 'Collapse all' : 'Expand all'}
         </button>
       </div>
 
-      <div style={{ overflowX: 'auto' }}>
-        <table style={{ borderCollapse: 'collapse', fontSize: 11, fontFamily: 'var(--font-mono)', minWidth: '100%' }}>
-          <thead>
-            <tr>
-              <th style={{ position: 'sticky', left: 0, zIndex: 2, background: '#0a0a0f',
-                textAlign: 'left', padding: '6px 12px 6px 4px', color: '#6b7280',
-                fontWeight: 700, letterSpacing: 1, borderBottom: '1px solid #1f2937',
-                minWidth: 90, whiteSpace: 'nowrap' }}>
-                STOCK
-              </th>
-              {dates.map(date => (
-                <th key={date} colSpan={SCORE_COLS.length}
-                  style={{ textAlign: 'center', padding: '4px 2px',
-                    color: '#4b5563', fontWeight: 600, fontSize: 10,
-                    borderBottom: '1px solid #1f2937', borderLeft: '1px solid #1f2937',
-                    whiteSpace: 'nowrap' }}>
-                  {fmtDate(date)}
-                </th>
-              ))}
-            </tr>
-            <tr>
-              <th style={{ position: 'sticky', left: 0, zIndex: 2, background: '#0a0a0f',
-                borderBottom: '1px solid #1f2937' }} />
-              {dates.map(date =>
-                SCORE_COLS.map(col => (
-                  <th key={`${date}-${col.key}`}
-                    style={{ padding: '3px 2px', color: '#374151', fontWeight: 600,
-                      fontSize: 9, letterSpacing: 0.5, textAlign: 'center',
-                      borderBottom: '1px solid #1f2937',
-                      borderLeft: col.key === 'total_score' ? '1px solid #1f2937' : 'none',
-                      minWidth: col.w, whiteSpace: 'nowrap' }}>
-                    {col.label.toUpperCase()}
-                  </th>
-                ))
-              )}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, ri) => (
-              <tr key={row.symbol}
-                style={{ background: ri % 2 === 0 ? '#0a0a0f' : '#0d0d14' }}>
-                <td style={{ position: 'sticky', left: 0, zIndex: 1,
-                  background: ri % 2 === 0 ? '#0a0a0f' : '#0d0d14',
-                  padding: '5px 12px 5px 4px', fontWeight: 700, color: '#d4d4d0',
-                  borderBottom: '1px solid #0f1117', whiteSpace: 'nowrap' }}>
-                  {row.symbol}
-                </td>
-                {dates.map((date, di) => {
-                  const prev = di > 0 ? dates[di - 1] : null;
-                  const d    = row.data[date]      ?? {};
-                  const dp   = prev ? (row.data[prev] ?? {}) : {};
-                  return SCORE_COLS.map(col => {
-                    if (col.key === 'signal') {
-                      const sg = d.signal || null;
-                      return (
-                        <td key={`${date}-${col.key}`}
-                          style={{ padding: '5px 3px', textAlign: 'center',
-                            borderBottom: '1px solid #0f1117',
-                            borderLeft: '1px solid #1f2937' }}>
-                          {sg
-                            ? <span style={{ fontSize: 9, fontWeight: 700,
-                                color: SIGNAL_COLOR[sg] ?? '#6b7280',
-                                letterSpacing: 0.3 }}>
-                                {sg.replace(/_/g, ' ')}
-                              </span>
-                            : <span style={{ color: '#1f2937' }}>—</span>}
-                        </td>
-                      );
-                    }
-                    const cell = scoreCell(d[col.key], dp[col.key]);
-                    return (
-                      <td key={`${date}-${col.key}`}
-                        style={{ padding: '5px 3px', textAlign: 'center',
-                          background: cell.bg, color: cell.color, fontWeight: 600,
-                          borderBottom: '1px solid #0f1117',
-                          borderLeft: col.key === 'total_score' ? '1px solid #1f2937' : 'none' }}>
-                        {cell.text}
-                      </td>
-                    );
-                  });
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {rows.length === 0 ? (
+        <div className="no-results">No history stored for this range yet.</div>
+      ) : (
+        <div className="history-list">
+          {rows.map(row => (
+            <HistoryCard key={row.symbol} symbol={row.symbol} dates={dates} data={row.data}
+              open={openSet.has(row.symbol)} onToggle={() => toggle(row.symbol)} />
+          ))}
+        </div>
+      )}
 
-      <div style={{ display: 'flex', gap: 16, marginTop: 12, fontSize: 10, color: '#4b5563', flexWrap: 'wrap' }}>
-        <span>↑ = improved &gt;0.3 pts vs prior day</span>
-        <span>↓ = declined &gt;0.3 pts vs prior day</span>
-        <span style={{ color: '#10b981' }}>■ green bg = improving</span>
-        <span style={{ color: '#ef4444' }}>■ red bg = deteriorating</span>
-        <span>Dates shown = trading days only</span>
+      <div className="history-legend">
+        <span>Newest day first · trading days only</span>
+        <span style={{ color: 'var(--green)' }}>▲ improved vs the day before</span>
+        <span style={{ color: 'var(--red)' }}>▼ declined vs the day before</span>
+        <span>Click a stock to open its daily rows</span>
       </div>
     </div>
   );
@@ -1439,7 +1388,7 @@ const Modal = ({ onClose, children, wide = false }) =>
 const EnhancedPortfolioDashboard = () => {
   const { toast, confirm, node: feedbackNode } = useFeedback();
   const [portfolio, setPortfolio] = useState([]);
-  const [activeTab, setActiveTab] = useState('portfolio'); // 'portfolio' | 'history' | 'screener'
+  const [activeTab, setActiveTab] = useState('portfolio'); // 'portfolio' | 'multibagger' | 'screener' | 'history'
   const [stats, setStats] = useState(null);
   const [marketRegime, setMarketRegime] = useState({ regime: 'NORMAL', spy21d: 0 });
   const [loading, setLoading] = useState(true);
@@ -1455,8 +1404,8 @@ const EnhancedPortfolioDashboard = () => {
   const [newsModalStock, setNewsModalStock] = useState(null);
   const [expandedRow, setExpandedRow] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [mbData, setMbData] = useState({});          // { SYMBOL: compounder-screen result }
-  const [rescreening, setRescreening] = useState(null);
+  const [mbData, setMbData] = useState({});          // { SYMBOL: multibagger result } — used only by the Multibagger tab
+  const [checkingSym, setCheckingSym] = useState(null);
 
   const refreshMb = useCallback(async () => {
     try {
@@ -1498,25 +1447,24 @@ const EnhancedPortfolioDashboard = () => {
     return () => clearInterval(interval);
   }, [fetchPortfolio]);
 
-  // Screen one portfolio stock (after it is added, or on demand from the detail panel)
-  const screenPortfolioStock = async (sym, { quiet = false } = {}) => {
-    const id = toast.loading(`Screening ${sym} for compounder potential…`);
+  // Check one portfolio stock now (after it is added, or from the Multibagger tab)
+  const screenPortfolioStock = async (sym) => {
+    const id = toast.loading(`Checking ${sym} for compounder potential…`);
     try {
       const res = await fetch('/api/portfolio/multibagger', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ symbol: sym }),
       });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.error || `Screen failed (${res.status})`);
+      if (!res.ok) throw new Error(body.error || `Check failed (${res.status})`);
       const st = body.result?.status;
-      if (st === 'PASS') toast.update(id, 'success', `${sym} passes the compounder screen`);
-      else if (st === 'FAIL') toast.update(id, 'info', `${sym} does not pass the compounder screen. Open its row for the reasons.`);
-      else toast.update(id, 'info', st === 'NOT_APPLICABLE' ? `${sym} is an ETF: not screened` : `${sym}: not enough data to screen`);
+      if (st === 'PASS') toast.update(id, 'success', `${sym} passes the multibagger check`);
+      else if (st === 'FAIL') toast.update(id, 'info', `${sym} does not pass the multibagger check. Open the Multibagger tab for the reasons.`);
+      else toast.update(id, 'info', st === 'NOT_APPLICABLE' ? `${sym} is an ETF: not checked` : `${sym}: not enough data to check`);
       await refreshMb();
     } catch (err) {
       toast.update(id, 'error', err.message);
     }
-    return quiet;
   };
 
   const handleAddStock = async (e) => {
@@ -1604,7 +1552,6 @@ const EnhancedPortfolioDashboard = () => {
 
   const toggleRow = (symbol) => setExpandedRow(prev => prev === symbol ? null : symbol);
 
-  const isStock = (s) => s.instrument_type !== 'ETF';
   const BULL = ['ADD', 'SPRING_CONFIRMED', 'SPRING_CANDIDATE', 'STRONG_BUY', 'BUY'];
   const BEAR = ['WATCH', 'TRIM_25', 'REDUCE', 'SELL', 'IDIOSYNCRATIC_DECAY'];
 
@@ -1616,10 +1563,6 @@ const EnhancedPortfolioDashboard = () => {
       filtered = filtered.filter(s => ['HOLD_NOISE', 'MARKET_NOISE', 'HOLD', 'NORMAL'].includes(s.signal || '') || s.regime === 'MARKET_NOISE');
     else if (filterSignal === 'BEARISH')
       filtered = filtered.filter(s => BEAR.includes(s.signal || ''));
-    else if (filterSignal === 'MB_PASS')
-      filtered = filtered.filter(s => isStock(s) && mbData[s.symbol]?.status === 'PASS');
-    else if (filterSignal === 'MB_FAIL')
-      filtered = filtered.filter(s => isStock(s) && mbData[s.symbol]?.status === 'FAIL');
 
     return filtered.sort((a, b) => {
       if (sortBy === 'moat') return (b.moat_score || 0) - (a.moat_score || 0);
@@ -1657,9 +1600,6 @@ const EnhancedPortfolioDashboard = () => {
     ? (portfolio.reduce((s, x) => s + (x.latest_score || 0), 0) / portfolio.length).toFixed(1) : '—';
   const bullCount = portfolio.filter(s => BULL.includes(s.signal || '')).length;
   const bearCount = portfolio.filter(s => BEAR.includes(s.signal || '')).length;
-
-  const screenedStocks = portfolio.filter(s => isStock(s) && ['PASS', 'FAIL'].includes(mbData[s.symbol]?.status));
-  const passCount = screenedStocks.filter(s => mbData[s.symbol].status === 'PASS').length;
 
   if (loading && portfolio.length === 0) {
     return (
@@ -1709,20 +1649,21 @@ const EnhancedPortfolioDashboard = () => {
       {/* ── Tab Navigation ─────────────────────────────────────── */}
       <div style={{
         display: 'flex', gap: 0, marginBottom: 0,
-        borderBottom: '1px solid #1f2937',
+        borderBottom: '1px solid var(--border-mid)', flexWrap: 'wrap',
       }}>
         {[
-          { id: 'portfolio', label: '📊 Portfolio' },
-          { id: 'screener',  label: '🔎 Screener' },
-          { id: 'history',   label: '📅 History' },
+          { id: 'portfolio',   label: '📊 Portfolio' },
+          { id: 'multibagger', label: '🚀 Multibagger' },
+          { id: 'screener',    label: '🔎 Screener' },
+          { id: 'history',     label: '📅 History' },
         ].map(tab => (
           <button key={tab.id} onClick={() => setActiveTab(tab.id)}
             style={{
               padding: '10px 20px', border: 'none', cursor: 'pointer',
               fontSize: 13, fontWeight: 600, fontFamily: 'var(--font-mono)',
               background: 'transparent',
-              color:       activeTab === tab.id ? 'var(--green)' : '#6b7280',
-              borderBottom: activeTab === tab.id ? '2px solid var(--green)' : '2px solid transparent',
+              color:       activeTab === tab.id ? 'var(--text-main)' : 'var(--text-dim)',
+              borderBottom: activeTab === tab.id ? '2px solid var(--text-main)' : '2px solid transparent',
               transition: 'all 0.15s',
             }}>
             {tab.label}
@@ -1757,12 +1698,6 @@ const EnhancedPortfolioDashboard = () => {
               {(stats && stats.averageScore != null ? stats.averageScore : avgScore)}<span className="stat-unit">/10</span>
             </div>
           </div>
-          <div className="stat-card" title="Stocks that pass the 5-year, after-tax compounder screen">
-            <div className="stat-label">Compounder Fit</div>
-            <div className="stat-value" style={{ color: screenedStocks.length === 0 ? 'var(--text-muted)' : passCount === screenedStocks.length ? 'var(--green)' : 'var(--amber)' }}>
-              {screenedStocks.length === 0 ? '—' : passCount}<span className="stat-unit">{screenedStocks.length ? `/${screenedStocks.length}` : ''}</span>
-            </div>
-          </div>
           <div className="stat-card">
             <div className="stat-label">Buy Signals</div>
             <div className="stat-value" style={{ color: bullCount > 0 ? 'var(--green)' : 'var(--text-muted)' }}>{bullCount}</div>
@@ -1781,8 +1716,6 @@ const EnhancedPortfolioDashboard = () => {
             { v: 'BULLISH', l: '▲ Buy Signals' },
             { v: 'NOISE', l: '— Noise' },
             { v: 'BEARISH', l: '▼ Risk Alerts' },
-            { v: 'MB_PASS', l: '✓ Compounders' },
-            { v: 'MB_FAIL', l: '⚑ Failed screen' },
           ].map(({ v, l }) => (
             <button key={v}
               className={`pill ${filterSignal === v ? 'pill-active' : ''}`}
@@ -1880,7 +1813,6 @@ const EnhancedPortfolioDashboard = () => {
                               </span>
                             </div>
                           )}
-                          {isStock(stock) && <MultibaggerBadge result={mbData[stock.symbol]} />}
                         </td>
 
                         {/* Context column: quantitative context only — NO regime label.
@@ -1913,11 +1845,7 @@ const EnhancedPortfolioDashboard = () => {
                         <td>
                           <span
                             title={[sCfg.why, sCfg.action].filter(Boolean).join(' → ')}
-                            className={`signal-badge ${
-                              sCfg.tier === 'bull' ? 'signal-bull' :
-                                sCfg.tier === 'bear' && ['WATCH', 'TRIM_25'].includes(stock.signal || '') ? 'signal-bear-soft' :
-                                  sCfg.tier === 'bear' ? 'signal-bear-hard' : 'signal-neutral'
-                            }`}
+                            className={`signal-badge ${sigClass(sCfg, stock.signal)}`}
                             style={{ fontSize: 13, padding: '4px 10px', fontWeight: 800, letterSpacing: '0.01em' }}>
                             {sCfg.label}
                           </span>
@@ -1977,15 +1905,7 @@ const EnhancedPortfolioDashboard = () => {
                           <button onClick={() => handleDeleteStock(stock)} className="btn-icon btn-icon-danger" title="Remove">✕</button>
                         </td>
                       </tr>
-                      {isExpanded && (
-                        <DetailPanel
-                          key={`detail-${stock.id}`}
-                          stock={stock}
-                          mb={mbData[stock.symbol]}
-                          rescreening={rescreening === stock.symbol}
-                          onRescreen={async () => { setRescreening(stock.symbol); await screenPortfolioStock(stock.symbol); setRescreening(null); }}
-                        />
-                      )}
+                      {isExpanded && <DetailPanel key={`detail-${stock.id}`} stock={stock} />}
                     </React.Fragment>
                   );
                 })}
@@ -1997,6 +1917,16 @@ const EnhancedPortfolioDashboard = () => {
 
       <CorrelationHeatmap />
       </>)}
+
+      {/* ── Multibagger Tab ──────────────────────────────────────── */}
+      {activeTab === 'multibagger' && (
+        <MultibaggerTab
+          portfolio={portfolio}
+          mbData={mbData}
+          checkingSym={checkingSym}
+          onCheck={async (sym) => { setCheckingSym(sym); await screenPortfolioStock(sym); setCheckingSym(null); }}
+        />
+      )}
 
       {/* ── Screener Tab ─────────────────────────────────────────── */}
       {activeTab === 'screener' && (
@@ -2017,7 +1947,7 @@ const EnhancedPortfolioDashboard = () => {
             <div className="modal-header-text">
               <h2>{formMode === 'add' ? 'Add Stock' : 'Edit Position'}</h2>
               <p className="modal-sub-label">
-                {formMode === 'add' ? 'Enter a ticker to begin tracking. Sector is auto-detected and the stock is screened automatically.' : `Editing ${formData.symbol}`}
+                {formMode === 'add' ? 'Enter a ticker to begin tracking. Sector is auto-detected and the stock is checked automatically.' : `Editing ${formData.symbol}`}
               </p>
             </div>
             <button className="btn-close" onClick={() => setShowForm(false)} disabled={saving}>✕</button>
