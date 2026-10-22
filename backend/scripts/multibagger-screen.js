@@ -25,6 +25,7 @@ const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 const { createClient } = require('redis');
 const mb = require('../lib/multibagger');
+const store = require('../lib/mb-store');
 
 const SLEEP_MS = 2500;                        // 2 Finnhub calls/stock => ~48 calls/min (free limit 60)
 const POLY_SLEEP_MS = 13000;                  // Polygon free tier: 5 calls/min
@@ -79,6 +80,7 @@ function markStale(prev, held, reason, source) {
 }
 
 async function main() {
+  const runStart = Date.now();
   if (DIAG) { await diagnoseEstimates(DIAG); process.exit(0); }
 
   const token = process.env.FINNHUB_API_KEY;
@@ -219,6 +221,14 @@ async function main() {
   await redis.set('sector_health', JSON.stringify(sectorCache));
   await redis.set('sector_fundamentals', JSON.stringify(sectorFund));
   await redis.quit();
+
+  // Permanent history in Supabase (only results produced by THIS run; a failure here never fails the screen)
+  const fresh_ = [
+    ...Object.values(blob.portfolio).map(result => ({ result, source: 'portfolio' })),
+    ...Object.values(blob.watchlist).map(result => ({ result, source: 'watchlist' })),
+  ].filter(i => i.result && !i.result.stale && Date.parse(i.result.asOf) >= runStart - 1000);
+  const sv = await store.saveResults(fresh_);
+  console.log(sv.error ? `Supabase history: NOT saved (${sv.error}). Redis is unaffected.` : `Supabase history: ${sv.saved} result(s) saved.`);
 
   // Stability report: how often does the stable status flip vs the raw signal?
   const all = [...Object.values(blob.portfolio), ...Object.values(blob.watchlist)];
