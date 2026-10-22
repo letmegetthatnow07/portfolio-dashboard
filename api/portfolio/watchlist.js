@@ -7,6 +7,7 @@
 // the best a watchlist stock can be is a PROVISIONAL candidate. Quality is confirmed once it is added to the portfolio.
 import { createClient } from 'redis';
 import mb from '../../backend/lib/multibagger.js';
+import store from '../../backend/lib/mb-store.js';
 
 let redisClient = null;
 async function getRedisClient() {
@@ -53,6 +54,7 @@ export default async function handler(req, res) {
         entry.name = result.name || entry.name;
         await client.set('watchlist', JSON.stringify(wl));
         await client.set(mb.KEY, JSON.stringify(blob));
+        await store.saveResults([{ result, source: 'watchlist' }]);   // permanent history; never throws
         return res.status(200).json({ entry, result });
       }
 
