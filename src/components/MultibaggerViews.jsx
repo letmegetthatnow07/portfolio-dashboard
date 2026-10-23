@@ -269,20 +269,33 @@ export const ScreenerView = ({ toast, confirm, onPromote }) => {
     }, POLL_MS);
   };
 
+  // Accepts one ticker or many: "NVDA, AMD MSFT; AVGO" -> added one by one (keeps each request short and within data limits)
   const add = async (e) => {
     e?.preventDefault?.();
-    const symbol = input.trim().toUpperCase();
-    if (!symbol) return;
+    const symbols = [...new Set(input.toUpperCase().split(/[\s,;]+/).map(x => x.trim()).filter(Boolean))];
+    if (!symbols.length) return;
+    const bad = symbols.filter(x => !/^[A-Z][A-Z0-9.\-]{0,9}$/.test(x));
+    if (bad.length) { toast.error(`Not valid tickers: ${bad.join(', ')}`); return; }
+    if (symbols.length > 30) { toast.error('Add up to 30 tickers at a time.'); return; }
     setAdding(true);
-    const id = toast.loading(`Adding ${symbol}…`);
-    try {
-      const r = await fetch('/api/portfolio/watchlist', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ symbol }) });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j.error || `Request failed (${r.status})`);
-      setEntries(prev => [j.entry, ...prev]); setInput('');
-      toast.update(id, 'success', `${symbol} added. Press Run to check it.`);
-    } catch (err) { toast.update(id, 'error', err.message); }
-    finally { setAdding(false); }
+    const id = toast.loading(symbols.length > 1 ? `Adding ${symbols.length} tickers…` : `Adding ${symbols[0]}…`);
+    const added = [], failed = [];
+    for (let i = 0; i < symbols.length; i++) {
+      const symbol = symbols[i];
+      try {
+        const r = await fetch('/api/portfolio/watchlist', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ symbol }) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error || `Request failed (${r.status})`);
+        setEntries(prev => [j.entry, ...prev.filter(x => x.symbol !== j.entry.symbol)]);
+        added.push(symbol);
+      } catch (err) { failed.push(`${symbol} (${err.message})`); }
+      if (i < symbols.length - 1) await new Promise(r => setTimeout(r, 350));
+    }
+    setAdding(false);
+    setInput(failed.length ? failed.map(f => f.split(' ')[0]).join(', ') : '');   // keep only the ones that failed so they can be fixed and retried
+    if (!added.length) toast.update(id, 'error', failed.join('; '));
+    else if (failed.length) toast.update(id, 'info', `Added ${added.length}: ${added.join(', ')}. Not added: ${failed.join('; ')}`);
+    else toast.update(id, 'success', added.length === 1 ? `${added[0]} added. Press Run to check it.` : `${added.length} added (${added.join(', ')}). Press Run to check them.`);
   };
 
   const screenOne = async (symbol) => {
@@ -381,9 +394,10 @@ export const ScreenerView = ({ toast, confirm, onPromote }) => {
       </div>
 
       <form className="screener-add" onSubmit={add}>
-        <input value={input} onChange={e => setInput(e.target.value.toUpperCase())} placeholder="Ticker, e.g. NVDA" maxLength={10} disabled={adding} />
+        <input value={input} onChange={e => setInput(e.target.value.toUpperCase())} placeholder="Ticker(s), e.g. NVDA, AMD, AVGO" disabled={adding} />
         <button className="btn-secondary" type="submit" disabled={adding || !input.trim()}>{adding ? 'Adding…' : '+ Add to list'}</button>
       </form>
+      <div className="screener-hint">Paste one ticker or several, separated by commas or spaces.</div>
 
       {run && (
         <div className={`mb-run ${run.state === 'completed' ? (run.conclusion === 'success' ? 'ok' : 'bad') : ''}`}>
@@ -442,6 +456,71 @@ export const ScreenerView = ({ toast, confirm, onPromote }) => {
                   </div>
                 </div>
                 {isOpen && <MultibaggerDetail result={res} />}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ── Multibagger tab: your holdings, kept separate from the quality score ─────
+export const MultibaggerTab = ({ portfolio, mbData, onCheck, checkingSym }) => {
+  const [open, setOpen] = useState(null);
+  const stocks = (portfolio || []).filter(s => s.instrument_type !== 'ETF' && s.type !== 'ETF');
+  const rank = r => (r?.status === 'FAIL' && (r.action === 'REVIEW_EXIT' || r.action === 'THESIS_AT_RISK') ? 0 : r?.status === 'PASS' ? 1 : r?.status === 'FAIL' ? 2 : 3);
+  const rows = stocks.map(st => ({ st, r: mbData[st.symbol] }))
+    .sort((a, b) => rank(a.r) - rank(b.r) || (b.r?.score ?? -1) - (a.r?.score ?? -1) || a.st.symbol.localeCompare(b.st.symbol));
+  const pass = rows.filter(x => x.r?.status === 'PASS').length;
+  const fail = rows.filter(x => x.r?.status === 'FAIL').length;
+  const none = rows.length - pass - fail;
+  return (
+    <div className="mbt">
+      <h2 className="mbt-title">Multibagger</h2>
+      <p className="mbt-sub">
+        Does each holding still pass the 5-year, after-tax compounder test? This is separate from the daily quality score and the buy/sell signal.
+        Each holding is re-checked every 15 days, or sooner when something material changes. A change of status needs two checks in a row before it counts.
+      </p>
+      <div className="mbt-summary">
+        <span className="mb-chip mb-pass">{pass} pass</span>
+        <span className="mb-chip mb-fail">{fail} fail</span>
+        {none > 0 && <span className="mb-chip mb-pending">{none} not checked</span>}
+      </div>
+      {rows.length === 0 ? <div className="mb-empty">No stocks in the portfolio yet.</div> : (
+        <div className="mbt-list">
+          {rows.map(({ st, r }) => {
+            const status = r?.status;
+            const cls = status === 'PASS' ? 'pass' : status === 'FAIL' ? 'fail' : 'nodata';
+            const big = status === 'PASS' ? '✓ PASS' : status === 'FAIL' ? '✗ FAIL' : status === 'NO_DATA' ? 'NO DATA' : 'NOT CHECKED';
+            const a = r ? ACTION[r.action] : null;
+            const ch = lastChange(r);
+            const isOpen = open === st.symbol && !!r;
+            return (
+              <div key={st.symbol} className={`mbt-card ${cls}`}>
+                <div className="mbt-row">
+                  <div className="mbt-id">
+                    <strong className="stock-symbol">{st.symbol}</strong>
+                    {st.name && <span className="stock-name">{st.name}</span>}
+                  </div>
+                  <div className="mbt-result">
+                    <span className={`mbt-big ${cls}`}>{big}{r?.stale ? ' · stale' : ''}</span>
+                    <div className="mbt-meta">
+                      {r && status !== 'NO_DATA' && <span className="mb-sub" style={{ margin: 0 }}>{VERDICT[r.verdict] || r.verdict}{r.score != null ? ` · score ${r.score}/100` : ''}</span>}
+                      {a && <span className={`mb-badge-act ${a.cls}`}>{a.text}</span>}
+                      {r && <Ticks history={r.history} />}
+                      {ch && <span className={`mb-delta ${ch.statusChanged ? (ch.toStatus === 'PASS' ? 'up' : 'down') : ch.dScore > 0 ? 'up' : ch.dScore < 0 ? 'down' : ''}`}>
+                        {ch.statusChanged ? `changed to ${ch.toStatus} on ${shortDate(ch.to)}` : ch.dScore ? `${ch.dScore > 0 ? '▲' : '▼'} score ${signed(ch.dScore)} since ${shortDate(ch.from)}` : `unchanged since ${shortDate(ch.from)}`}
+                      </span>}
+                      <span className="mb-checked">{r ? `checked ${shortDate(r.asOf)}` : 'runs after the next nightly update, or press Check now'}</span>
+                    </div>
+                  </div>
+                  <div className="mbt-actions">
+                    {r && <button className="btn-expand" onClick={() => setOpen(isOpen ? null : st.symbol)}>{isOpen ? '▲ Hide' : '▼ Why'}</button>}
+                    <button className="btn-expand" onClick={() => onCheck(st.symbol)} disabled={checkingSym === st.symbol}>{checkingSym === st.symbol ? 'Checking…' : '↻ Check now'}</button>
+                  </div>
+                </div>
+                {isOpen && <MultibaggerDetail result={r} />}
               </div>
             );
           })}
