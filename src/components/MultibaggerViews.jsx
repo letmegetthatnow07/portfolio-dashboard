@@ -274,7 +274,7 @@ export const ScreenerView = ({ toast, confirm, onPromote }) => {
     e?.preventDefault?.();
     const symbols = [...new Set(input.toUpperCase().split(/[\s,;]+/).map(x => x.trim()).filter(Boolean))];
     if (!symbols.length) return;
-    const bad = symbols.filter(x => !/^[A-Z][A-Z0-9.\-]{0,9}$/.test(x));
+    const bad = symbols.filter(x => !/^[A-Z][A-Z0-9.-]{0,9}$/.test(x));
     if (bad.length) { toast.error(`Not valid tickers: ${bad.join(', ')}`); return; }
     if (symbols.length > 30) { toast.error('Add up to 30 tickers at a time.'); return; }
     setAdding(true);
