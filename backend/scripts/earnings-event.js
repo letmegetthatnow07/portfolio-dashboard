@@ -5,15 +5,19 @@
  * EARNINGS EVENT ANALYSER
  *
  * Runs as a GitHub Action step in the EOD master job — AFTER the main pipeline.
- * Does nothing on non-earnings days. On earnings days:
  *
- *  1. Finnhub /calendar/earnings → which portfolio stocks report today
- *  2. SEC EDGAR submissions → fetch the ex-99.1 press release from today's 8-K
- *  3. Google Gemini Flash (free tier) → structured JSON analysis
- *  4. Redis → store result with 90-day TTL as earnings_event_{SYMBOL}
+ *  A. EVERY run: refresh each stock's reported-quarter surprise history (revenue and EPS, actual vs analyst estimate)
+ *     from the Finnhub earnings calendar -> Redis earnings_surprise_{SYMBOL}. These are plain numbers, no AI involved.
+ *     Running nightly (not only on report day) also picks up actuals that Finnhub fills in a day or two late.
+ *     Consumers: backend/lib/earnings-context.js (daily-update.js and multibagger.js).
+ *  B. On report day only:
+ *     1. Finnhub /calendar/earnings -> which portfolio stocks report today
+ *     2. SEC EDGAR submissions -> fetch the ex-99.1 press release from today's 8-K
+ *     3. Google Gemini Flash -> structured JSON analysis (guidance direction, thesis confirms/risks, tone)
+ *        Where real actual-vs-estimate numbers exist they OVERRIDE Gemini's beat/miss booleans.
+ *     4. Redis -> earnings_event_{SYMBOL} with 90-day TTL
  *
- * Dashboard reads earnings_event_{SYMBOL} and displays a special card
- * in the detail panel for the relevant stock for up to 90 days.
+ * Dashboard reads earnings_event_{SYMBOL} and earnings_surprise_{SYMBOL} for the Earnings card.
  */
 
 const axios  = require('axios');
@@ -22,11 +26,15 @@ require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 
 const { createClient: createRedisClient }    = require('redis');
 const { createClient: createSupabaseClient } = require('@supabase/supabase-js');
+const ec = require('../lib/earnings-context');
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 
 const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 const TTL_SECONDS     = 90 * 24 * 60 * 60;  // 90 days in Redis
+const SURPRISE_WINDOW_DAYS = 430;           // ~4-5 reported quarters
+const SURPRISE_KEEP        = 6;
+const DAY = 86400000;
 
 // ─── CLIENTS ──────────────────────────────────────────────────────────────────
 
@@ -41,6 +49,9 @@ const supabase = createSupabaseClient(
   process.env.SUPABASE_SERVICE_KEY,
   { realtime: { transport: _ws } }
 );
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const isoDay = d => new Date(d).toISOString().split('T')[0];
 
 // ─── MARKET HOLIDAY GUARD ─────────────────────────────────────────────────────
 
@@ -74,8 +85,9 @@ async function checkMarketOpen() {
   return true;
 }
 
-// ─── STEP 1: PORTFOLIO + EARNINGS CALENDAR ────────────────────────────────────
+// ─── PORTFOLIO ────────────────────────────────────────────────────────────────
 
+// ETFs have no earnings reports, so they are left out.
 async function getPortfolioSymbols() {
   const client = createRedisClient({ url: process.env.REDIS_URL });
   client.on('error', () => {});
@@ -84,8 +96,67 @@ async function getPortfolioSymbols() {
   await client.quit();
   if (!raw) return [];
   const portfolio = JSON.parse(raw);
-  return (portfolio.stocks || []).map(s => s.symbol.toUpperCase());
+  return (portfolio.stocks || [])
+    .filter(s => s.type !== 'ETF' && s.instrument_type !== 'ETF')
+    .map(s => s.symbol.toUpperCase());
 }
+
+// ─── STEP A: SURPRISE HISTORY (numbers only) ──────────────────────────────────
+
+const numOrNull = v => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
+/** Reported quarters only: a date in the past with at least one actual AND its estimate. Oldest -> newest. */
+function reportedQuarters(rows) {
+  const today = isoDay(Date.now());
+  return (rows || [])
+    .filter(r => r && typeof r.date === 'string' && r.date <= today)
+    .map(r => ({
+      date: r.date, quarter: r.quarter ?? null, year: r.year ?? null,
+      revenueActual: numOrNull(r.revenueActual), revenueEstimate: numOrNull(r.revenueEstimate),
+      epsActual: numOrNull(r.epsActual), epsEstimate: numOrNull(r.epsEstimate),
+    }))
+    .filter(q => (q.revenueActual != null && q.revenueEstimate != null) || (q.epsActual != null && q.epsEstimate != null))
+    .sort((a, b) => (a.date < b.date ? -1 : 1))
+    .slice(-SURPRISE_KEEP);
+}
+
+async function fetchCalendar(symbol, from, to) {
+  const res = await axios.get('https://finnhub.io/api/v1/calendar/earnings', {
+    params: { symbol, from, to, token: process.env.FINNHUB_API_KEY },
+    timeout: 8000,
+  });
+  return res.data?.earningsCalendar || [];
+}
+
+async function refreshSurprises(symbols) {
+  const client = createRedisClient({ url: process.env.REDIS_URL });
+  client.on('error', () => {});
+  await client.connect();
+  const to = isoDay(Date.now()), from = isoDay(Date.now() - SURPRISE_WINDOW_DAYS * DAY);
+  let updated = 0, unchanged = 0, failed = 0;
+  console.log('Refreshing reported-quarter surprise history…');
+  for (const symbol of symbols) {
+    try {
+      const quarters = reportedQuarters(await fetchCalendar(symbol, from, to));
+      if (!quarters.length) {                       // never overwrite good history with an empty answer
+        unchanged++; console.log(`  ${symbol}: no reported quarters returned — keeping what is stored`);
+      } else {
+        await client.set(`earnings_surprise_${symbol}`, JSON.stringify({ symbol, asOf: new Date().toISOString(), quarters }));
+        updated++;
+        const last = quarters[quarters.length - 1];
+        const rs = ec.surprise(last.revenueActual, last.revenueEstimate), es = ec.surprise(last.epsActual, last.epsEstimate);
+        console.log(`  ${symbol}: ${quarters.length} quarters · latest ${last.date} revenue ${rs == null ? 'n/a' : (rs * 100).toFixed(1) + '%'} · EPS ${es == null ? 'n/a' : (es * 100).toFixed(1) + '%'}`);
+      }
+    } catch (e) {
+      failed++; console.warn(`  ${symbol}: surprise refresh failed — ${e.message} (previous history kept)`);
+    }
+    await sleep(1000);
+  }
+  await client.quit().catch(() => {});
+  console.log(`Surprise history: ${updated} updated, ${unchanged} unchanged, ${failed} failed\n`);
+}
+
+// ─── STEP B1: WHO REPORTS TODAY ───────────────────────────────────────────────
 
 async function getEarningsToday(symbols) {
   const today = new Date().toISOString().split('T')[0];
@@ -103,6 +174,8 @@ async function getEarningsToday(symbols) {
           symbol,
           epsEstimate:     entry?.epsEstimate     ?? null,
           revenueEstimate: entry?.revenueEstimate ?? null,
+          epsActual:       entry?.epsActual       ?? null,   // usually filled in later; used when present
+          revenueActual:   entry?.revenueActual   ?? null,
           quarter:         entry?.quarter         ?? null,
           year:            entry?.year            ?? null,
         });
@@ -111,12 +184,12 @@ async function getEarningsToday(symbols) {
     } catch (e) {
       console.warn(`⚠ Finnhub earnings check failed for ${symbol}: ${e.message}`);
     }
-    await new Promise(r => setTimeout(r, 1000));
+    await sleep(1000);
   }
   return reportingToday;
 }
 
-// ─── STEP 2: FETCH EARNINGS PRESS RELEASE ─────────────────────────────────────
+// ─── STEP B2: FETCH EARNINGS PRESS RELEASE ────────────────────────────────────
 
 const _cikCache = {};
 
@@ -168,8 +241,6 @@ async function fetchEarningsPressRelease(symbol) {
     // Use structured index.json instead of parsing index.htm HTML.
     // index.json has { directory: { item: [{ name, type, size }] } } — reliable regardless
     // of how the company names its exhibit files (ex991.htm, pressrelease.htm, etc.)
-    // This fixes the "no ex-99.1 found" failure for companies like CEG that use
-    // non-standard exhibit filenames.
     const indexJsonUrl = `https://www.sec.gov/Archives/edgar/data/${cikNum}/${accessionRaw}/index.json`;
     let ex991Name = null;
     try {
@@ -178,7 +249,6 @@ async function fetchEarningsPressRelease(symbol) {
         timeout: 8000,
       });
       const items = idxRes.data?.directory?.item ?? [];
-      // Find by document type 'EX-99.1' — works regardless of filename
       const ex991Item = items.find(i =>
         i.type === 'EX-99.1' ||
         i.type === 'EX-99' ||
@@ -202,7 +272,6 @@ async function fetchEarningsPressRelease(symbol) {
           /href="([^"]*(?:ex-?99[-_.]?1|exhibit[-_]?99[-_.]?1|ex99[-_.]?1|pressrelease)[^"]*\.htm[^"]*)"[^>]*>/i
         );
         if (match) {
-          // Extract just the filename from the href
           ex991Name = match[1].split('/').pop();
         }
       } catch (e) { /* htm fallback also failed */ }
@@ -236,7 +305,7 @@ async function fetchEarningsPressRelease(symbol) {
   }
 }
 
-// ─── STEP 3: GEMINI FLASH ANALYSIS ────────────────────────────────────────────
+// ─── STEP B3: GEMINI FLASH ANALYSIS ───────────────────────────────────────────
 
 async function analyseWithGemini(symbol, pressReleaseText, earningsMetadata) {
   if (!process.env.GEMINI_API_KEY) {
@@ -274,6 +343,7 @@ Rules:
 - Identify anything that threatens the multi-year thesis specifically
 - Ignore short-term noise (fx rates, one-time items) unless they indicate structural change
 - Be conservative — a miss that management explains away is still a miss
+- Revenue versus the consensus estimate matters most: state the reported revenue and whether it is above or below the estimate
 
 Return ONLY a JSON object:
 - eps_beat: boolean or null (null if no estimate available)
@@ -324,7 +394,7 @@ Return ONLY a JSON object:
   }
 }
 
-// ─── STEP 4: WRITE TO REDIS ───────────────────────────────────────────────────
+// ─── STEP B4: WRITE TO REDIS ──────────────────────────────────────────────────
 
 async function saveToRedis(symbol, payload) {
   const client = createRedisClient({ url: process.env.REDIS_URL });
@@ -342,7 +412,7 @@ async function saveToRedis(symbol, payload) {
   }
 }
 
-// ─── STEP 4b: LOG TO SUPABASE ─────────────────────────────────────────────────
+// ─── STEP B4b: LOG TO SUPABASE ────────────────────────────────────────────────
 
 async function logToSupabase(symbol, date, payload) {
   try {
@@ -391,8 +461,12 @@ async function main() {
     console.log('No symbols in portfolio — nothing to do.');
     process.exit(0);
   }
-  console.log(`Portfolio: ${symbols.join(', ')}\n`);
+  console.log(`Portfolio (stocks): ${symbols.join(', ')}\n`);
 
+  // A. every run: numbers-only surprise history (never blocks the rest of the run)
+  try { await refreshSurprises(symbols); } catch (e) { console.warn(`Surprise refresh crashed: ${e.message}`); }
+
+  // B. report-day analysis
   const reporting = await getEarningsToday(symbols);
   if (!reporting.length) {
     console.log('\n✓ No portfolio stocks report earnings today.');
@@ -415,6 +489,14 @@ async function main() {
       console.log(`  ${stock.symbol}: No press release text — skipping Gemini analysis`);
     }
 
+    // Real numbers beat an AI read: where actual and estimate are both known, they decide "beat".
+    const revS = ec.surprise(stock.revenueActual, stock.revenueEstimate);
+    const epsS = ec.surprise(stock.epsActual, stock.epsEstimate);
+    if (geminiResult) {
+      if (revS != null) { geminiResult.revenue_beat = revS > 0; geminiResult.revenue_beat_source = 'numbers'; }
+      if (epsS != null) { geminiResult.eps_beat     = epsS > 0; geminiResult.eps_beat_source     = 'numbers'; }
+    }
+
     const payload = {
       symbol:     stock.symbol,
       date:       today,
@@ -424,6 +506,11 @@ async function main() {
         eps:     stock.epsEstimate,
         revenue: stock.revenueEstimate,
       },
+      actuals: {
+        eps:     stock.epsActual,
+        revenue: stock.revenueActual,
+      },
+      surprise: { revenuePct: revS == null ? null : revS * 100, epsPct: epsS == null ? null : epsS * 100 },
       pressRelease: pressRelease ? {
         available: true,
         source:    pressRelease.source,
