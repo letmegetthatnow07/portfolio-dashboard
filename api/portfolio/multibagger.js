@@ -6,7 +6,12 @@
 // the old quality engine's output from it and the result is stored under the portfolio.
 import { createClient } from 'redis';
 import mb from '../../backend/lib/multibagger.js';
-import store from '../../backend/lib/mb-store.js';
+
+// History saving is optional: if the store module or Supabase is unavailable the route must still work.
+async function loadStore() {
+  try { const m = await import('../../backend/lib/mb-store.js'); return m.default || m; }
+  catch (e) { console.warn('[mb-store] unavailable:', e.message); return null; }
+}
 
 let redisClient = null;
 async function getRedisClient() {
@@ -28,15 +33,15 @@ export default async function handler(req, res) {
     if (req.method === 'GET' && req.query?.history) {
       // Permanent history from Supabase (newest first): GET /api/portfolio/multibagger?history=CRWD
       const sym = String(req.query.history).trim().toUpperCase();
-      if (!/^[A-Z][A-Z0-9.\-]{0,9}$/.test(sym)) return res.status(400).json({ error: 'Valid symbol required' });
-      try { return res.status(200).json({ symbol: sym, rows: await store.readHistory(sym, Number(req.query.limit) || 60) }); }
+      if (!/^[A-Z][A-Z0-9.-]{0,9}$/.test(sym)) return res.status(400).json({ error: 'Valid symbol required' });
+      try { const store = await loadStore(); return res.status(200).json({ symbol: sym, rows: store ? await store.readHistory(sym, Number(req.query.limit) || 60) : [] }); }
       catch (e) { return res.status(200).json({ symbol: sym, rows: [], warning: e.message }); }   // the dashboard falls back to the Redis history
     }
     if (req.method === 'GET') return res.status(200).json(blob);
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
     const symbol = String(req.body?.symbol || '').trim().toUpperCase();
-    if (!/^[A-Z][A-Z0-9.\-]{0,9}$/.test(symbol)) return res.status(400).json({ error: 'Valid symbol required' });
+    if (!/^[A-Z][A-Z0-9.-]{0,9}$/.test(symbol)) return res.status(400).json({ error: 'Valid symbol required' });
     if (!process.env.FINNHUB_API_KEY) return res.status(500).json({ error: 'Screening is not configured (missing data key)' });
 
     const portfolio = parse(await client.get('portfolio')) || { stocks: [] };
@@ -57,14 +62,15 @@ export default async function handler(req, res) {
     const sectorCache = parse(await client.get('sector_health')) || { data: {} };
     const filing = parse(await client.get(`filing_narrative_${symbol}`));
     const earnings = parse(await client.get(`earnings_event_${symbol}`));
-    const result = mb.screen({ symbol, ...inputs, stock, filing, earnings, sectorHealth: sectorCache.data, prev: blob.portfolio[symbol] || null, source: 'portfolio', held });
+    const surprises = parse(await client.get(`earnings_surprise_${symbol}`));
+    const result = mb.screen({ symbol, ...inputs, stock, filing, earnings, surprises, sectorHealth: sectorCache.data, prev: blob.portfolio[symbol] || null, source: 'portfolio', held });
 
     // Advisory entry-timing overlay (PASS names only; a short timeout keeps the request fast; failure is non-fatal)
     try { await mb.attachTiming(result, { polyKey: process.env.POLYGON_API_KEY, fmpKey: process.env.FMP_API_KEY, timeoutMs: 6000 }); } catch (_) { /* optional */ }
 
     blob.portfolio[symbol] = result;
     await client.set(mb.KEY, JSON.stringify(blob));
-    await store.saveResults([{ result, source: 'portfolio' }]);   // permanent history; never throws
+    { const store = await loadStore(); if (store) await store.saveResults([{ result, source: 'portfolio' }]); }   // permanent history; never throws
     return res.status(200).json({ result });
   } catch (err) {
     console.error('[multibagger API]', err.message);
