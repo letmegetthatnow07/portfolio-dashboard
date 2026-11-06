@@ -82,6 +82,7 @@ const PARAMS = {
   // sector price leg needs 12 months of aligned sessions
   MIN_SECTOR_BARS: 253,
 };
+const ec = require('./earnings-context');   // revenue/EPS surprise vs estimates (shared with the daily update)
 const KEY = 'multibagger_screen';
 const DAY_MS = 86400000;
 
@@ -361,8 +362,16 @@ function parseEstimates(arr) {
     };
   };
   const rev = cagrOf('rev', 'nRev'), eps = cagrOf('eps', 'nEps');
-  const fwdRow = rows.find(r => r.t > now && typeof r.eps === 'number');       // the NEAREST forward year, never a later one
-  const firstEps = fwdRow && fwdRow.eps > 0 ? fwdRow.eps : null;               // a loss has no forward P/E
+  // Forward EPS for a forward P/E = the NEXT TWELVE MONTHS, not the next fiscal year. A company whose fiscal year ends in 3 months
+  // would otherwise be valued on nearly trailing EPS. Blend the nearest forward year with the one after it by time remaining.
+  const fwdRows = rows.filter(r => r.t > now && typeof r.eps === 'number' && isFinite(r.eps));
+  const fwdRow = fwdRows[0], nextRow = fwdRows[1];
+  const fy1Eps = fwdRow && fwdRow.eps > 0 ? fwdRow.eps : null;                  // a loss has no forward P/E
+  let firstEps = fy1Eps;
+  if (fy1Eps != null && nextRow && nextRow.eps > 0) {
+    const f = clamp((fwdRow.t - now) / (365.25 * DAY_MS), 0, 1);               // share of the coming 12 months covered by the nearest fiscal year
+    firstEps = fwdRow.eps * f + nextRow.eps * (1 - f);
+  }
   if (!rev && !eps && !firstEps) return null;
   return {
     revCagr: rev?.g ?? null, epsCagr: eps?.g ?? null,
@@ -370,7 +379,7 @@ function parseEstimates(arr) {
     revBreadth: rev?.breadth ?? null, epsBreadth: eps?.breadth ?? null,
     revNotMeaningful: !!rev && !rev.meaningful, epsNotMeaningful: !!eps && !eps.meaningful,
     years: Math.max(rev?.years ?? 0, eps?.years ?? 0),
-    firstEps,
+    firstEps, fy1Eps,                                  // firstEps = next-twelve-months EPS (see above)
   };
 }
 async function fetchEstimates(symbol, fmpKey) {
@@ -469,6 +478,9 @@ function readDebtToEquity(m, profile = {}) {
 
 // ── Stale state: one implementation used by screen() and by the runner's failure path ─────
 const validDate = v => Number.isFinite(Date.parse(v ?? ''));
+/** A pending-confirmation record is only kept if it is complete and sane; otherwise the confirmation restarts. */
+const cleanPending = p => (p && (p.to === 'PASS' || p.to === 'FAIL') && validDate(p.since) && Number.isFinite(p.runs) && p.runs >= 1
+  ? { ...p, runs: Math.floor(p.runs) } : null);
 /**
  * Missing/failed data must not erase a confirmed state, and must never leave a buy signal standing:
  *  - a confirmed PASS/FAIL is kept, marked STALE, with its last valid date; sell/trim/exit actions of a holding are kept
@@ -486,7 +498,7 @@ function preserveOrExpire(prev, held, reason, base = {}) {
     // ownership decides the vocabulary: a watchlist result that became a holding must never keep a CANDIDATE_* action
     const action = !held ? 'STALE_NO_BUY' : urgent ? prev.action : prev.status === 'PASS' ? 'DATA_STALE' : 'HOLD_WATCH';
     return {
-      ...prev, held, stale: true, staleReason: reason, staleSince, lastAttempt: now, action,
+      ...prev, held, stale: true, staleReason: reason, staleSince, lastAttempt: now, action, pending: cleanPending(prev.pending),
       reasons: [`Data unavailable (${reason}). Showing the last valid assessment from ${String(prev.asOf).slice(0, 10)}; no new buying until it is refreshed.`, ...(prev.reasons || []).filter(r => !String(r).startsWith('Data unavailable'))],
     };
   }
@@ -512,8 +524,10 @@ function qualityGate(stock, exitMode) {
 
 // ── The screen ───────────────────────────────────────────────────────────────
 /** held: caller states whether the position is actually owned. Ownership is never inferred from prev.status. */
-function screen({ symbol, metric = {}, profile = {}, stock = null, filing = null, earnings = null, sectorHealth = null, estimates = null, prev = null, isETF = false, source = 'watchlist', held = false }) {
+function screen({ symbol, metric = {}, profile = {}, stock = null, filing = null, earnings = null, surprises = null, sectorHealth = null, estimates = null, prev = null, isETF = false, source = 'watchlist', held = false }) {
   const now = new Date().toISOString();
+  // The quality engine only scores PORTFOLIO stocks. A watchlist result must stay UNVERIFIED even if a record is passed in by mistake.
+  if (source === 'watchlist') stock = null;
   const nm = profile.name || stock?.name || symbol;
   if (isETF || stock?.instrument_type === 'ETF' || stock?.type === 'ETF') {
     return { symbol, name: nm, source, held, asOf: now, verdict: 'NOT_APPLICABLE', status: 'NOT_APPLICABLE', isCompounder: false, score: null, flags: [], reasons: ['ETFs and funds are not screened: the multibagger test applies to individual operating companies.'], confidence: 'LOW' };
@@ -608,6 +622,9 @@ function screen({ symbol, metric = {}, profile = {}, stock = null, filing = null
   const cyclical = CYCLICAL_ETFS.has(etf) && (!!stock?.cyclical_peak_flag || spike);
   if (cyclical) { g0 *= PARAMS.CYCLICAL_HAIRCUT; flag('CYCLICAL_PEAK', 'amber', 'Margins look peak-cycle in a cyclical group; growth haircut 40% because it should not be extrapolated.'); }
   g0 = clamp(g0, -0.1, PARAMS.MAX_G0);
+
+  // Earnings context: how the last reports compared with analyst estimates. Revenue first, EPS and guidance second.
+  const ctx = ec.assessEarningsContext({ surprises, event: earnings, highExpectations: ec.isHighExpectation({ forwardPE: fwdPE, hypergrowth: stock?.hypergrowth_mode, g0 }) });
 
   // 2-6. Valuation. A mature margin is only ever assumed for the ILLUSTRATIVE loss-maker scenario, which cannot pass.
   const matureMargin = clamp(netm > 0 ? netm : opm > 0 ? opm * 0.75 : gm ? gm * 0.25 : 0.10, 0.08, 0.25);
@@ -705,8 +722,11 @@ function screen({ symbol, metric = {}, profile = {}, stock = null, filing = null
   if (stock?.debt_maturity_flag === 'wall' && leverage !== 'BROKEN') flag('DEBT_WALL', 'amber', 'Large share of debt matures within 12 months.');
   // thesis tracking from information already gathered (filing + earnings analysis, estimates, quality engine)
   if (filing?.gemini?.thesis_status === 'strengthening') flag('THESIS_STRENGTHENING', 'green', 'Latest filing analysis says the thesis is strengthening.');
-  if (earnings?.gemini?.guidance_direction === 'lowered') flag('GUIDANCE_CUT', 'amber', 'Management lowered guidance at the last earnings report.');
-  if (earnings?.gemini?.eps_beat === false && earnings?.gemini?.revenue_beat === false) flag('EARNINGS_MISS', 'amber', 'Last earnings report missed both EPS and revenue estimates.');
+  // Three revenue misses in a row is a real deterioration (demand below what analysts model); one or two only pause new buying.
+  for (const f of ctx.flags) {
+    if (f.code === 'REVENUE_MISS_STREAK' && f.level === 'red') broken('REVENUE_MISS_STREAK', f.text);
+    else flag(f.code, f.level, f.text);
+  }
   const mgmtConf = [earnings?.gemini?.management_confidence, filing?.gemini?.management_confidence].filter(v => typeof v === 'number');
   if (mgmtConf.length && Math.min(...mgmtConf) <= 2) flag('MGMT_HEDGING', 'amber', 'Management language in the latest filing/earnings analysis is heavily hedged.');
   // consensus cut vs the best reading of the last 4 checks (stays visible for about a month, not just one run)
@@ -734,6 +754,7 @@ function screen({ symbol, metric = {}, profile = {}, stock = null, filing = null
     stage: [stageS, 10], moat: [moatS, 8], balance: [balanceS, 5],
     sector: [sec && sec.label !== 'UNKNOWN' ? { INTACT: 100, PARTIAL: 60, NOT_CONFIRMED: 35, BROKEN: 0 }[sec.label] : null, 5],
     sentiment: [stock ? ((stock.score_insider ?? 5) + (stock.score_rating ?? 5)) * 5 : null, 5],
+    execution: [ctx.executionScore, 8],     // revenue vs estimates over the last 4 reports; absent until reports are on file
   };
   let wSum = 0, sSum = 0; const scoreParts = {};
   for (const [k, [v, w]] of Object.entries(parts)) { scoreParts[k] = v == null ? null : Math.round(v); if (v != null) { wSum += w; sSum += v * w; } }
@@ -776,9 +797,10 @@ function screen({ symbol, metric = {}, profile = {}, stock = null, filing = null
       // a holding whose quality still clears the bar and is only held back by price/sector: never a sell signal
       status = 'PASS'; verdict = prev.verdict && prev.verdict !== 'WAIT_FOR_PRICE' ? prev.verdict : 'ALPHA_COMPOUNDER';
     } else {
-      const same = prev?.pending?.to === rawStatus;
+      // a damaged pending record (bad date, non-numeric runs) restarts the confirmation instead of sticking forever
+      const same = prev?.pending?.to === rawStatus && validDate(prev.pending.since) && Number.isFinite(prev.pending.runs) && prev.pending.runs >= 1;
       const since = same ? prev.pending.since : now;
-      const runs = same ? prev.pending.runs + 1 : 1;
+      const runs = same ? Math.floor(prev.pending.runs) + 1 : 1;
       const days = (Date.now() - new Date(since).getTime()) / DAY_MS;
       const immediate = rawStatus === 'FAIL' && critical8K;
       if (immediate || (runs >= PARAMS.CONFIRM_RUNS && days >= PARAMS.CONFIRM_DAYS)) { status = rawStatus; verdict = rawVerdict; }
@@ -791,21 +813,22 @@ function screen({ symbol, metric = {}, profile = {}, stock = null, filing = null
   const thesisState = thesisBroken ? 'BROKEN' : (rawVerdict === 'NOT_MULTIBAGGER' || unproven ? 'UNPROVEN' : 'INTACT');
 
   // portfolioAction depends on ownership. "Add" needs a passed quality gate AND a fully confirmed sector.
-  const oldCaution = !!stock && (stock.signal === 'WATCH' || gate.state === 'FAIL');
+  const oldCaution = !!stock && (stock.signal === 'WATCH' || stock.signal === 'IDIOSYNCRATIC_DECAY' || stock.regime === 'IDIOSYNCRATIC_DECAY' || gate.state === 'FAIL');
   let action;
   if (held) {
     if (thesisBroken && status === 'FAIL') action = 'REVIEW_EXIT';
     else if (thesisBroken) action = 'THESIS_AT_RISK';
-    else if (status === 'PASS' && gate.state === 'PASS' && sectorFull && leverageOkNew && pricing === 'OK' && !oldCaution) action = 'HOLD_AND_ADD';
+    else if (status === 'PASS' && rawStatus === 'PASS' && gate.state === 'PASS' && sectorFull && leverageOkNew && pricing === 'OK' && !oldCaution && !ctx.blockAdds) action = 'HOLD_AND_ADD';
     else if (status === 'PASS' || rawVerdict === 'WAIT_FOR_PRICE') action = 'HOLD_DONT_ADD';
     else action = 'HOLD_WATCH';
   } else {
-    if (status === 'PASS' && gate.state === 'PASS' && sectorFull && leverageOkNew) action = 'CANDIDATE_READY';
+    if (status === 'PASS' && rawStatus === 'PASS' && gate.state === 'PASS' && sectorFull && leverageOkNew && !oldCaution) action = pricing === 'OK' && !ctx.blockAdds ? 'CANDIDATE_READY' : 'CANDIDATE_WAIT';
     else if (status === 'PASS') action = 'CANDIDATE_PROVISIONAL';
     else action = 'NOT_QUALIFIED';
   }
 
   const reasons = [
+    ctx.blockAdds ? `New buying is paused for about ${ctx.blockDays} more days: ${ctx.blockReason}. This is a pause, not a sell signal.` : null,
     forwardSource === 'CONSENSUS' ? `Analyst consensus expects ${isRevRoute ? 'revenue' : 'EPS'} ${(fwdPrimary * 100).toFixed(0)}% annual growth over ${estYears} year${estYears === 1 ? '' : 's'}; blended revenue growth ${revG != null ? (revG * 100).toFixed(0) + '%' : 'n/a'}.` : null,
     `Expected growth ${(g0 * 100).toFixed(0)}%/yr, fading toward ${(PARAMS.TERMINAL_GROWTH * 100).toFixed(0)}% over 10 years (stage: ${stage}).`,
     `${unproven ? 'Illustrative: ' : ''}projected 5-year price multiple ${mult5y.toFixed(1)}x; after ~${(PARAMS.EXIT_TAX * 100).toFixed(0)}% exit tax ${atMult.toFixed(1)}x (${(atCagr * 100).toFixed(0)}%/yr) vs 22% target. Bear case ${(bearCagr * 100).toFixed(0)}%/yr.`,
@@ -830,6 +853,7 @@ function screen({ symbol, metric = {}, profile = {}, stock = null, filing = null
     quality: { roic, gm, gm5, opm, netm, de, deRaw, deUnit, icov, leverage, marketCapM },
     sector: etf ? { etf, label: sec?.label || 'UNKNOWN', priceOnly: !!sec?.priceOnly, partial: !!sec?.partial } : null,
     entryTiming: prev?.entryTiming || null,
+    earnings: { source: ctx.source, latest: ctx.latest, grade: ctx.grade, daysSince: ctx.daysSince, blockAdds: ctx.blockAdds, blockDays: ctx.blockDays, blockReason: ctx.blockReason, missStreak: ctx.missStreak, beatStreak: ctx.beatStreak, executionScore: ctx.executionScore, quarters: ctx.quarters.slice(-4), highExpectations: ctx.highExpectations },
     flags, reasons, history,
   };
 }
