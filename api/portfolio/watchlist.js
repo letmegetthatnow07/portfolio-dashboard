@@ -7,7 +7,12 @@
 // the best a watchlist stock can be is a PROVISIONAL candidate. Quality is confirmed once it is added to the portfolio.
 import { createClient } from 'redis';
 import mb from '../../backend/lib/multibagger.js';
-import store from '../../backend/lib/mb-store.js';
+
+// History saving is optional: if the store module or Supabase is unavailable the route must still work.
+async function loadStore() {
+  try { const m = await import('../../backend/lib/mb-store.js'); return m.default || m; }
+  catch (e) { console.warn('[mb-store] unavailable:', e.message); return null; }
+}
 
 let redisClient = null;
 async function getRedisClient() {
@@ -19,7 +24,7 @@ async function getRedisClient() {
   return redisClient;
 }
 const parse = raw => { try { return raw ? JSON.parse(raw) : null; } catch { return null; } };
-const SYMBOL_RE = /^[A-Z][A-Z0-9.\-]{0,9}$/;
+const SYMBOL_RE = /^[A-Z][A-Z0-9.-]{0,9}$/;
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
@@ -45,7 +50,8 @@ export default async function handler(req, res) {
         const sectorCache = parse(await client.get('sector_health')) || { data: {} };
         const filing = parse(await client.get(`filing_narrative_${symbol}`));
         const earnings = parse(await client.get(`earnings_event_${symbol}`));
-        const result = mb.screen({ symbol, ...inputs, filing, earnings, sectorHealth: sectorCache.data, prev: blob.watchlist[symbol] || null, source: 'watchlist', held: false });
+        const surprises = parse(await client.get(`earnings_surprise_${symbol}`));
+        const result = mb.screen({ symbol, ...inputs, filing, earnings, surprises, sectorHealth: sectorCache.data, prev: blob.watchlist[symbol] || null, source: 'watchlist', held: false });
         try { await mb.attachTiming(result, { polyKey: process.env.POLYGON_API_KEY, fmpKey: process.env.FMP_API_KEY, timeoutMs: 6000 }); } catch (_) { /* optional */ }
         blob.watchlist[symbol] = result;
         entry.status = mb.statusOf(result);
@@ -54,7 +60,7 @@ export default async function handler(req, res) {
         entry.name = result.name || entry.name;
         await client.set('watchlist', JSON.stringify(wl));
         await client.set(mb.KEY, JSON.stringify(blob));
-        await store.saveResults([{ result, source: 'watchlist' }]);   // permanent history; never throws
+        { const store = await loadStore(); if (store) await store.saveResults([{ result, source: 'watchlist' }]); }   // permanent history; never throws
         return res.status(200).json({ entry, result });
       }
 
