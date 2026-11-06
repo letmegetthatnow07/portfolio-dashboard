@@ -59,19 +59,30 @@ async function diagnoseEstimates(sym) {
       console.log(`[${label}] ${rows.length} rows; keys: ${Object.keys(rows[0]).join(', ')}`);
       rows.slice(0, 6).forEach(r => console.log(`   ${r.date}  rev=${r.revenueAvg ?? r.estimatedRevenueAvg}  eps=${r.epsAvg ?? r.estimatedEpsAvg}  nRev=${r.numAnalystsRevenue ?? r.numberAnalystEstimatedRevenue ?? '—'}  nEps=${r.numAnalystsEps ?? r.numberAnalystsEstimatedEps ?? r.numberAnalystEstimatedEps ?? '—'}`));
       console.log(`[${label}] parsed:`, JSON.stringify(mb.parseEstimates(rows)));
-      return;
+      break;
     } catch (e) { console.log(`[${label}] failed: ${e.message}`); }
   }
+  // Finnhub side: which debt/equity field exists, and which unit did we conclude?
+  const token = process.env.FINNHUB_API_KEY;
+  if (!token) { console.log('FINNHUB_API_KEY missing: skipping the debt/equity check'); return; }
+  try {
+    const m = (await mb.finnhub('/stock/metric', { symbol: sym, metric: 'all' }, token))?.metric || {};
+    const profile = await mb.finnhub('/stock/profile2', { symbol: sym }, token).catch(() => ({}));
+    const pick = ['totalDebt/totalEquityAnnual', 'longTermDebt/equityAnnual', 'totalDebtAnnual', 'cashAndEquivalentsAnnual', 'bookValuePerShareAnnual', 'netInterestCoverageTTM', 'peTTM', 'forwardPE', 'marketCapitalization'];
+    console.log('[finnhub] raw fields:', JSON.stringify(Object.fromEntries(pick.map(k => [k, m[k] ?? null]))), 'shares:', profile?.shareOutstanding ?? null);
+    console.log('[finnhub] debt/equity decision:', JSON.stringify(mb.readDebtToEquity(m, profile)));
+  } catch (e) { console.log(`[finnhub] failed: ${e.message}`); }
 }
 
 // Old-engine / event triggers that pull a portfolio re-check forward
 const BEARISH = new Set(['TRIM_25', 'SELL', 'REDUCE']);
-function eventTrigger(stock, prev, earnings, filing) {
+function eventTrigger(stock, prev, earnings, filing, surprises) {
   const since = Date.parse(prev?.asOf ?? '');
   if (!Number.isFinite(since)) return true;                    // corrupted or missing timestamp: re-screen
   if (stock.event_8k_hint === 'critical' || stock.sharp_score_drop === true || BEARISH.has(stock.signal)) return true;
   const newer = t => { const v = Date.parse(t ?? ''); return Number.isFinite(v) && v > since; };
-  return newer(earnings?.processedAt) || newer(filing?.processedAt);
+  const lastReport = (surprises?.quarters || []).map(q => q?.date).filter(d => Number.isFinite(Date.parse(d ?? ''))).sort().pop();   // a NEW reported quarter, not the nightly refresh
+  return newer(earnings?.processedAt) || newer(filing?.processedAt) || newer(lastReport);
 }
 
 // A failed run must not erase a confirmed state, leave a buy signal standing, or keep a stale PASS forever (30-day expiry).
@@ -143,11 +154,11 @@ async function main() {
     sectorCache.data[etf] = entry; sectorData[etf] = entry;
   }
 
-  async function runOne(symbol, stock, source, prev, held, filing, earnings) {
+  async function runOne(symbol, stock, source, prev, held, filing, earnings, surprises) {
     const inputs = await mb.fetchInputs(symbol, token, fmpKey);
     if (mb.isEtfProfile(inputs.profile)) return { result: mb.screen({ symbol, profile: inputs.profile, isETF: true, source, held }) };   // consistent NOT_APPLICABLE in every store
     await ensureSector(mb.sectorEtfFor(stock?.industry, stock?.sector, inputs.profile.finnhubIndustry));
-    const result = mb.screen({ symbol, ...inputs, stock, filing, earnings, sectorHealth: sectorData, prev, source, held });
+    const result = mb.screen({ symbol, ...inputs, stock, filing, earnings, sectorHealth: sectorData, surprises, prev, source, held });
     // Advisory entry-timing overlay for names that pass; refreshed weekly (Polygon, then FMP)
     if (result.status === 'PASS' && timingLeft > 0) {
       try {
@@ -170,12 +181,13 @@ async function main() {
     const held = (Number(s.quantity) || 0) > 0;
     const earnings = parse(await redis.get(`earnings_event_${s.symbol}`));
     const filing = parse(await redis.get(`filing_narrative_${s.symbol}`));
+    const surprises = parse(await redis.get(`earnings_surprise_${s.symbol}`));
     const prevTime = Date.parse(prev?.asOf ?? '');
     const ageDays = Number.isFinite(prevTime) ? (Date.now() - prevTime) / DAY : Infinity;
-    const due = FORCE || !!ONLY || !prev || prev.status === 'NO_DATA' || prev.stale || ageDays >= mb.PARAMS.REFRESH_DAYS || eventTrigger(s, prev, earnings, filing);
+    const due = FORCE || !!ONLY || !prev || prev.status === 'NO_DATA' || prev.stale || ageDays >= mb.PARAMS.REFRESH_DAYS || eventTrigger(s, prev, earnings, filing, surprises);
     if (!due) { newPortfolio[s.symbol] = prev; skippedFresh++; continue; }
     try {
-      const out = await runOne(s.symbol, s, 'portfolio', prev, held, filing, earnings);
+      const out = await runOne(s.symbol, s, 'portfolio', prev, held, filing, earnings, surprises);
       if (out.result) { newPortfolio[s.symbol] = out.result; checked++; console.log('  ' + line(out.result)); }
     } catch (e) {
       console.warn(`  ${s.symbol}: failed (${e.message}) — keeping previous result, marked stale`);
@@ -200,7 +212,8 @@ async function main() {
     try {
       const filing = parse(await redis.get(`filing_narrative_${e.symbol}`));
       const earnings = parse(await redis.get(`earnings_event_${e.symbol}`));
-      const out = await runOne(e.symbol, null, 'watchlist', prev, false, filing, earnings);
+      const surprises = parse(await redis.get(`earnings_surprise_${e.symbol}`));
+      const out = await runOne(e.symbol, null, 'watchlist', prev, false, filing, earnings, surprises);
       blob.watchlist[e.symbol] = out.result;
       updates[e.symbol] = { status: mb.statusOf(out.result), screenedAt: out.result.asOf, name: out.result.name, stale: false };
       console.log('  ' + line(out.result));
