@@ -4,6 +4,7 @@ import './enhanced-portfolio-dashboard.css';
 import CorrelationHeatmap from './CorrelationHeatmap';
 import { useFeedback } from './ui-feedback';
 import { ScreenerView, MultibaggerTab } from './MultibaggerViews';
+import HistoryView from './HistoryView';
 
 // ── Signal Configuration ──────────────────────────────────────────────────────
 const SIGNAL_CFG = {
@@ -1187,191 +1188,6 @@ const FilingNarrativeCard = ({ symbol, filingForm }) => {
 };
 
 
-// ── HistoryView ───────────────────────────────────────────────────────────────
-// Vertical layout: one collapsible card per stock, newest date first, light theme.
-// Header = latest score, change vs the previous day, signal and a mini score trend.
-// Body   = a table (one row per trading day) with ▲/▼ against the day before.
-const SCORE_COLS = [
-  { key: 'fund_score',    label: 'Fund' },
-  { key: 'tech_score',    label: 'Tech' },
-  { key: 'analyst_score', label: 'Analyst' },
-  { key: 'news_score',    label: 'News' },
-  { key: 'insider_score', label: 'Insider' },
-];
-
-function fmtDate(iso) {
-  const d = new Date(iso + 'T12:00:00Z');
-  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-}
-
-const Delta = ({ now, prev, thresh = 0.3 }) => {
-  if (now == null || prev == null) return null;
-  const d = now - prev;
-  if (Math.abs(d) < thresh) return null;
-  return <span className={`history-delta ${d > 0 ? 'up' : 'down'}`}>{d > 0 ? '▲' : '▼'}{Math.abs(d).toFixed(1)}</span>;
-};
-
-const HistoryCard = ({ symbol, dates, data, open, onToggle }) => {
-  // newest first, only days this stock actually has a row for
-  const days = [...dates].reverse().filter(d => data[d]);
-  const latest = days[0] ? data[days[0]] : null;
-  const prevRow = days[1] ? data[days[1]] : null;
-  const trend = [...days].slice(0, 15).reverse().map(d => data[d]?.total_score).filter(v => v != null);
-  const lo = trend.length ? Math.min(...trend) : 0, hi = trend.length ? Math.max(...trend) : 1;
-  const cfg = latest?.signal ? sig(latest.signal) : null;
-
-  return (
-    <div className="history-card">
-      <div className="history-card-header" onClick={onToggle}>
-        <span className="history-chevron">{open ? '▼' : '▶'}</span>
-        <div className="history-card-id">
-          <span className="history-card-symbol">{symbol}</span>
-          <span className="history-card-days">{days.length} trading day{days.length === 1 ? '' : 's'}</span>
-        </div>
-        <span className="history-spark" title="Total score trend, oldest to newest">
-          {trend.map((v, i) => (
-            <i key={i} className={i > 0 ? (v > trend[i - 1] ? 'up' : v < trend[i - 1] ? 'down' : '') : ''}
-              style={{ height: `${hi === lo ? 60 : 25 + ((v - lo) / (hi - lo)) * 75}%` }} />
-          ))}
-        </span>
-        <div className="history-card-spacer" />
-        {latest?.total_score != null && (
-          <span className="history-card-score" style={{ color: scoreCol(latest.total_score) }}>
-            {latest.total_score.toFixed(1)}<Delta now={latest.total_score} prev={prevRow?.total_score} />
-          </span>
-        )}
-        {cfg && <span className={`signal-badge signal-badge-sm ${sigClass(cfg, latest.signal)}`}>{cfg.label}</span>}
-        {days[0] && <span className="history-card-latest">{fmtDate(days[0])}</span>}
-      </div>
-      {open && (
-        <div className="history-card-body">
-          {days.length === 0 ? (
-            <div className="history-empty-note">No history stored for this stock in the selected range.</div>
-          ) : (
-            <table className="history-table">
-              <thead>
-                <tr>
-                  <th>Date</th><th>Total</th>
-                  {SCORE_COLS.map(c => <th key={c.key}>{c.label}</th>)}
-                  <th>Signal</th><th>Price</th>
-                </tr>
-              </thead>
-              <tbody>
-                {days.map((d, i) => {
-                  const row = data[d], prev = days[i + 1] ? data[days[i + 1]] : null;
-                  const sc = row.signal ? sig(row.signal) : null;
-                  return (
-                    <tr key={d}>
-                      <td>{fmtDate(d)}</td>
-                      <td className="history-total" style={{ color: scoreCol(row.total_score) }}>
-                        {row.total_score != null ? row.total_score.toFixed(1) : '—'}<Delta now={row.total_score} prev={prev?.total_score} />
-                      </td>
-                      {SCORE_COLS.map(c => (
-                        <td key={c.key} className="history-sub-score">
-                          {row[c.key] != null ? row[c.key].toFixed(1) : '—'}<Delta now={row[c.key]} prev={prev?.[c.key]} thresh={0.5} />
-                        </td>
-                      ))}
-                      <td>{sc ? <span className={`signal-badge signal-badge-sm ${sigClass(sc, row.signal)}`}>{sc.label}</span> : '—'}</td>
-                      <td className="history-price">{row.price != null ? fmtUSD(row.price) : '—'}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
-        </div>
-      )}
-    </div>
-  );
-};
-
-const HistoryView = ({ stocks }) => {
-  const [days,      setDays]      = React.useState(15);
-  const [fromDate,  setFromDate]  = React.useState('');
-  const [toDate,    setToDate]    = React.useState('');
-  const [history,   setHistory]   = React.useState(null);
-  const [loading,   setLoading]   = React.useState(false);
-  const [error,     setError]     = React.useState(null);
-  const [useCustom, setUseCustom] = React.useState(false);
-  const [openSet,   setOpenSet]   = React.useState(() => new Set());
-
-  const symbolsKey = (stocks || []).map(s => s.symbol).join(',');
-
-  const load = useCallback(async () => {
-    if (!symbolsKey) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const params = new URLSearchParams({ symbols: symbolsKey });
-      if (useCustom && fromDate && toDate) {
-        params.set('from', fromDate);
-        params.set('to',   toDate);
-      } else {
-        params.set('days', days);
-      }
-      const res = await fetch(`/api/portfolio/history?${params}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setHistory(await res.json());
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [symbolsKey, days, fromDate, toDate, useCustom]);
-
-  React.useEffect(() => { load(); }, [load]);
-
-  const toggle = (sym) => setOpenSet(prev => { const n = new Set(prev); n.has(sym) ? n.delete(sym) : n.add(sym); return n; });
-
-  if (loading && !history) return <div className="no-results">Loading history…</div>;
-  if (error) return <div className="no-results" style={{ color: 'var(--red)' }}>⚠ {error}</div>;
-  if (!history) return null;
-
-  const { dates = [], rows = [] } = history;
-  const allOpen = rows.length > 0 && rows.every(r => openSet.has(r.symbol));
-
-  return (
-    <div style={{ padding: '16px 0' }}>
-      <div className="history-toolbar">
-        <span className="history-toolbar-label">Show</span>
-        {[15, 30].map(d => (
-          <button key={d} onClick={() => { setDays(d); setUseCustom(false); }}
-            className={`pill ${!useCustom && days === d ? 'pill-active' : ''}`}>{d} days</button>
-        ))}
-        <span className="history-sep">|</span>
-        <span className="history-toolbar-label">Custom</span>
-        <input type="date" className="history-date-input" value={fromDate} onChange={e => setFromDate(e.target.value)} />
-        <span className="history-sep">→</span>
-        <input type="date" className="history-date-input" value={toDate} onChange={e => setToDate(e.target.value)} />
-        <button className={`pill ${useCustom ? 'pill-active' : ''}`} disabled={!fromDate || !toDate}
-          onClick={() => { setUseCustom(true); load(); }}>Apply</button>
-        <button className="btn-secondary" style={{ marginLeft: 'auto', padding: '6px 14px' }}
-          onClick={() => setOpenSet(allOpen ? new Set() : new Set(rows.map(r => r.symbol)))}>
-          {allOpen ? 'Collapse all' : 'Expand all'}
-        </button>
-      </div>
-
-      {rows.length === 0 ? (
-        <div className="no-results">No history stored for this range yet.</div>
-      ) : (
-        <div className="history-list">
-          {rows.map(row => (
-            <HistoryCard key={row.symbol} symbol={row.symbol} dates={dates} data={row.data}
-              open={openSet.has(row.symbol)} onToggle={() => toggle(row.symbol)} />
-          ))}
-        </div>
-      )}
-
-      <div className="history-legend">
-        <span>Newest day first · trading days only</span>
-        <span style={{ color: 'var(--green)' }}>▲ improved vs the day before</span>
-        <span style={{ color: 'var(--red)' }}>▼ declined vs the day before</span>
-        <span>Click a stock to open its daily rows</span>
-      </div>
-    </div>
-  );
-};
-
 // ── Modal ─────────────────────────────────────────────────────────────────────
 const Modal = ({ onClose, children, wide = false }) =>
   createPortal(
@@ -1938,7 +1754,7 @@ const EnhancedPortfolioDashboard = () => {
       )}
 
       {/* ── History Tab ──────────────────────────────────────────── */}
-      {activeTab === 'history' && <HistoryView stocks={portfolio} />}
+      {activeTab === 'history' && <HistoryView stocks={portfolio} sig={sig} scoreColor={scoreCol} />}
 
       {/* Add / Edit Modal */}
       {showForm && (
