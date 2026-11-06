@@ -19,6 +19,7 @@ const ACTION = {
   DATA_STALE:            { text: 'Data stale · no new buying',         cls: 'warn' },
   CANDIDATE_READY:       { text: 'Eligible · review for purchase',     cls: 'ok' },
   CANDIDATE_PROVISIONAL: { text: 'Provisional · confirm quality first', cls: 'warn' },
+  CANDIDATE_WAIT:        { text: 'Good candidate · wait for a pullback', cls: 'warn' },
   NOT_QUALIFIED:         { text: 'Not qualified',                      cls: 'warn' },
   STALE_NO_BUY:          { text: 'Data stale · no buying',             cls: 'warn' },
 };
@@ -30,6 +31,7 @@ const VERDICT = {
 const STAGE = { EARLY: 'Early / accelerating', MID: 'Mid / steep growth', LATE: 'Late / maturing', DECLINING: 'Declining' };
 const FWD_SOURCE = { CONSENSUS: 'Analyst consensus', IMPLIED_1Y: '1-yr implied', NOT_MEANINGFUL: 'EPS crosses zero', HISTORY_ONLY: 'History only' };
 const pct = (x, dp = 0) => (x == null || !isFinite(x) ? 'n/a' : `${(x * 100).toFixed(dp)}%`);
+const apiErr = (j, r) => (j && j.message ? `${j.error || 'Error'}: ${j.message}` : (j && j.error) || `Server error ${r.status}. Open Vercel > Logs for the details.`);
 const dateFmt = iso => (iso && Number.isFinite(Date.parse(iso)) ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '');
 const shortDate = iso => (iso && Number.isFinite(Date.parse(iso)) ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '');
 const signed = (x, dp = 0, unit = '') => (x == null || !isFinite(x) ? null : `${x >= 0 ? '+' : ''}${x.toFixed(dp)}${unit}`);
@@ -145,6 +147,11 @@ export const MultibaggerDetail = ({ result }) => {
         <div><span className="mb-k">After exit tax</span><span className="mb-v">{v.afterTaxMult != null ? `${v.afterTaxMult.toFixed(1)}x · ${pct(v.afterTaxCagr)}/yr` : 'n/a'}</span></div>
         <div><span className="mb-k">Bear case</span><span className="mb-v">{v.bearCagr != null ? `${pct(v.bearCagr)}/yr after tax` : 'n/a'}</span></div>
         <div><span className="mb-k">Growth price needs</span><span className="mb-v">{v.requiredG0 != null ? pct(v.requiredG0) : 'unreachable'}</span></div>
+        {result.earnings?.latest && (
+          <div><span className="mb-k">Last revenue vs estimate</span><span className="mb-v" style={{ color: result.earnings.latest.revSurprise == null ? undefined : result.earnings.latest.revSurprise >= 0.01 ? 'var(--green)' : result.earnings.latest.revSurprise <= -0.01 ? 'var(--red)' : undefined }}>
+            {result.earnings.latest.revSurprise == null ? 'n/a' : `${result.earnings.latest.revSurprise >= 0 ? '+' : ''}${(result.earnings.latest.revSurprise * 100).toFixed(1)}%`}{result.earnings.daysSince != null ? ` · ${Math.round(result.earnings.daysSince)}d ago` : ''}
+          </span></div>
+        )}
         <div><span className="mb-k">Sector</span><span className="mb-v">{result.sector ? `${result.sector.etf} · ${String(result.sector.label).replace('_', ' ').toLowerCase()}` : 'n/a'}</span></div>
         <div><span className="mb-k">ROIC</span><span className="mb-v">{pct(q.roic)}</span></div>
         <div><span className="mb-k">Gross margin</span><span className="mb-v">{pct(q.gm)}</span></div>
@@ -152,7 +159,7 @@ export const MultibaggerDetail = ({ result }) => {
       </div>
 
       <div className="mb-bars">
-        {[['Growth', parts.growth], ['ROIC', parts.roic], ['Valuation', parts.valuation], ['S-curve', parts.stage], ['Moat', parts.moat], ['Balance', parts.balance], ['Sector', parts.sector], ['Sentiment', parts.sentiment]]
+        {[['Growth', parts.growth], ['ROIC', parts.roic], ['Valuation', parts.valuation], ['S-curve', parts.stage], ['Moat', parts.moat], ['Balance', parts.balance], ['Sector', parts.sector], ['Sentiment', parts.sentiment], ['Execution', parts.execution]]
           .map(([l, val]) => <Bar key={l} label={l} value={val} />)}
       </div>
 
@@ -285,7 +292,7 @@ export const ScreenerView = ({ toast, confirm, onPromote }) => {
       try {
         const r = await fetch('/api/portfolio/watchlist', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ symbol }) });
         const j = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(j.error || `Request failed (${r.status})`);
+        if (!r.ok) throw new Error(apiErr(j, r));
         setEntries(prev => [j.entry, ...prev.filter(x => x.symbol !== j.entry.symbol)]);
         added.push(symbol);
       } catch (err) { failed.push(`${symbol} (${err.message})`); }
@@ -301,7 +308,7 @@ export const ScreenerView = ({ toast, confirm, onPromote }) => {
   const screenOne = async (symbol) => {
     const r = await fetch(`/api/portfolio/watchlist?action=screen&symbol=${encodeURIComponent(symbol)}`, { method: 'POST' });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.error || `Request failed (${r.status})`);
+    if (!r.ok) throw new Error(apiErr(j, r));
     setEntries(prev => prev.map(x => (x.symbol === symbol ? j.entry : x)));
     setResults(prev => ({ ...prev, [symbol]: j.result }));
     return j.result;
@@ -335,7 +342,7 @@ export const ScreenerView = ({ toast, confirm, onPromote }) => {
         else toast.error('Re-checking everything needs the GitHub trigger. Add GITHUB_TOKEN in Vercel.');
         return;
       }
-      if (!r.ok) throw new Error(j.error || `Request failed (${r.status})`);
+      if (!r.ok) throw new Error(apiErr(j, r));
       setRun({ state: 'queued', mode });
       toast.success(mode === 'screen' ? 'Full check started on GitHub (a few minutes)' : 'Screen started on GitHub (a few minutes)');
       startPoll(Date.now(), mode);
