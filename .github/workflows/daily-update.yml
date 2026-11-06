@@ -52,6 +52,12 @@ on:
           - matrix
           - screen
           - watchlist
+          - diagnose
+      symbol:
+        description: 'Ticker for run_type = diagnose (checks analyst estimates + debt/equity data)'
+        required: false
+        default: 'LLY'
+        type: string
 
 permissions:
   contents: write
@@ -139,6 +145,8 @@ jobs:
           FINNHUB_API_KEY:       ${{ secrets.FINNHUB_API_KEY }}
           FMP_API_KEY:           ${{ secrets.FMP_API_KEY }}
           POLYGON_API_KEY:       ${{ secrets.POLYGON_API_KEY }}
+          SUPABASE_URL:          ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY:  ${{ secrets.SUPABASE_SERVICE_KEY }}
           WATCHLIST_MAX_PER_RUN: '60'
           MB_REFRESH_DAYS:       '15'
         run: npm run multibagger || true
@@ -247,10 +255,42 @@ jobs:
           FINNHUB_API_KEY:       ${{ secrets.FINNHUB_API_KEY }}
           FMP_API_KEY:           ${{ secrets.FMP_API_KEY }}
           POLYGON_API_KEY:       ${{ secrets.POLYGON_API_KEY }}
+          SUPABASE_URL:          ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY:  ${{ secrets.SUPABASE_SERVICE_KEY }}
           WATCHLIST_MAX_PER_RUN: '60'
           MB_REFRESH_DAYS:       '15'
           FORCE_RUN: ${{ github.event.inputs.run_type == 'screen' && 'true' || 'false' }}
         run: npm run multibagger -- ${{ github.event.inputs.run_type == 'watchlist' && '--watchlist-only' || '' }}
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 5: DATA DIAGNOSTIC (manual). Prints what the data providers return for one ticker. Changes nothing.
+  # ════════════════════════════════════════════════════════════════════════════
+  diagnose-data:
+    name: Data Diagnostic (manual)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: >-
+      github.event_name == 'workflow_dispatch' && github.event.inputs.run_type == 'diagnose'
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm install
+
+      - name: Check analyst estimates and debt/equity data
+        working-directory: backend
+        env:
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          FMP_API_KEY:     ${{ secrets.FMP_API_KEY }}
+          SYMBOL:          ${{ github.event.inputs.symbol }}
+        run: |
+          if ! [[ "$SYMBOL" =~ ^[A-Za-z][A-Za-z0-9.-]{0,9}$ ]]; then echo "Not a valid ticker: $SYMBOL"; exit 1; fi
+          npm run multibagger -- "--estimates=$SYMBOL"
 
 # ─── SCHEDULE SUMMARY ─────────────────────────────────────────────────────────
 # 30 13 * * 1-5  → intraday-news slot 1     0 17 * * 1-5 → intraday-news slot 2
