@@ -26,6 +26,7 @@ require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 const axios        = require('axios');
 const logger       = require('../lib/logger');
 const quantEngine  = require('../lib/quant-engine');
+const earningsCtxLib = require('../lib/earnings-context');
 
 const { createClient: createRedisClient }    = require('redis');
 const { createClient: createSupabaseClient } = require('@supabase/supabase-js');
@@ -35,7 +36,6 @@ const { createClient: createSupabaseClient } = require('@supabase/supabase-js');
 const SLEEP_BETWEEN_STOCKS_MS = 15000;
 const TODAY = new Date().toISOString().split('T')[0];
 
-// ─── US MARKET HOLIDAY DETECTION — POLYGON UPCOMING HOLIDAYS ────────────────
 // ─── US MARKET HOLIDAY DETECTION — POLYGON UPCOMING HOLIDAYS ────────────────
 // F01 FIX: The previous implementation used /v1/marketstatus/now which returns
 // 'closed' after 4 PM ET on EVERY trading day — including the evening when our
@@ -1601,6 +1601,36 @@ async function updateMarketData() {
           recent8K
         );
 
+        // ── EARNINGS-CONTEXT WIRING ─────────────────────────────────────────────
+        // Revenue surprise (primary), EPS (secondary), guidance (tertiary). Max +/-0.6 on the 0-10 scale,
+        // decays over 60 days. Never applied to ETFs or when a critical 8-K already forced the score to 0.
+        let earningsCtx = { compositePoints: 0, blockAdds: false, blockReason: null, grade: null, executionScore: null, missStreak: 0, beatStreak: 0, source: 'NONE', flags: [] };
+        if (!instrumentIsETF) {
+          try {
+            const _rc = await getRedisClient();
+            const _parse = raw => { try { return raw ? JSON.parse(raw) : null; } catch { return null; } };
+            const _surprises = _rc ? _parse(await _rc.get(`earnings_surprise_${stock.symbol}`).catch(() => null)) : null;
+            const _event     = _rc ? _parse(await _rc.get(`earnings_event_${stock.symbol}`).catch(() => null))    : null;
+            earningsCtx = earningsCtxLib.assessEarningsContext({
+              surprises: _surprises, event: _event,
+              highExpectations: earningsCtxLib.isHighExpectation({
+                forwardPE:   fundamentals?.forwardPE,
+                hypergrowth: fundamentals?._hypergrowthMode === true,
+                g0:          fundamentals?.revenueGrowth3Y,
+              }),
+            });
+            if (!scoreObj._8kCriticalOverride && earningsCtx.compositePoints) {
+              const _before = scoreObj.total;
+              scoreObj.total = Math.max(0, Math.min(10, scoreObj.total + earningsCtx.compositePoints));
+              scoreObj.earnings_adj = earningsCtx.compositePoints;
+              logger.info(`  📊 Earnings context (${earningsCtx.source}, grade ${earningsCtx.grade ?? 'n/a'}): ${earningsCtx.compositePoints >= 0 ? '+' : ''}${earningsCtx.compositePoints.toFixed(2)} → total ${_before.toFixed(2)} → ${scoreObj.total.toFixed(2)}`);
+            }
+            if (earningsCtx.blockAdds) logger.warn(`  ⛔ Adds blocked: ${earningsCtx.blockReason}`);
+          } catch (e) {
+            logger.warn(`Earnings context failed for ${stock.symbol}: ${e.message} — no adjustment applied`);
+          }
+        }
+
         // B5 FIX: Capture raw GAAP FCF margin BEFORE mutating fundamentals.fcfMargin.
         // Previously the raw value was permanently overwritten, meaning Supabase
         // stored only the SBC-adjusted figure with no way to recover the GAAP original.
@@ -1727,7 +1757,7 @@ async function updateMarketData() {
           // F10 FIX: Spring signals serve a different purpose than ADD (bounce-recovery vs accumulation).
           // ADD should not silently overwrite SPRING_CANDIDATE or SPRING_CONFIRMED — spring days
           // counter would be lost and the spring-confirmation sequence would break.
-          if (addSignal && !['TRIM_25', 'SELL', 'SPRING_CANDIDATE', 'SPRING_CONFIRMED'].includes(action)) action = 'ADD';
+          if (addSignal && !earningsCtx.blockAdds && !['TRIM_25', 'SELL', 'SPRING_CANDIDATE', 'SPRING_CONFIRMED'].includes(action)) action = 'ADD';
         }
 
         if (scoreObj._8kCriticalOverride) {
@@ -1840,6 +1870,13 @@ async function updateMarketData() {
           sharp_score_drop:        sharpDrop    ?? false,
           score_delta_1d:          scoreDelta != null ? parseFloat(scoreDelta.toFixed(2)) : null,
           sma50:                   technicals?.sma50   ?? null,
+          earnings_adj:            earningsCtx.compositePoints || 0,
+          earnings_grade:          earningsCtx.grade           ?? null,
+          earnings_block_adds:     earningsCtx.blockAdds === true,
+          earnings_block_reason:   earningsCtx.blockReason     ?? null,
+          earnings_execution:      earningsCtx.executionScore  ?? null,
+          earnings_miss_streak:    earningsCtx.missStreak      ?? 0,
+          earnings_beat_streak:    earningsCtx.beatStreak      ?? 0,
           sma200:                  technicals?.sma200  ?? null,
           realized_vol:            realizedVol         ?? null,
           momentum_label:          momentumLabel       ?? 'NEUTRAL',
