@@ -56,7 +56,7 @@ async function enrichInstrument(symbol) {
   // ── Parallel fetch: FMP profile + Finnhub profile2 + Finnhub quote ──────────
   const [fmpData, finnhubProfile, finnhubQuote] = await Promise.allSettled([
     fetch(
-      `https://financialmodelingprep.com/api/v3/profile/${symbol}?apikey=${process.env.FMP_API_KEY}`,
+      `https://financialmodelingprep.com/stable/profile?symbol=${symbol}&apikey=${process.env.FMP_API_KEY}`,
       { signal: AbortSignal.timeout(8000) }
     ).then(r => r.json()).catch(() => null),
 
@@ -79,7 +79,7 @@ async function enrichInstrument(symbol) {
     if (fmp.companyName) result.name    = fmp.companyName;
     if (fmp.sector)      result.sector  = fmp.sector  || 'Unknown';
     if (fmp.industry)    result.industry = fmp.industry || 'Unknown';
-    if (fmp.exchangeShortName) result.exchange = fmp.exchangeShortName;
+    if (fmp.exchangeShortName || fmp.exchange) result.exchange = fmp.exchangeShortName || fmp.exchange;
     if (fmp.country)     result.country  = fmp.country;
     if (fmp.currency)    result.currency = fmp.currency;
     if (fmp.image)       result.logoUrl  = fmp.image;
