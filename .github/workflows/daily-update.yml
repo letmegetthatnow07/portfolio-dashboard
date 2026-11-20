@@ -1,43 +1,33 @@
 name: Market & News Data Pipeline
 
-# ─── SCHEDULING PHILOSOPHY ────────────────────────────────────────────────────
+# ─── SCHEDULING ───────────────────────────────────────────────────────────────
+# GitHub Actions cron runs in UTC. EST = UTC-5 (Nov-Mar), EDT = UTC-4 (Mar-Nov).
+#   Slot 1  13:30 UTC = 8:30 AM EST / 9:30 AM EDT   intraday news
+#   Slot 2  17:00 UTC = 12:00 PM EST / 1:00 PM EDT  intraday news
+#   Slot 3  20:45 UTC = 3:45 PM EST / 4:45 PM EDT   intraday news
+#   Master  22:00 UTC = 5:00 PM EST / 6:00 PM EDT   EOD run
 #
-# GitHub Actions cron runs in UTC. Eastern Time observes DST:
-#   EST (Nov → Mar): UTC-5     EDT (Mar → Nov): UTC-4
+# ONE RUN AT A TIME: every job rewrites the shared Redis "portfolio" object, so runs queue (concurrency group).
 #
-#   Slot 1  13:30 UTC  =  8:30 AM EST  /  9:30 AM EDT  (at market open)
-#   Slot 2  17:00 UTC  = 12:00 PM EST  /  1:00 PM EDT  (midday)
-#   Slot 3  20:45 UTC  =  3:45 PM EST  /  4:45 PM EDT  (near/post close)
-#   Master  22:00 UTC  =  5:00 PM EST  /  6:00 PM EDT  (well after close)
+# EOD ORDER (changed): earnings-event FIRST so the daily engine reads today's earnings numbers, not yesterday's.
+#   1 earnings-event  2 daily-update  3 correlation  4 filing-narrative  5 multibagger thesis check  6 pipeline report
 #
-# WHY SEPARATE JOBS: GitHub Actions delays of 15-90 mins used to make the old
-# single-job design run news instead of master. Separate jobs with separate
-# schedule triggers eliminate this.
+# FAILURES ARE VISIBLE (changed): the optional steps no longer end in "|| true". Each one has continue-on-error so a
+# failure does not stop the others, but the last step reads every outcome, writes a table to the job summary,
+# raises a warning annotation per failed step, and turns the job RED if any step failed. daily-update.js is the core
+# step: if it fails the job stops there, as before.
 #
-# ONE RUN AT A TIME: every job reads and rewrites the shared Redis "portfolio"
-# object. The concurrency group below makes runs queue instead of overlapping,
-# so a news run can never overwrite the master run's scores (or the reverse).
-#
-# TWO LAYERS OF CHECKS
-#   DAILY   eod-master  → quality / alpha-compounder score, regime and signals (daily-update.js)
-#   PERIODIC multibagger → thesis check: every portfolio stock is re-checked every 15 days
-#           (or sooner on a trigger: new filing/earnings analysis, critical 8-K, old-engine sell signal).
-#           It runs as the LAST step of the nightly master job and only does the stocks that are due.
-#
-# MANUAL RUNS (Actions tab, or the Screener tab's "Run" button, which dispatches these):
-#   master    full EOD run
-#   news      intraday news run
-#   matrix    correlation matrix only
-#   screen    re-check EVERYTHING now (portfolio + watchlist), ignores the 15-day cadence
-#   watchlist screen only pending/stale watchlist stocks (what the Screener "Run" button uses)
-# workflow_dispatch sets FORCE_RUN=true for master/news/screen so the scripts skip the market-closed gate.
+# MANUAL RUNS (Actions tab or the Screener "Run" button): master | news | matrix | screen | watchlist | diagnose | redis-check
+#   redis-check = is Redis reachable and storing data? (no terminal needed; prints counts only, never keys or tickers)
+# workflow_dispatch sets FORCE_RUN=true so scripts skip the market-closed gate.
 
 on:
   schedule:
-    - cron: '30 13 * * 1-5'  # Slot 1:  8:30 AM EST /  9:30 AM EDT → intraday-news
-    - cron: '0 17 * * 1-5'   # Slot 2: 12:00 PM EST /  1:00 PM EDT → intraday-news
-    - cron: '45 20 * * 1-5'  # Slot 3:  3:45 PM EST /  4:45 PM EDT → intraday-news
-    - cron: '0 22 * * 1-5'   # Master:  5:00 PM EST /  6:00 PM EDT → eod-master
+    - cron: '30 13 * * 1-5'
+    - cron: '0 17 * * 1-5'
+    - cron: '45 20 * * 1-5'
+    - cron: '0 22 * * 1-5'
+    - cron: '0 12 * * 0'    # Sunday 12:00 UTC: Redis keepalive + portfolio backup (also counts as activity for Redis Cloud's free-tier inactivity rule)
 
   workflow_dispatch:
     inputs:
@@ -53,8 +43,9 @@ on:
           - screen
           - watchlist
           - diagnose
+          - redis-check
       symbol:
-        description: 'Ticker for run_type = diagnose (checks analyst estimates + debt/equity data)'
+        description: 'Ticker for run_type = diagnose: prints provider data AND why the screen gave that result (NO DATA / pre-revenue / etc.)'
         required: false
         default: 'LLY'
         type: string
@@ -71,9 +62,6 @@ env:
 
 jobs:
 
-  # ════════════════════════════════════════════════════════════════════════════
-  # JOB 1: EOD MASTER (+ matrix, earnings, filing narrative, periodic thesis check)
-  # ════════════════════════════════════════════════════════════════════════════
   eod-master:
     name: EOD Master + Matrix
     runs-on: ubuntu-latest
@@ -92,7 +80,24 @@ jobs:
         working-directory: backend
         run: npm install
 
+      # 1. Earnings numbers first: the daily engine below consumes them.
+      - name: Run Earnings Event Analyser
+        id: earnings
+        continue-on-error: true
+        working-directory: backend
+        env:
+          REDIS_URL:            ${{ secrets.REDIS_URL }}
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          FINNHUB_API_KEY:      ${{ secrets.FINNHUB_API_KEY }}
+          GEMINI_API_KEY:       ${{ secrets.GEMINI_API_KEY }}
+          POLYGON_API_KEY:      ${{ secrets.POLYGON_API_KEY }}
+          FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
+        run: npm run earnings-event
+
+      # 2. Core daily engine (no continue-on-error: if this fails the pipeline stops).
       - name: Run master update
+        id: master
         working-directory: backend
         env:
           REDIS_URL:            ${{ secrets.REDIS_URL }}
@@ -104,11 +109,12 @@ jobs:
           SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           GEMINI_API_KEY:       ${{ secrets.GEMINI_API_KEY }}
-          # FORCE_RUN=true on manual dispatch → skips market-closed gate in daily-update.js
           FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
         run: npm run update
 
       - name: Run correlation matrix
+        id: matrix
+        continue-on-error: true
         working-directory: backend
         env:
           REDIS_URL:            ${{ secrets.REDIS_URL }}
@@ -116,29 +122,24 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: npm run generate-correlation
 
-      - name: Run Earnings Event Analyser
-        working-directory: backend
-        env:
-          REDIS_URL:            ${{ secrets.REDIS_URL }}
-          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          FINNHUB_API_KEY:      ${{ secrets.FINNHUB_API_KEY }}
-          GEMINI_API_KEY:       ${{ secrets.GEMINI_API_KEY }}
-        run: npm run earnings-event || true
-
       - name: Run Filing Narrative Analyser
+        id: filing
+        continue-on-error: true
         working-directory: backend
         env:
           REDIS_URL:            ${{ secrets.REDIS_URL }}
           SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           GEMINI_API_KEY:       ${{ secrets.GEMINI_API_KEY }}
-        run: npm run filing-narrative || true
+          POLYGON_API_KEY:      ${{ secrets.POLYGON_API_KEY }}
+          FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
+        run: npm run filing-narrative
 
-      # Periodic multibagger thesis check. Runs AFTER the quality engine, filing and earnings analyses so it always
-      # reads today's quality score and analyses. Only portfolio stocks that are due (15 days, or triggered) are
-      # re-checked, plus pending/stale watchlist stocks. Never fails the pipeline.
+      # Periodic multibagger thesis check: reads today's quality score and analyses. Only holdings that are due
+      # (15 days, or a trigger) plus pending/stale watchlist stocks are re-checked.
       - name: Run Compounder Thesis Check
+        id: multibagger
+        continue-on-error: true
         working-directory: backend
         env:
           REDIS_URL:             ${{ secrets.REDIS_URL }}
@@ -149,23 +150,54 @@ jobs:
           SUPABASE_SERVICE_KEY:  ${{ secrets.SUPABASE_SERVICE_KEY }}
           WATCHLIST_MAX_PER_RUN: '60'
           MB_REFRESH_DAYS:       '15'
-        run: npm run multibagger || true
+        run: npm run multibagger
 
       - name: Configure git
+        if: always()
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
 
       - name: Commit score history CSV
+        if: always()
         run: |
           git add backend/data/score_history.csv || true
           git commit -m "📊 EOD $(date -u +%Y-%m-%d)" || true
           git pull --rebase origin main || true
           git push || true
 
-  # ════════════════════════════════════════════════════════════════════════════
-  # JOB 2: INTRADAY NEWS — 3 slots per day
-  # ════════════════════════════════════════════════════════════════════════════
+      # 6. Pipeline report: nothing fails silently any more.
+      - name: Pipeline report
+        if: always()
+        env:
+          R_EARNINGS:   ${{ steps.earnings.outcome }}
+          R_MASTER:     ${{ steps.master.outcome }}
+          R_MATRIX:     ${{ steps.matrix.outcome }}
+          R_FILING:     ${{ steps.filing.outcome }}
+          R_MULTIBAGGER: ${{ steps.multibagger.outcome }}
+        run: |
+          bad=0
+          {
+            echo "## EOD pipeline report"
+            echo ""
+            echo "| Step | Outcome |"
+            echo "|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for pair in "Earnings event:$R_EARNINGS" "Daily quality engine:$R_MASTER" "Correlation matrix:$R_MATRIX" "Filing narrative:$R_FILING" "Compounder thesis check:$R_MULTIBAGGER"; do
+            name="${pair%%:*}"; out="${pair##*:}"
+            case "$out" in
+              success) icon="✅" ;;
+              skipped) icon="⏭️" ;;
+              *) icon="❌"; bad=1; echo "::error::$name finished with outcome '$out'. Its data is stale until the next successful run." ;;
+            esac
+            echo "| $name | $icon $out |" >> "$GITHUB_STEP_SUMMARY"
+          done
+          if [ "$bad" = "1" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "One or more steps failed. The other steps still ran, but treat the failed step's data as stale." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
   intraday-news:
     name: Intraday News Update
     runs-on: ubuntu-latest
@@ -182,11 +214,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-
       - name: Install backend dependencies
         working-directory: backend
         run: npm install
-
       - name: Run intraday news update
         working-directory: backend
         env:
@@ -198,25 +228,19 @@ jobs:
           FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
         run: npm run update:news
 
-  # ════════════════════════════════════════════════════════════════════════════
-  # JOB 3: MATRIX ONLY (manual) — recalculate correlations after adding/removing stocks
-  # ════════════════════════════════════════════════════════════════════════════
   correlation-matrix:
     name: Correlation Matrix Only
     runs-on: ubuntu-latest
     if: >-
       github.event_name == 'workflow_dispatch' && github.event.inputs.run_type == 'matrix'
-
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-
       - name: Install backend dependencies
         working-directory: backend
         run: npm install
-
       - name: Run correlation matrix
         working-directory: backend
         env:
@@ -225,11 +249,6 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: npm run generate-correlation
 
-  # ════════════════════════════════════════════════════════════════════════════
-  # JOB 4: COMPOUNDER SCREEN (manual). Started from the Actions tab or the Screener tab's "Run" button.
-  #   run_type = screen    → re-check EVERYTHING now (portfolio + watchlist), ignoring the 15-day cadence
-  #   run_type = watchlist → only pending/stale watchlist stocks; the stored portfolio results are left untouched
-  # ════════════════════════════════════════════════════════════════════════════
   multibagger-screen:
     name: Compounder Screen (manual)
     runs-on: ubuntu-latest
@@ -237,17 +256,14 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' &&
       (github.event.inputs.run_type == 'screen' || github.event.inputs.run_type == 'watchlist')
-
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-
       - name: Install backend dependencies
         working-directory: backend
         run: npm install
-
       - name: Run compounder screen
         working-directory: backend
         env:
@@ -262,27 +278,21 @@ jobs:
           FORCE_RUN: ${{ github.event.inputs.run_type == 'screen' && 'true' || 'false' }}
         run: npm run multibagger -- ${{ github.event.inputs.run_type == 'watchlist' && '--watchlist-only' || '' }}
 
-  # ════════════════════════════════════════════════════════════════════════════
-  # JOB 5: DATA DIAGNOSTIC (manual). Prints what the data providers return for one ticker. Changes nothing.
-  # ════════════════════════════════════════════════════════════════════════════
   diagnose-data:
     name: Data Diagnostic (manual)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     if: >-
       github.event_name == 'workflow_dispatch' && github.event.inputs.run_type == 'diagnose'
-
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-
       - name: Install backend dependencies
         working-directory: backend
         run: npm install
-
-      - name: Check analyst estimates and debt/equity data
+      - name: Provider data + why the screen answered what it did
         working-directory: backend
         env:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
@@ -292,6 +302,25 @@ jobs:
           if ! [[ "$SYMBOL" =~ ^[A-Za-z][A-Za-z0-9.-]{0,9}$ ]]; then echo "Not a valid ticker: $SYMBOL"; exit 1; fi
           npm run multibagger -- "--estimates=$SYMBOL"
 
-# ─── SCHEDULE SUMMARY ─────────────────────────────────────────────────────────
-# 30 13 * * 1-5  → intraday-news slot 1     0 17 * * 1-5 → intraday-news slot 2
-# 45 20 * * 1-5  → intraday-news slot 3     0 22 * * 1-5 → eod-master (… → periodic thesis check)
+  redis-check:
+    name: Redis check + keepalive + backup
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: >-
+      (github.event_name == 'schedule' && github.event.schedule == '0 12 * * 0') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_type == 'redis-check')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm install
+      - name: Redis check (counts only) + keepalive write + backup to Supabase
+        working-directory: backend
+        env:
+          REDIS_URL:            ${{ secrets.REDIS_URL }}
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: node scripts/redis-check.js --backup
