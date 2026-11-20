@@ -640,7 +640,7 @@ async function main() {
   console.log(`  Model: gemini-2.5-flash (stable GA)`);
   console.log('═══════════════════════════════════════════════════════════\n');
 
-  const isOpen = await checkMarketOpen();
+  const isOpen = !(await require('../lib/market-calendar').isMarketClosedToday());
   if (!isOpen) {
     console.log('🏖️  Market closed today — skipping filing-narrative run.');
     process.exit(0);
@@ -708,7 +708,7 @@ async function main() {
   console.log(`   Failed    : ${failed}`);
   console.log('═══════════════════════════════════════════════════════════');
 
-  process.exit(0);
+  process.exit(failed > 0 ? 2 : 0);
 }
 
 main().catch(err => {
