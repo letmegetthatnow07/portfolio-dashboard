@@ -27,6 +27,7 @@ const axios        = require('axios');
 const logger       = require('../lib/logger');
 const quantEngine  = require('../lib/quant-engine');
 const earningsCtxLib = require('../lib/earnings-context');
+const ci = require('../lib/ci-report');
 
 const { createClient: createRedisClient }    = require('redis');
 const { createClient: createSupabaseClient } = require('@supabase/supabase-js');
@@ -35,6 +36,8 @@ const { createClient: createSupabaseClient } = require('@supabase/supabase-js');
 
 const SLEEP_BETWEEN_STOCKS_MS = 15000;
 const TODAY = new Date().toISOString().split('T')[0];
+const runIssues = [];   // problems collected for the end-of-run report
+let saveFailures = 0;   // Redis saves that failed: the run must NOT look successful if scores were calculated but not stored
 
 // ─── US MARKET HOLIDAY DETECTION — POLYGON UPCOMING HOLIDAYS ────────────────
 // F01 FIX: The previous implementation used /v1/marketstatus/now which returns
@@ -168,7 +171,7 @@ async function checkFmpIsEtf(symbol) {
   if (_fmpEtfCache[symbol] !== undefined) return _fmpEtfCache[symbol];
   try {
     const res = await axios.get(
-      `https://financialmodelingprep.com/api/v3/profile/${symbol}?apikey=${process.env.FMP_API_KEY}`,
+      `https://financialmodelingprep.com/stable/profile?symbol=${symbol}&apikey=${process.env.FMP_API_KEY}`,
       { timeout: 6000 }
     );
     const profile = res.data?.[0];
@@ -192,18 +195,33 @@ const supabase = createSupabaseClient(
 
 let redisClient = null;
 
+let redisGaveUp = false;   // after 3 failed attempts stop retrying for the rest of the run (otherwise every caller waits another ~15s)
 async function getRedisClient() {
   if (redisClient) return redisClient;
-  try {
-    const client = createRedisClient({ url: process.env.REDIS_URL });
-    client.on('error', err => logger.warn('Redis error (non-fatal):', err.message));
-    await client.connect();
-    redisClient = client;
-    return redisClient;
-  } catch (e) {
-    logger.warn('Redis unavailable — Supabase is primary store.');
+  if (redisGaveUp) return null;
+  if (!process.env.REDIS_URL) {
+    logger.error('REDIS_URL is not set: the portfolio store (Redis) cannot be reached');
+    runIssues.push('REDIS_URL is not set');
     return null;
   }
+  // Bounded: node-redis retries a dead server forever by default, which hangs the job instead of failing it.
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    let client = null;
+    try {
+      client = createRedisClient({ url: process.env.REDIS_URL, socket: { connectTimeout: 10000, reconnectStrategy: r => (r >= 3 ? new Error('Redis reconnect limit reached') : 500 * (r + 1)) } });
+      client.on('error', err => logger.warn('Redis error:', err.message));
+      await client.connect();
+      redisClient = client;
+      return redisClient;
+    } catch (e) {
+      logger.error(`Redis connection failed (attempt ${attempt}/3): ${e.message}`);
+      if (client) await Promise.resolve().then(() => client.disconnect()).catch(() => {});   // never let cleanup throw
+      if (attempt < 3) await new Promise(r => setTimeout(r, 2000 * attempt));
+    }
+  }
+  redisGaveUp = true;
+  runIssues.push('Redis unreachable after 3 attempts. Redis holds the portfolio, so nothing can be read or saved.');
+  return null;
 }
 
 // ─── STORAGE ──────────────────────────────────────────────────────────────────
@@ -211,25 +229,26 @@ async function getRedisClient() {
 class PortfolioStorage {
   async readData() {
     const client = await getRedisClient();
-    if (!client) return { stocks: [] };
+    if (!client) throw new Error('Redis unavailable: the portfolio cannot be loaded (Redis is required, not optional)');
     try {
       const data = await client.get('portfolio');
       return data ? JSON.parse(data) : { stocks: [] };
     } catch (e) {
-      logger.warn('Redis read failed');
-      return { stocks: [] };
+      logger.error('Redis read failed: refusing to continue with an empty portfolio');
+      throw e;
     }
   }
 
   async writeData(data) {
     const client = await getRedisClient();
-    if (!client) return false;
+    if (!client) { saveFailures++; return false; }
     try {
       data.lastUpdated = new Date().toISOString();
       await client.set('portfolio', JSON.stringify(data));
       return true;
     } catch (e) {
-      logger.warn('Redis write failed (non-fatal)');
+      logger.error(`Redis write failed: ${e.message}`);
+      saveFailures++;
       return false;
     }
   }
@@ -247,7 +266,8 @@ class PortfolioStorage {
       await this.writeData(data);
       return true;
     } catch (e) {
-      logger.warn(`Redis updateStock failed for ${symbol} (non-fatal)`);
+      logger.error(`Redis updateStock failed for ${symbol}: ${e.message}`);
+      saveFailures++;
       return false;
     }
   }
@@ -269,10 +289,10 @@ class PriceAnalyzer {
     } catch (e) { logger.warn(`Finnhub price failed for ${symbol}, trying FMP...`); }
     try {
       const res = await axios.get(
-        `https://financialmodelingprep.com/api/v3/quote/${symbol}?apikey=${process.env.FMP_API_KEY}`,
+        `https://financialmodelingprep.com/stable/quote?symbol=${symbol}&apikey=${process.env.FMP_API_KEY}`,
         { timeout: 8000 }
       );
-      if (res.data?.length > 0) return { price: res.data[0].price, changePercent: res.data[0].changesPercentage || 0 };
+      if (res.data?.length > 0) return { price: res.data[0].price, changePercent: res.data[0].changePercentage ?? res.data[0].changesPercentage ?? 0 };
     } catch (e) { logger.error(`All price fetches failed for ${symbol}`); }
     return null;
   }
@@ -293,9 +313,14 @@ class PriceAnalyzer {
           : (revenueGrowthYoY !== 0 ? revenueGrowthYoY : (m['revenueGrowth5Y'] || 0) / 100);
 
         const grossMargin   = (m.grossMarginTTM || m.grossMarginAnnual || 0) / 100;
-        const fcfMarginRaw  = (m.freeCashFlowMarginTTM || m.operatingMarginTTM || 0) / 100;
+        const _fcfRev = m.revenueTTM || m.revenueAnnual || 0;
+        // Real free-cash-flow margin only. Operating margin is NOT free cash flow, so it is never used as a stand-in.
+        const _fcfPct = typeof m.freeCashFlowMarginTTM === 'number' ? m.freeCashFlowMarginTTM / 100
+          : (m.operatingCashFlowTTM > 0 && _fcfRev > 0 ? (m.operatingCashFlowTTM + (m.capitalExpendituresTTM || 0)) / _fcfRev : null);
+        const fcfMarginKnown = _fcfPct != null;
+        const fcfMarginRaw  = fcfMarginKnown ? _fcfPct : 0;
         const opMarginRaw   = (m.operatingMarginTTM || 0) / 100;
-        const fcfConversion = opMarginRaw > 0 ? Math.min(1.5, fcfMarginRaw / opMarginRaw) : 0.5;
+        const fcfConversion = fcfMarginKnown && opMarginRaw > 0 ? Math.min(1.5, fcfMarginRaw / opMarginRaw) : 0.5;
 
         const marketCap = m.marketCapitalization || 0;
 
@@ -362,6 +387,7 @@ class PriceAnalyzer {
         return {
           roic:          (m.roicTTM || m.roiAnnual || 0) / 100,
           fcfMargin:     fcfMarginRaw,
+          fcfMarginKnown,
           debtToEquity:  m['longTermDebt/equityAnnual'] || m['totalDebt/totalEquityAnnual'] || 0,
           revenueGrowth,
           revenueGrowth3Y,
@@ -391,7 +417,7 @@ class PriceAnalyzer {
               ? m['revenueGrowth3Y'] || 0
               : (m.revenueGrowthTTMYoy || 0),
             revenueGrowth3YPct: m['revenueGrowth3Y'] || 0,
-            fcfMarginPct:       (m.freeCashFlowMarginTTM || m.operatingMarginTTM || 0),
+            fcfMarginPct:       fcfMarginKnown ? fcfMarginRaw * 100 : null,
             fcfYieldPct:        fcfYield != null ? (fcfYield * 100) : null,
             evFcf:              evFcf,
             sharesOutstandingM: sharesNow,
@@ -515,7 +541,7 @@ class PriceAnalyzer {
           const cik  = trade.reportingCik || trade.reporterCik || '';
           const date = trade.transactionDate || trade.filingDate || '';
           const code = (trade.transactionCode || trade.code || '').trim();
-          const key  = `${cik}|${date}|${code}`;
+          const key  = `${cik}|${date}|${code}|${trade.shares || trade.securitiesTransacted || ''}|${trade.pricePerShare || trade.price || ''}`;
           if (!seen.has(key)) {
             seen.set(key, true);
             dedupedTrades.push(trade);
@@ -618,9 +644,9 @@ class PriceAnalyzer {
       const rawFcfMargin = fundamentals.fcfMargin;
 
       if (fundamentals.sbcMillions != null && fundamentals.sbcMillions > 0
-          && fundamentals.fcfYield != null
-          && fundamentals.marketCapM > 0) {
-        const fcfMillions = fundamentals.fcfYield * fundamentals.marketCapM;
+          && fundamentals.marketCapM > 0
+          && (fundamentals.fcfYield != null || (fundamentals.fcfMarginKnown !== false && fundamentals.fcfMargin <= 0))) {
+        const fcfMillions = fundamentals.fcfYield != null ? fundamentals.fcfYield * fundamentals.marketCapM : 0;
         if (fcfMillions > 0) {
           const sbcAsFcfFraction = fundamentals.sbcMillions / fcfMillions;
           fundamentals._sbcAsFcfRatio = sbcAsFcfFraction;
@@ -636,6 +662,7 @@ class PriceAnalyzer {
       }
 
       let fcfS = Math.max(0, Math.min(10, (adjFcfMargin / SCORING_PARAMS.FCF_MARGIN_DIVISOR) * 10));
+      if (fundamentals.fcfMarginKnown === false) fcfS = 5;   // cash-flow data missing: neutral, never a guess
 
       // ── Debt/Equity ───────────────────────────────────────────────────────
       // W7 FIX: Negative D/E has two distinct meanings:
@@ -833,7 +860,9 @@ class PriceAnalyzer {
 
     if (insiderData) {
       // INSIDER_MIN_BUY_USD from SCORING_PARAMS
-      const { bought, sold, cluster30d = 0, rawBought = bought } = insiderData;
+      const { bought, sold, cluster30d = 0 } = insiderData;
+      // JSON turns Infinity into null in the Redis cache; a Finnhub-sourced record has no dollar floor by design
+      const rawBought = insiderData.rawBought == null ? (insiderData._source === 'finnhub' ? Infinity : bought) : insiderData.rawBought;
 
       // FIX: Finnhub fallback tags rawBought = Infinity so it always clears this threshold.
       // The $50K floor filters token SEC-API purchases (CEO buys $3K of stock = noise).
@@ -1180,6 +1209,7 @@ async function rpcWithRetry(fn, label, maxAttempts = 3, delayMs = 2000) {
     } catch (err) {
       if (attempt === maxAttempts) {
         logger.error(`[RPC FAILED after ${maxAttempts} attempts] ${label}: ${err.message}`);
+        runIssues.push(`${label}: ${err.message}`);
         throw err;
       }
       logger.warn(`[RPC retry ${attempt}/${maxAttempts}] ${label}: ${err.message}`);
@@ -1297,7 +1327,7 @@ function appendCsvRow(csvPath, symbol, scoreObj, priceData, spyPrice, regimeStat
 function compute21dReturn(historyAsc) {
   if (!historyAsc || historyAsc.length < 22) return null;
   const recent = historyAsc[historyAsc.length - 1].c;
-  const prior  = historyAsc[historyAsc.length - 21].c;
+  const prior  = historyAsc[historyAsc.length - 22].c;
   if (!prior) return null;
   return ((recent - prior) / prior) * 100;
 }
@@ -1392,15 +1422,12 @@ async function updateMarketData() {
     logger.info('╚════════════════════════════════════════════════════════════╝');
 
     const _isManualRun = process.env.FORCE_RUN === 'true';
-    const _holidayRedis = createRedisClient({ url: process.env.REDIS_URL });
-    _holidayRedis.on('error', () => {});
-    await _holidayRedis.connect().catch(() => {});
+    // Shared, BOUNDED client. (This used to be a separate client with node-redis' default retry-forever policy, so a dead Redis
+    // hung the whole job for up to 90 minutes instead of failing it.) null = Redis down: skip the holiday cache, and the portfolio
+    // read below then fails the run loudly.
+    const _holidayRedis = await getRedisClient();
     let _marketClosed = false;
-    try {
-      _marketClosed = await isMarketClosedToday(_holidayRedis);
-    } finally {
-      await _holidayRedis.quit().catch(() => {});
-    }
+    if (_holidayRedis) _marketClosed = await isMarketClosedToday(_holidayRedis);
 
     if (_marketClosed && !_isManualRun) {
       logger.info(`\n🏖️  Market closed today (${TODAY}) — confirmed via Polygon.`);
@@ -1413,7 +1440,10 @@ async function updateMarketData() {
 
     const portfolio = await storage.getPortfolio();
     const stocks    = portfolio.stocks || [];
-    if (stocks.length === 0) { logger.warn('No stocks in portfolio.'); process.exit(0); }
+    if (stocks.length === 0) {
+      logger.error('Redis answered but the portfolio is empty (key "portfolio" missing or no stocks). If the database was recreated or flushed, restore the holdings. Failing on purpose: this is not a successful run.');
+      process.exit(1);
+    }
 
     logger.info('\n→ Fetching SPY benchmark...');
     const spyTechnicals = await analyzer.fetchTechnicals('SPY');
@@ -1475,8 +1505,8 @@ async function updateMarketData() {
           if (!runs.length) { intradayNewsMap[sym] = null; continue; }
           let wSum = 0, tW = 0;
           runs.forEach(r => {
-            const w = parseFloat(r.recency_weight) || 0;
-            const ew = w > 0 ? w : (r.article_count || 1);
+            const w = r.recency_weight == null ? NaN : Number(r.recency_weight);
+            const ew = Number.isFinite(w) ? w : (r.article_count || 1);
             wSum += parseFloat(r.news_score) * ew;
             tW   += ew;
           });
@@ -1573,8 +1603,17 @@ async function updateMarketData() {
           instrumentIsETF ? Promise.resolve(null) : fetchFilingSentiment(stock.symbol),
         ]);
 
+        if (!instrumentIsETF && !fundamentals) {
+          // Rate limit or outage. Scoring on defaults would write a fake 5.0 into the history the W1-W4 decay cascade reads,
+          // so keep the last good record and only refresh the price.
+          runIssues.push(`${stock.symbol}: fundamentals unavailable, score and history NOT updated (last good record kept)`);
+          logger.error(`  ⛔ ${stock.symbol}: fundamentals fetch failed, keeping the last good score and not writing history`);
+          await storage.updateStock(stock.symbol, { current_price: priceData?.price ?? stock.current_price, change_percent: priceData?.changePercent ?? stock.change_percent });
+          await sleep(SLEEP_BETWEEN_STOCKS_MS);
+          continue;
+        }
         if (fundamentals && sbcMillions != null && sbcMillions > 0
-            && fundamentals.marketCapM > 0 && fundamentals.fcfMargin > 0) {
+            && fundamentals.marketCapM > 0) {
           fundamentals.sbcMillions    = sbcMillions;
           fundamentals.sbcToMarketCap = parseFloat((sbcMillions / fundamentals.marketCapM).toFixed(4));
         }
@@ -1635,7 +1674,7 @@ async function updateMarketData() {
         // Previously the raw value was permanently overwritten, meaning Supabase
         // stored only the SBC-adjusted figure with no way to recover the GAAP original.
         // Now both are available: raw for the DB column, adjusted for the scoring column.
-        const _rawFcfMarginForDB = fundamentals?.fcfMargin ?? null;
+        const _rawFcfMarginForDB = fundamentals?.fcfMarginKnown === false ? null : (fundamentals?.fcfMargin ?? null);
         if (fundamentals && scoreObj._adjFcfMargin !== null) {
           fundamentals.fcfMargin = scoreObj._adjFcfMargin;
         }
@@ -1670,9 +1709,7 @@ async function updateMarketData() {
           // Stock-level null → 0 is acceptable (stock may be new/thin data); SPY null is fatal (aborted above).
           const stockReturn21d = compute21dReturn(technicals.historyAsc) ?? 0;
           excessReturn = quantEngine.calculateExcessReturn(stockReturn21d, beta, spyReturn21d);
-          noiseDecay = excessReturn > -5  ? 'MARKET_NOISE'
-                     : excessReturn > -12 ? 'WATCH'
-                     : 'IDIOSYNCRATIC_DECAY';
+          noiseDecay = quantEngine.classifyRegime(excessReturn);
 
           const { data: supData, error: supError } = await supabase
             .from('daily_metrics')
@@ -1733,7 +1770,7 @@ async function updateMarketData() {
           // Allow up to -8% underperformance. Quality threshold lowered for hypergrowth/high-moat.
           const _springQualThreshold = (fundamentals?._hypergrowthMode || (fundamentals?._moatScore ?? 0) > 6.5)
             ? 6.0 : 7.0;
-          const _springExcessAdj = excessReturn7d !== null ? Math.max(excessReturn7d, -8) : null;
+          const _springExcessAdj = excessReturn7d;
           // S-001 FIX: removed Math.max(0.001) — the B01-ZB fix allows negative excess returns
           // for spring detection, but the clamp silently converted them to near-zero positive,
           // preventing springs on beaten-down quality stocks (exactly the use case we want).
@@ -1757,7 +1794,7 @@ async function updateMarketData() {
           // F10 FIX: Spring signals serve a different purpose than ADD (bounce-recovery vs accumulation).
           // ADD should not silently overwrite SPRING_CANDIDATE or SPRING_CONFIRMED — spring days
           // counter would be lost and the spring-confirmation sequence would break.
-          if (addSignal && !earningsCtx.blockAdds && !['TRIM_25', 'SELL', 'SPRING_CANDIDATE', 'SPRING_CONFIRMED'].includes(action)) action = 'ADD';
+          if (addSignal && history252d.length >= _w2Days && !earningsCtx.blockAdds && !['TRIM_25', 'SELL', 'WATCH', 'REDUCE', 'IDIOSYNCRATIC_DECAY', 'SPRING_CANDIDATE', 'SPRING_CONFIRMED'].includes(action)) action = 'ADD';
         }
 
         if (scoreObj._8kCriticalOverride) {
@@ -1786,7 +1823,7 @@ async function updateMarketData() {
         logger.info(`  🧠 Regime: ${noiseDecay} | Action: ${action} | Beta: ${beta.toFixed(2)} | Excess21d: ${excessReturn.toFixed(2)}%`);
         logger.info(`  📈 Cascade: W1=${w1} W2=${w2} W3=${w3} W4=${w4} | Spring: ${springDays}d`);
 
-        await writeSupabaseDailyMetrics(stock.symbol, scoreObj, priceData, technicals, spyPrice, action);
+        await writeSupabaseDailyMetrics(stock.symbol, scoreObj, priceData ?? (stock.current_price > 0 ? { price: stock.current_price } : null), technicals, spyPrice, action);
         await writeSupabaseRegimeFlags({ symbol: stock.symbol, w1, w2, w3, w4, beta, excessReturn, regimeStatus: noiseDecay, action, springDays, capexException, qualityScore: scoreObj.fund, rsi: technicals?.rsi ?? null });
 
         if (!instrumentIsETF) {
@@ -1807,7 +1844,8 @@ async function updateMarketData() {
 
         const redisUpdates = {
           latest_score:    Math.round(scoreObj.total * 10) / 10,
-          signal:          action,
+          signal: action,
+          quality_signal: action,    // authoritative daily quality/regime action; news-update.js only writes composite_signal
           // BUG-001 FIX: marketRegime is a plain string, not an object.
           // marketRegime?.regime was always undefined → ?? 'NORMAL' always fired.
           // classic_signal never adjusted for BEAR/STRESSED conditions.
@@ -1894,6 +1932,7 @@ async function updateMarketData() {
           ? ' | ' + e.stack.split(/\r?\n/).slice(1, 3).map(s => s.trim()).join(' > ')
           : '';
         logger.error(`Error processing ${stock.symbol}: ${_eMsg}${_eStack}`);
+        runIssues.push(`${stock.symbol}: ${_eMsg}`);
       }
 
       await sleep(SLEEP_BETWEEN_STOCKS_MS);
@@ -1903,9 +1942,11 @@ async function updateMarketData() {
     logger.info('║           EOD REGIME AUDIT COMPLETED                       ║');
     logger.info('╚════════════════════════════════════════════════════════════╝');
 
+    if (saveFailures > 0) runIssues.push(`${saveFailures} Redis save(s) failed: scores were calculated but NOT stored`);
+    ci.finish('EOD quality engine', runIssues, { 'Stocks in portfolio': stocks.length, 'Stocks with problems': runIssues.length });
     const client = await getRedisClient();
     if (client) await client.quit();
-    process.exit(0);
+    process.exit(saveFailures > 0 ? 1 : 0);
 
   } catch (error) {
     logger.error('FATAL ERROR:', error);
