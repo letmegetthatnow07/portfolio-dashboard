@@ -26,6 +26,7 @@ require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 const { createClient } = require('redis');
 const mb = require('../lib/multibagger');
 const store = require('../lib/mb-store');
+const ci = require('../lib/ci-report');
 
 const SLEEP_MS = 2500;                        // 2 Finnhub calls/stock => ~48 calls/min (free limit 60)
 const POLY_SLEEP_MS = 13000;                  // Polygon free tier: 5 calls/min
@@ -38,6 +39,7 @@ const ONLY = (args.find(a => a.startsWith('--only=')) || '').split('=')[1]?.toUp
 const WATCHLIST_ONLY = args.includes('--watchlist-only');
 const DIAG = (args.find(a => a.startsWith('--estimates=')) || '').split('=')[1]?.toUpperCase() || null;
 const DAY = 86400000;
+const runFailures = [];
 const parse = raw => { try { return raw ? JSON.parse(raw) : null; } catch { return null; } };
 
 // ── Diagnostic: confirm the FMP field names/analyst counts the parser relies on ──────────
@@ -74,14 +76,32 @@ async function diagnoseEstimates(sym) {
   } catch (e) { console.log(`[finnhub] failed: ${e.message}`); }
 }
 
+// Prints the inputs the screen saw and the reason it gave (use it for any ticker that shows NO DATA / FAIL unexpectedly).
+async function diagnoseWhy(sym) {
+  try {
+    const inputs = await mb.fetchInputs(sym, process.env.FINNHUB_API_KEY, process.env.FMP_API_KEY || null);
+    const m = inputs.metric;
+    const keep = ['marketCapitalization', 'peTTM', 'forwardPE', 'psTTM', 'revenuePerShareTTM', 'revenueGrowth3Y', 'revenueGrowthTTMYoy', 'epsGrowth3Y', 'netProfitMarginTTM', 'roicTTM'];
+    console.log('[why] inputs:', JSON.stringify(Object.fromEntries(keep.map(k => [k, m[k] ?? null]))), '| valuation source:', m._valuationSource || 'finnhub', '| metric keys:', Object.keys(m).length);
+    console.log('[why] labels:', JSON.stringify({ finnhub: inputs.profile.finnhubIndustry || null, fmpIndustry: inputs.profile.fmpIndustry || null, fmpSector: inputs.profile.fmpSector || null }));
+    const r = mb.screen({ symbol: sym, ...inputs, source: 'watchlist', held: false });
+    console.log(`[why] ${sym}: status=${r.status} verdict=${r.verdict} code=${r.noDataCode || '-'} industry=${r.industry ? r.industry.label : '-'}`);
+    console.log('[why] reason:', (r.reasons || [])[0] || '-');
+  } catch (e) { console.log('[why] failed:', e.message); }
+}
+
 // Old-engine / event triggers that pull a portfolio re-check forward
-const BEARISH = new Set(['TRIM_25', 'SELL', 'REDUCE']);
+const BEARISH = new Set(['TRIM_25', 'SELL', 'REDUCE', 'WATCH', 'IDIOSYNCRATIC_DECAY']);
 function eventTrigger(stock, prev, earnings, filing, surprises) {
   const since = Date.parse(prev?.asOf ?? '');
   if (!Number.isFinite(since)) return true;                    // corrupted or missing timestamp: re-screen
-  if (stock.event_8k_hint === 'critical' || stock.sharp_score_drop === true || BEARISH.has(stock.signal)) return true;
+  if (stock.event_8k_hint === 'critical' || stock.sharp_score_drop === true) return true;
+  const qs = stock.quality_signal ?? stock.signal;
+  if (BEARISH.has(qs) && prev?.qualitySignal !== qs) return true;   // new caution state since the last check
   const newer = t => { const v = Date.parse(t ?? ''); return Number.isFinite(v) && v > since; };
   const lastReport = (surprises?.quarters || []).map(q => q?.date).filter(d => Number.isFinite(Date.parse(d ?? ''))).sort().pop();   // a NEW reported quarter, not the nightly refresh
+  const sig = mb.earningsSignature(surprises);
+  if (sig && prev?.earningsSig !== undefined && sig !== prev.earningsSig) return true;   // actuals filled in late or revised
   return newer(earnings?.processedAt) || newer(filing?.processedAt) || newer(lastReport);
 }
 
@@ -92,7 +112,7 @@ function markStale(prev, held, reason, source) {
 
 async function main() {
   const runStart = Date.now();
-  if (DIAG) { await diagnoseEstimates(DIAG); process.exit(0); }
+  if (DIAG) { await diagnoseEstimates(DIAG); await diagnoseWhy(DIAG); process.exit(0); }
 
   const token = process.env.FINNHUB_API_KEY;
   if (!token) { console.error('FINNHUB_API_KEY missing'); process.exit(1); }
@@ -116,12 +136,12 @@ async function main() {
     const fc = sectorFund.data[etf];
     if (fc && Date.now() - new Date(fc.asOf).getTime() < 7 * DAY) return fc.assessment;
     const metrics = [];
-    for (const sym of mb.SECTOR_CONSTITUENTS[etf] || []) {
+    for (const sym of mb.constituentsFor(etf)) {
       try { const j = await mb.finnhub('/stock/metric', { symbol: sym, metric: 'all' }, token); if (j?.metric) metrics.push(j.metric); } catch (e) { console.warn(`  sector ${etf}/${sym}: ${e.message}`); }
       await mb.sleep(1300);
     }
     const history = fc?.history || [];
-    const assessment = mb.assessSectorFundamentals(metrics, history, { cyclical: mb.CYCLICAL_ETFS.has(etf) });
+    const assessment = mb.assessSectorFundamentals(metrics, history, { cyclical: mb.isCyclicalKey(etf) });
     if (assessment && assessment.label !== 'UNKNOWN') {
       history.push({ asOf: new Date().toISOString(), medFwdEps: assessment.medFwdEps ?? null, medRevYoY: assessment.medRevYoY ?? null, rawBroken: !!assessment.rawBroken });
     }
@@ -142,7 +162,7 @@ async function main() {
           const s = await mb.fetchBars('SPY', barKeys);
           if (s) { spyBars = s.bars; if (s.source === 'polygon') await mb.sleep(POLY_SLEEP_MS); }
         }
-        const e = spyBars ? await mb.fetchBars(etf, barKeys) : null;
+        const e = spyBars ? await mb.fetchBars(mb.priceEtfFor(etf), barKeys) : null;
         if (e) {
           if (e.source === 'polygon') await mb.sleep(POLY_SLEEP_MS);
           const p = mb.assessSectorPrice(e.bars, spyBars);
@@ -157,7 +177,7 @@ async function main() {
   async function runOne(symbol, stock, source, prev, held, filing, earnings, surprises) {
     const inputs = await mb.fetchInputs(symbol, token, fmpKey);
     if (mb.isEtfProfile(inputs.profile)) return { result: mb.screen({ symbol, profile: inputs.profile, isETF: true, source, held }) };   // consistent NOT_APPLICABLE in every store
-    await ensureSector(mb.sectorEtfFor(stock?.industry, stock?.sector, inputs.profile.finnhubIndustry));
+    await ensureSector(mb.sectorKeyFor(stock?.industry, stock?.sector, inputs.profile.finnhubIndustry, inputs.profile.fmpIndustry, inputs.profile.fmpSector));
     const result = mb.screen({ symbol, ...inputs, stock, filing, earnings, sectorHealth: sectorData, surprises, prev, source, held });
     // Advisory entry-timing overlay for names that pass; refreshed weekly (Polygon, then FMP)
     if (result.status === 'PASS' && timingLeft > 0) {
@@ -191,6 +211,7 @@ async function main() {
       if (out.result) { newPortfolio[s.symbol] = out.result; checked++; console.log('  ' + line(out.result)); }
     } catch (e) {
       console.warn(`  ${s.symbol}: failed (${e.message}) — keeping previous result, marked stale`);
+      runFailures.push(`${s.symbol}: ${e.message}`);
       if (prev) newPortfolio[s.symbol] = markStale(prev, held, e.message, 'portfolio');
     }
     await mb.sleep(SLEEP_MS);
@@ -219,6 +240,7 @@ async function main() {
       console.log('  ' + line(out.result));
     } catch (err) {
       console.warn(`  ${e.symbol}: failed (${err.message})`);
+      runFailures.push(`${e.symbol}: ${err.message}`);
       if (prev) { blob.watchlist[e.symbol] = markStale(prev, false, err.message, 'watchlist'); updates[e.symbol] = { stale: true }; }   // screenedAt unchanged, so it is retried next run
     }
     await mb.sleep(SLEEP_MS);
@@ -228,6 +250,12 @@ async function main() {
   const fresh = parse(await redis.get('watchlist')) || { entries: [] };
   fresh.entries = fresh.entries.map(e => (updates[e.symbol] ? { ...e, ...updates[e.symbol] } : e));
   blob.watchlist = Object.fromEntries(Object.entries(blob.watchlist).filter(([sym]) => fresh.entries.some(e => e.symbol === sym)));
+  {
+    const _all = [...Object.values(blob.portfolio), ...Object.values(blob.watchlist)].filter(Boolean);
+    blob.runStats = { at: new Date().toISOString(), mode: FORCE ? 'force' : ONLY ? `only:${ONLY}` : WATCHLIST_ONLY ? 'watchlist-only' : 'scheduled',
+      portfolioChecked: checked, portfolioNotDue: skippedFresh, watchlistScreened: queue.length, failed: runFailures.length,
+      stale: _all.filter(r => r.stale).length, noData: _all.filter(r => r.status === 'NO_DATA').length };
+  }
   blob.generatedAt = new Date().toISOString();
   await redis.set('watchlist', JSON.stringify(fresh));
   await redis.set(mb.KEY, JSON.stringify(blob));
@@ -243,6 +271,11 @@ async function main() {
   const sv = await store.saveResults(fresh_);
   console.log(sv.error ? `Supabase history: NOT saved (${sv.error}). Redis is unaffected.` : `Supabase history: ${sv.saved} result(s) saved.`);
 
+  {
+    const _issues = [...runFailures, ...(sv.error ? [`History not saved to Supabase: ${sv.error}`] : [])];
+    if (blob.runStats.stale) _issues.push(`${blob.runStats.stale} result(s) are stale (data unavailable, no new buying for them)`);
+    ci.finish('Compounder thesis check', _issues, { 'Holdings checked': blob.runStats.portfolioChecked, 'Holdings not due': blob.runStats.portfolioNotDue, 'Watchlist screened': blob.runStats.watchlistScreened, 'Failed': blob.runStats.failed, 'Stale': blob.runStats.stale, 'No data': blob.runStats.noData });
+  }
   // Stability report: how often does the stable status flip vs the raw signal?
   const all = [...Object.values(blob.portfolio), ...Object.values(blob.watchlist)];
   const flips = (h, k) => h.slice(1).filter((x, i) => x[k] !== h[i][k]).length;
