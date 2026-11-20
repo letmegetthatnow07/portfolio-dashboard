@@ -31,7 +31,7 @@ t(has(streak2, 'REVENUE_MISS_STREAK') && !streak2.thesis.brokenReasons.includes(
 const wlMiss = S({ held: false, surprises: SUR(rq(10, -4)) });
 t(['CANDIDATE_WAIT', 'CANDIDATE_PROVISIONAL', 'NOT_QUALIFIED'].includes(wlMiss.action), 'watchlist stock after a miss is never CANDIDATE_READY', wlMiss.action);
 const guide = S({ earnings: undefined, surprises: SUR(rq(10, 3)) });
-const guideCut = mb.screen({ symbol: 'T', metric: require('./helpers').metric(), profile: { name: 'T', finnhubIndustry: 'Software', shareOutstanding: 1000 }, estimates: mb.parseEstimates(fys()), stock: require('./helpers').quality(), sectorHealth: require('./helpers').SEC_OK, held: true, earnings: { date: ago(10), gemini: { guidance_direction: 'lowered' } }, surprises: SUR(rq(10, 3)) });
+const guideCut = mb.screen({ symbol: 'T', metric: require('./helpers').metric(), profile: { name: 'T', finnhubIndustry: 'Software', shareOutstanding: 1000 }, estimates: mb.parseEstimates(fys()), stock: require('./helpers').quality(), sectorHealth: require('./helpers').SEC_OK, held: true, source: 'portfolio', earnings: { date: ago(10), gemini: { guidance_direction: 'lowered' } }, surprises: SUR(rq(10, 3)) });
 t(has(guideCut, 'GUIDANCE_CUT') && guideCut.action === 'HOLD_DONT_ADD', 'lowered guidance pauses buying even after a revenue beat');
 const old = S({ surprises: SUR(rq(150, -6)) });
 t(old.action === 'HOLD_AND_ADD' && !has(old, 'REVENUE_MISS'), 'a miss from 150 days ago no longer affects anything');
@@ -95,6 +95,29 @@ const e4 = mb.parseEstimates([fyRow(-100, 5), fyRow(90, 6), fyRow(455, -1)]);
 t(e4.firstEps === 6, 'a loss in the following year is not blended in');
 const e5 = mb.parseEstimates([fyRow(-100, 5), fyRow(90, -2), fyRow(455, 3)]);
 t(e5.firstEps === null, 'a loss in the nearest forward year gives no forward P/E');
+
+// ── review fixes ────────────────────────────────────────────────────────────
+t(S({ q: { quality_signal: 'WATCH', signal: 'BUY' } }).action !== 'HOLD_AND_ADD', 'quality_signal WATCH blocks adds even when the legacy signal says BUY');
+t(S({ q: { signal: 'REDUCE' } }).qualityGate.state === 'PASS', 'a news-derived legacy REDUCE is not trusted as a quality exit');
+t(S({ q: { quality_signal: 'TRIM_25' } }).qualityGate.state === 'FAIL', 'quality_signal TRIM_25 fails the gate');
+const unscored = S({ q: { score_fund: undefined } });
+t(unscored.status === 'NO_DATA' && unscored.noDataCode === 'UNSCORED', 'a holding with no quality score gets no verdict', unscored.status);
+t(S({ held: false, source: 'watchlist' }).status !== 'NO_DATA', 'a watchlist stock without a quality score still screens (provisional)');
+const bank = S({ profile: { finnhubIndustry: 'Banking' }, q: { industry: 'Banks - Regional' } });
+t(bank.status === 'NO_DATA' && bank.noDataCode === 'MODEL_NOT_APPLICABLE', 'banks are declared outside the model, with a reason', bank.status);
+const pre = S({ held: false, source: 'watchlist', est: null, m: { peTTM: null, forwardPE: null, psTTM: null, revenueGrowth3Y: null, revenueGrowthTTMYoy: null, epsGrowth3Y: null } });
+t(pre.status === 'FAIL' && pre.verdict === 'UNPROVEN_PROFITABILITY' && pre.noDataCode === 'PRE_REVENUE' && pre.action === 'NOT_QUALIFIED', 'pre-revenue stock: clear FAIL / unproven, not NO DATA', pre.status + ' ' + pre.verdict + ' ' + pre.action);
+const empty = mb.screen({ symbol: 'T', metric: {}, profile: {}, held: false, source: 'watchlist' });
+t(empty.status === 'NO_DATA' && empty.noDataCode === 'PROVIDER_EMPTY', 'provider returned nothing: NO DATA with a reason', empty.status + ' ' + empty.noDataCode);
+const salesNoMult = S({ held: false, source: 'watchlist', est: null, m: { peTTM: null, forwardPE: null, psTTM: null, revenuePerShareTTM: 3 } });
+t(salesNoMult.status === 'NO_DATA' && salesNoMult.noDataCode === 'NO_VALUATION', 'sales but no usable multiple: NO DATA says why', salesNoMult.status + ' ' + salesNoMult.noDataCode);
+t(S({ profile: { finnhubIndustry: 'Software' }, q: { industry: 'Software - Application' } }).industry.key === 'SOFTWARE', 'industry is recorded on the result');
+t(base.verdict === 'MULTIBAGGER', 'the clean base case is still a MULTIBAGGER after the industry layer', base.verdict);
+const exc = { q: { score_fund: 8.5 }, m: { roicTTM: 30 }, held: false, source: 'portfolio', sector: { XLK: { price: { priceOk: false }, fund: { label: 'OK', medRevYoY: 0.05 } } } };
+const exr = S(exc);
+t(exr.flags.some(f => f.code === 'SECTOR_OVERRIDDEN') && exr.action !== 'CANDIDATE_READY', 'exceptional company qualifies through an unconfirmed sector, but is not buy-ready', JSON.stringify(exr.flags.map(f => f.code)));
+t(S({ ...exc, sector: { XLK: { price: { priceOk: false }, fund: { label: 'WEAK', unconfirmedBreak: true, medRevYoY: 0.0 } } } }).flags.every(f => f.code !== 'SECTOR_OVERRIDDEN'), 'a first sign of sector deterioration is never overridden');
+t(S({ ...exc, q: { score_fund: 7 } }).flags.every(f => f.code !== 'SECTOR_OVERRIDDEN'), 'a merely good company does not override the sector');
 
 console.log(fail ? `FAILED ${fail} of ${pass + fail}` : `OK: ${pass} scenario tests passed`);
 process.exit(fail ? 1 : 0);
