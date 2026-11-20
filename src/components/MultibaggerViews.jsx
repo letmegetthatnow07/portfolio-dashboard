@@ -152,6 +152,7 @@ export const MultibaggerDetail = ({ result }) => {
             {result.earnings.latest.revSurprise == null ? 'n/a' : `${result.earnings.latest.revSurprise >= 0 ? '+' : ''}${(result.earnings.latest.revSurprise * 100).toFixed(1)}%`}{result.earnings.daysSince != null ? ` · ${Math.round(result.earnings.daysSince)}d ago` : ''}
           </span></div>
         )}
+        <div><span className="mb-k">Industry model</span><span className="mb-v">{result.industry ? result.industry.label : 'n/a'}</span></div>
         <div><span className="mb-k">Sector</span><span className="mb-v">{result.sector ? `${result.sector.etf} · ${String(result.sector.label).replace('_', ' ').toLowerCase()}` : 'n/a'}</span></div>
         <div><span className="mb-k">ROIC</span><span className="mb-v">{pct(q.roic)}</span></div>
         <div><span className="mb-k">Gross margin</span><span className="mb-v">{pct(q.gm)}</span></div>
@@ -159,7 +160,7 @@ export const MultibaggerDetail = ({ result }) => {
       </div>
 
       <div className="mb-bars">
-        {[['Growth', parts.growth], ['ROIC', parts.roic], ['Valuation', parts.valuation], ['S-curve', parts.stage], ['Moat', parts.moat], ['Balance', parts.balance], ['Sector', parts.sector], ['Sentiment', parts.sentiment], ['Execution', parts.execution]]
+        {[['Growth', parts.growth], ['ROIC', parts.roic], ['Valuation', parts.valuation], ['S-curve', parts.stage], ['Moat', parts.moat], ['Balance', parts.balance], ['Sector', parts.sector], ['Sentiment', parts.sentiment], ['Execution', parts.execution], ['Industry', parts.industry]]
           .map(([l, val]) => <Bar key={l} label={l} value={val} />)}
       </div>
 
@@ -453,7 +454,7 @@ export const ScreenerView = ({ toast, confirm, onPromote }) => {
                     <StatusChip status={screened ? en.status : 'PENDING'} stale={en.stale} />
                     {res && <Ticks history={res.history} />}
                     {act && screened && <span className={`mb-badge-act ${act.cls}`}>{act.text}</span>}
-                    <span className="screener-when">{screened ? `Screened ${dateFmt(en.screenedAt)}` : 'Press Run to see the result'}</span>
+                    <span className="screener-when">{screened ? `Screened ${dateFmt(en.screenedAt)}${en.status === 'NO_DATA' && res?.reasons?.[0] ? ' · ' + res.reasons[0] : ''}` : 'Press Run to see the result'}</span>
                   </div>
                   <div className="screener-actions">
                     {screened && <button className="btn-expand" onClick={() => setOpen(isOpen ? null : en.symbol)}>{isOpen ? '▲ Hide' : '▼ Details'}</button>}
@@ -513,6 +514,7 @@ export const MultibaggerTab = ({ portfolio, mbData, onCheck, checkingSym }) => {
                   <div className="mbt-result">
                     <span className={`mbt-big ${cls}`}>{big}{r?.stale ? ' · stale' : ''}</span>
                     <div className="mbt-meta">
+                      {r && status === 'NO_DATA' && <span className="mb-sub" style={{ margin: 0, maxWidth: 520 }}>{(r.reasons || [])[0]}</span>}
                       {r && status !== 'NO_DATA' && <span className="mb-sub" style={{ margin: 0 }}>{VERDICT[r.verdict] || r.verdict}{r.score != null ? ` · score ${r.score}/100` : ''}</span>}
                       {a && <span className={`mb-badge-act ${a.cls}`}>{a.text}</span>}
                       {r && <Ticks history={r.history} />}
