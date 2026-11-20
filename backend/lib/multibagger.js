@@ -83,6 +83,7 @@ const PARAMS = {
   MIN_SECTOR_BARS: 253,
 };
 const ec = require('./earnings-context');   // revenue/EPS surprise vs estimates (shared with the daily update)
+const industry = require('./industry');   // Layer B/C: industry classification, per-industry ranges, peer groups
 const KEY = 'multibagger_screen';
 const DAY_MS = 86400000;
 
@@ -398,11 +399,38 @@ async function fetchEstimates(symbol, fmpKey) {
   }
   return null;
 }
+/** Fallback when Finnhub has no P/E or P/S, and a finer industry label than Finnhub's generic ones. Never logs the URL (key). */
+async function fetchFmpProfileRatios(symbol, key, needRatios) {
+  const get = async url => { try { const r = await fetch(url, { signal: AbortSignal.timeout(10000) }); if (!r.ok) return null; const j = await r.json(); return Array.isArray(j) ? j[0] : j; } catch (_) { return null; } };
+  const q = `symbol=${encodeURIComponent(symbol)}&apikey=${key}`;
+  const [prof, ratios] = await Promise.all([get(`https://financialmodelingprep.com/stable/profile?${q}`), needRatios ? get(`https://financialmodelingprep.com/stable/ratios-ttm?${q}`) : Promise.resolve(null)]);
+  const pos = v => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null);
+  const cap = pos(prof?.marketCap ?? prof?.mktCap);
+  const out = { industry: prof?.industry || null, sector: prof?.sector || null, marketCapM: cap ? cap / 1e6 : null, pe: pos(ratios?.priceToEarningsRatioTTM ?? ratios?.peRatioTTM), ps: pos(ratios?.priceToSalesRatioTTM) };
+  return (out.industry || out.sector || out.marketCapM || out.pe || out.ps) ? out : null;
+}
 async function fetchInputs(symbol, token, fmpKey = null) {
   const metric = await finnhub('/stock/metric', { symbol, metric: 'all' }, token);
   const profile = await finnhub('/stock/profile2', { symbol }, token).catch(() => ({}));
   const estimates = await fetchEstimates(symbol, fmpKey);
-  return { metric: metric?.metric || {}, profile: profile || {}, estimates };
+  const m = { ...(metric?.metric || {}) };
+  const p = { ...(profile || {}) };
+  const needRatios = posNum(m, 'peTTM', 'peBasicExclExtraTTM', 'peExclExtraTTM') == null && posNum(m, 'psTTM') == null;
+  const genericLabel = !p.finnhubIndustry || /^(technology|health ?care|financial services|industrials?|consumer|energy|materials|communications?)$/i.test(String(p.finnhubIndustry).trim());
+  if (fmpKey && (needRatios || genericLabel)) {
+    const f = await fetchFmpProfileRatios(symbol, fmpKey, needRatios);
+    if (f) {
+      if (f.industry) p.fmpIndustry = f.industry;
+      if (f.sector) p.fmpSector = f.sector;
+      if (needRatios) {
+        if (f.pe) m.peTTM = f.pe;
+        if (f.ps) m.psTTM = f.ps;
+        if (m.marketCapitalization == null && f.marketCapM) m.marketCapitalization = f.marketCapM;
+        if (f.pe || f.ps) m._valuationSource = 'FMP';
+      }
+    }
+  }
+  return { metric: m, profile: p, estimates };
 }
 
 // ── Price bars: Polygon first, FMP as fallback ───────────────────────────────
@@ -509,13 +537,17 @@ function preserveOrExpire(prev, held, reason, base = {}) {
 }
 
 // ── Layer-1 gate: the old quality engine decides "is it a quality compounder" ─
-const GATE_SELL_SIGNALS = new Set(['TRIM_25', 'SELL', 'REDUCE']);   // old engine wants out
+const GATE_SELL_SIGNALS = new Set(['TRIM_25', 'SELL', 'REDUCE']);   // quality engine wants out
+// daily-update.js writes quality_signal; the intraday news run only touches composite_signal. Until the first nightly run after this change,
+// a legacy 'signal' is trusted only for values the news run can never emit (it never produces TRIM_25 / WATCH / IDIOSYNCRATIC_DECAY).
+const QUALITY_ONLY_LEGACY = new Set(['TRIM_25', 'WATCH', 'IDIOSYNCRATIC_DECAY']);
+const qualitySignalOf = s => (s ? (s.quality_signal ?? (QUALITY_ONLY_LEGACY.has(s.signal) ? s.signal : null)) : null);
 function qualityGate(stock, exitMode) {
   const need = exitMode ? PARAMS.QUALITY_HOLD : PARAMS.QUALITY_ENTRY;
   if (!stock) return { state: 'UNVERIFIED', need, reason: 'Not in the portfolio yet, so the quality engine has not scored it. It is scored after the close once added.' };
   const q = stock.score_fund;
   if (typeof q !== 'number' || !Number.isFinite(q) || q < 0 || q > 10) return { state: 'UNVERIFIED', need, reason: 'The quality engine has no valid score for this stock yet (it runs after the close).' };
-  if (GATE_SELL_SIGNALS.has(stock.signal)) return { state: 'FAIL', q, need, structural: true, reason: `The quality engine signal is ${stock.signal}: it wants out of this position. Quality score ${q.toFixed(1)}.` };
+  if (GATE_SELL_SIGNALS.has(qualitySignalOf(stock))) return { state: 'FAIL', q, need, structural: true, reason: `The quality engine signal is ${qualitySignalOf(stock)}: it wants out of this position. Quality score ${q.toFixed(1)}.` };
   const structural = stock.w4_confirmed === true || (stock.w3_confirmed === true && stock.regime === 'IDIOSYNCRATIC_DECAY');
   if (structural) return { state: 'FAIL', q, need, structural: true, reason: `Quality engine reports structural decay (W3/W4 with idiosyncratic underperformance). Quality score ${q.toFixed(1)}.` };
   if (q < need) return { state: 'FAIL', q, need, reason: `Quality score ${q.toFixed(1)} is below the ${need.toFixed(1)} needed to ${exitMode ? 'stay' : 'qualify as'} an alpha compounder.` };
@@ -554,7 +586,7 @@ function screen({ symbol, metric = {}, profile = {}, stock = null, filing = null
 
   const base = { symbol, name: nm, source, held, asOf: now, params: { exitTax: PARAMS.EXIT_TAX, horizon: PARAMS.HORIZON_YEARS } };
   // Missing data must not erase a confirmed state (see preserveOrExpire): kept, marked STALE, no buying, expires after 30 days
-  const noData = reason => preserveOrExpire(prev, held, reason, base);
+  const noData = (reason, code) => { const r = preserveOrExpire(prev, held, reason, base); if (code && r.status === 'NO_DATA') r.noDataCode = code; return r; };
 
   const flags = [], brokenReasons = [];
   const flag = (code, level, text) => flags.push({ code, level, text });
@@ -568,9 +600,14 @@ function screen({ symbol, metric = {}, profile = {}, stock = null, filing = null
   const T_CAGR = exitMode ? PARAMS.EXIT_CAGR : PARAMS.TARGET_CAGR;
 
   const gate = qualityGate(stock, exitMode);
+  // Layer 1 owns "is this a quality compounder" for holdings: a holding it has not scored yet gets no definitive verdict.
+  if (held && gate.state === 'UNVERIFIED') return noData('The quality engine has not scored this holding yet (it runs after the close). No verdict until it has.', 'UNSCORED');
 
   // Sector mapping (most specific label first)
-  const etf = sectorEtfFor(stock?.industry, stock?.sector, profile.finnhubIndustry);
+  const indKey = industry.classifyIndustry(stock?.industry, stock?.sector, profile.finnhubIndustry, profile.fmpIndustry, profile.fmpSector);
+  const ind = industry.profileOf(indKey);
+  if (ind.scope === 'OUT') return noData(ind.outReason, 'MODEL_NOT_APPLICABLE');
+  const etf = industry.groupKey(indKey) || sectorEtfFor(stock?.industry, stock?.sector, profile.finnhubIndustry, profile.fmpIndustry, profile.fmpSector);
 
   // 1a. Valuation route first, so growth is built from the matching measure
   let route = null, basePx = null, normalizedPE = false;
@@ -578,7 +615,21 @@ function screen({ symbol, metric = {}, profile = {}, stock = null, filing = null
   else if (peTTM) { route = 'EPS_TTM'; basePx = peTTM; }
   else if (fwdPE) { route = 'EPS_FWD'; basePx = fwdPE; }
   else if (psTTM) { route = 'REVENUE'; basePx = psTTM; }
-  if (!route) return noData('No usable valuation multiple (P/E or P/S) available.');
+  if (!route) {
+    const salesSeen = posNum(m, 'revenuePerShareTTM', 'revenuePerShareAnnual', 'revenueTTM', 'revenueAnnual') != null || revYoY != null || rev3 != null || rev5 != null;
+    if (!salesSeen && marketCapM == null) return noData('The data provider returned no financial data for this ticker (often a brand-new listing or an unsupported symbol). It is retried on the next run.', 'PROVIDER_EMPTY');
+    if (!salesSeen) {
+      if (prev && (prev.status === 'PASS' || prev.status === 'FAIL')) return noData('Reported sales are no longer available; keeping the last confirmed assessment.', 'PRE_REVENUE');
+      const why = 'Pre-revenue: no sales or earnings are reported yet, so there is nothing to value or project. It cannot qualify until revenue appears; it is re-checked on the normal schedule.';
+      return { ...base, verdict: 'UNPROVEN_PROFITABILITY', rawVerdict: 'UNPROVEN_PROFITABILITY', status: 'FAIL', rawStatus: 'FAIL', pending: null, isCompounder: false, score: null, scoreParts: {}, stage: null, timing: 'OK', confidence: 'LOW', stale: false, noDataCode: 'PRE_REVENUE',
+        qualityGate: gate, industry: { key: indKey, label: ind.label, scope: ind.scope }, qualitySignal: qualitySignalOf(stock), earningsSig: null,
+        thesis: { state: 'UNPROVEN', brokenReasons: [], checkedAt: now }, pricing: 'OK', action: held ? 'HOLD_WATCH' : 'NOT_QUALIFIED',
+        growth: {}, valuation: { illustrative: true }, quality: { marketCapM }, sector: null, entryTiming: null, earnings: null,
+        flags: [{ code: 'PRE_REVENUE', level: 'amber', text: why }], reasons: [why],
+        history: [...(prev?.history || []), { asOf: now, raw: 'FAIL', status: 'FAIL', score: null, g0: null, fwd: null, atCagr: null }].slice(-PARAMS.HISTORY_LEN) };
+    }
+    return noData('Sales are reported but neither a P/E nor a P/S could be obtained (negative or unusual revenue, e.g. trading or financial-type businesses).', 'NO_VALUATION');
+  }
   const isRevRoute = route === 'REVENUE';
 
   // 1b. Forward growth, per route. Revenue and EPS are never blended into one number.
@@ -609,7 +660,7 @@ function screen({ symbol, metric = {}, profile = {}, stock = null, filing = null
     const allowance = netm != null && netm < 0.08 ? PARAMS.MARGIN_ALLOWANCE_LOW_BASE : PARAMS.MARGIN_ALLOWANCE;
     if (revG != null && g0 != null && g0 > revG + allowance) { marginCap = { from: g0, to: revG + allowance, revG }; g0 = revG + allowance; }
   }
-  if (g0 == null) return noData('Not enough growth data (revenue/EPS) from the data provider to screen this stock.');
+  if (g0 == null) return noData('A valuation multiple exists but there is not enough revenue or earnings history to project growth (typical of a recent listing). It is re-checked on the next run.', 'NO_GROWTH');
 
   const estYears = est ? (isRevRoute ? est.revYears : est.epsYears) : null;
   const consensusDepthOk = estYears != null && estYears >= 2;
@@ -619,8 +670,9 @@ function screen({ symbol, metric = {}, profile = {}, stock = null, filing = null
 
   // Peak-cycle margins only make sense for cyclical groups; a high-margin scaler is not "at a peak"
   const spike = (gm5 != null && gm5 > 0.02 && gm != null && gm > gm5 * 1.5) || (opm5 != null && opm5 > 0.02 && opm != null && opm > opm5 * 1.6);
-  const cyclical = CYCLICAL_ETFS.has(etf) && (!!stock?.cyclical_peak_flag || spike);
+  const cyclical = (industry.isCyclicalKey(etf, CYCLICAL_ETFS) || ind.cyclical) && (!!stock?.cyclical_peak_flag || spike);
   if (cyclical) { g0 *= PARAMS.CYCLICAL_HAIRCUT; flag('CYCLICAL_PEAK', 'amber', 'Margins look peak-cycle in a cyclical group; growth haircut 40% because it should not be extrapolated.'); }
+  if (ind.commodity && !cyclical) g0 *= PARAMS.CYCLICAL_HAIRCUT;   // revenue growth here mostly follows commodity prices (flag added below)
   g0 = clamp(g0, -0.1, PARAMS.MAX_G0);
 
   // Earnings context: how the last reports compared with analyst estimates. Revenue first, EPS and guidance second.
@@ -654,9 +706,13 @@ function screen({ symbol, metric = {}, profile = {}, stock = null, filing = null
   const marginErosion = (gm != null && gm5 != null && gm < gm5 - 0.04) || (opm != null && opm5 != null && opm < opm5 - 0.05);
 
   // Sector gate: a NEW pass needs both legs (INTACT); an actual holding keeps its pass through missing sector data
-  const secRaw = etf && sectorHealth ? sectorHealth[etf] : null;
+  const secRaw = etf && sectorHealth ? (sectorHealth[etf] || sectorHealth[industry.priceEtfFor(etf)] || null) : null;
   const sec = secRaw ? combineSector(secRaw.price, secRaw.fund) : null;
-  const sectorPass = exitMode ? (!sec || ['INTACT', 'PARTIAL', 'UNKNOWN'].includes(sec.label)) : sec?.label === 'INTACT';
+  // Layer C: the sector is risk context, not a permission slip. An exceptional company (verified quality >= 8, ROIC >= 25%, growing 10+ pts above its
+  // sector) may qualify through a sector that is only "not confirmed", never one that is broken or showing a first sign of breaking.
+  // Buying still waits for a fully confirmed sector (sectorFull), and MULTIBAGGER always needs it.
+  const sectorOverride = !exitMode && sec?.label === 'NOT_CONFIRMED' && !sec.unconfirmedBreak && gate.state === 'PASS' && gate.q >= 8 && roic != null && roic >= 0.25 && g0 >= Math.max(0.20, (sec.fund?.medRevYoY ?? 0) + 0.10);
+  const sectorPass = exitMode ? (!sec || ['INTACT', 'PARTIAL', 'UNKNOWN'].includes(sec.label)) : (sec?.label === 'INTACT' || sectorOverride);
   const sectorFull = sec?.label === 'INTACT';
 
   // Balance sheet: book D/E is distorted by buybacks, so it is judged with returns, interest cover, cash flow and maturities.
@@ -674,6 +730,7 @@ function screen({ symbol, metric = {}, profile = {}, stock = null, filing = null
   const weakEvidence = (icovEff != null && icovEff < 5) || (roic != null && roic < 0.10) || (fcfM != null && fcfM <= 0) || stock?.debt_maturity_flag === 'wall';
   let leverage;     // OK | HIGH_COVERED | HIGH_UNVERIFIED | UNKNOWN | BROKEN
   if (noCover) leverage = 'BROKEN';
+  else if (ind.leverageModel === 'REGULATED' && !negEquity && !wallStress && icovEff != null && icovEff >= 2.5 && (de == null || de <= 3.5)) leverage = 'OK';
   else if (wallStress && !strongCover) leverage = 'BROKEN';
   else if (bookHigh || negEquity) leverage = strongCover ? 'HIGH_COVERED' : weakEvidence ? 'BROKEN' : 'HIGH_UNVERIFIED';
   else if (de == null) leverage = coverStrong && fcfPos ? 'OK' : 'UNKNOWN';
@@ -699,6 +756,8 @@ function screen({ symbol, metric = {}, profile = {}, stock = null, filing = null
   else if (sec?.label === 'INTACT') flag('SECTOR_INTACT', 'green', `Sector (${etf}) is intact: price trend and fundamentals both confirm.`);
   else if (sec?.label === 'PARTIAL') flag('SECTOR_PARTIAL', 'amber', `Sector (${etf}): only the ${sec.priceOnly ? 'price' : 'fundamentals'} leg is available. Fine for a holding, not enough for a NEW pass.`);
   else flag('SECTOR_UNVERIFIED', 'amber', etf ? `Sector (${etf}) health is not available yet: a new PASS waits for the nightly sector refresh.` : 'Sector could not be mapped to a sector ETF: a new PASS cannot be confirmed.');
+  if (sectorOverride) flag('SECTOR_OVERRIDDEN', 'amber', `Sector (${etf}) is not confirmed, but this company's own quality, returns and growth are exceptional, so it can qualify. Buying still waits for the sector to confirm.`);
+  if (m._valuationSource) flag('VALUATION_FALLBACK', 'amber', `P/E or P/S came from ${m._valuationSource} because the primary provider had none. Cross-check it.`);
   if (filing?.gemini?.thesis_status === 'weakening') broken('THESIS_WEAKENING', 'Latest 10-K/10-Q analysis says the thesis is weakening.');
   if (stock?.dilution_flag === 'heavy' || (stock?.sbc_to_market_cap != null && stock.sbc_to_market_cap > 3)) broken('DILUTION', 'Heavy share dilution / stock-based compensation eats owner returns.');
   if (stock?.earnings_quality_flag === 'risk') broken('EARNINGS_QUALITY', 'Reported profit is not backed by operating cash flow.');
@@ -718,7 +777,7 @@ function screen({ symbol, metric = {}, profile = {}, stock = null, filing = null
   if (runway === 'FAIL') flag('RUNWAY_LIMITED', 'red', `A ${mult5y.toFixed(1)}x would imply a ~$${(impliedCapM / 1e6).toFixed(1)}T company.`);
   else if (runway === 'UNVERIFIED') flag('RUNWAY_UNVERIFIED', 'amber', 'Market capitalisation is unavailable, so the $5T runway test could not run. Blocks MULTIBAGGER.');
   else if (marketCapM > 500_000) flag('LARGE_CAP', 'amber', 'Mega-cap: limited runway for a 3x.');
-  if (roic != null && roic < 0.10) flag('WEAK_RETURNS', 'amber', `ROIC ${(roic * 100).toFixed(0)}% is near or below cost of capital.`);
+  if (roic != null && roic < ind.roicFloor) flag('WEAK_RETURNS', 'amber', `ROIC ${(roic * 100).toFixed(0)}% is near or below cost of capital.`);
   if (stock?.debt_maturity_flag === 'wall' && leverage !== 'BROKEN') flag('DEBT_WALL', 'amber', 'Large share of debt matures within 12 months.');
   // thesis tracking from information already gathered (filing + earnings analysis, estimates, quality engine)
   if (filing?.gemini?.thesis_status === 'strengthening') flag('THESIS_STRENGTHENING', 'green', 'Latest filing analysis says the thesis is strengthening.');
@@ -746,15 +805,18 @@ function screen({ symbol, metric = {}, profile = {}, stock = null, filing = null
 
   // Score
   const stageS = { EARLY: 100, MID: 75, LATE: 25, DECLINING: 0 }[stage];
-  let moatS = stock?.moat_score != null ? stock.moat_score * 10 : lin(gm, 0.30, 0.70);
+  let moatS = stock?.moat_score != null ? stock.moat_score * 10 : lin(gm, ...ind.gmRange);
   if (moatS != null && gm != null && gm5 != null && gm > gm5 + 0.02) moatS = Math.min(100, moatS + 10);
   const balanceS = leverage === 'HIGH_COVERED' ? 60 : (leverage === 'OK' && de != null && de >= 0) ? lin(2 - de, 0, 2) : leverage === 'OK' ? 60 : null;
+  const indChk = industry.industryChecks(indKey, { revG, fcfM, opm, icovEff });
+  indChk.flags.forEach(f => flag(f.code, f.level, f.text));
   const parts = {
-    growth: [lin(g0, 0.10, 0.35), 28], roic: [lin(roic, 0.08, 0.30), 14], valuation: [lin(atCagr, 0.08, 0.30), 25],
+    growth: [lin(g0, 0.10, 0.35), 28], roic: [lin(roic, ...ind.roicRange), 14], valuation: [lin(atCagr, 0.08, 0.30), 25],
     stage: [stageS, 10], moat: [moatS, 8], balance: [balanceS, 5],
     sector: [sec && sec.label !== 'UNKNOWN' ? { INTACT: 100, PARTIAL: 60, NOT_CONFIRMED: 35, BROKEN: 0 }[sec.label] : null, 5],
     sentiment: [stock ? ((stock.score_insider ?? 5) + (stock.score_rating ?? 5)) * 5 : null, 5],
-    execution: [ctx.executionScore, 8],     // revenue vs estimates over the last 4 reports; absent until reports are on file
+    execution: [ctx.executionScore, 8],
+    industry: [indChk.part, 6],     // Layer B: industry-specific measure (rule of 40, utility cover, ...); absent for general businesses     // revenue vs estimates over the last 4 reports; absent until reports are on file
   };
   let wSum = 0, sSum = 0; const scoreParts = {};
   for (const [k, [v, w]] of Object.entries(parts)) { scoreParts[k] = v == null ? null : Math.round(v); if (v != null) { wSum += w; sSum += v * w; } }
@@ -775,7 +837,7 @@ function screen({ symbol, metric = {}, profile = {}, stock = null, filing = null
   const unproven = isRevRoute || epsTurnaround;
   const entryEvidenceOk = exitMode || leverageOkNew;
   const alphaOk = runway !== 'FAIL' && sectorPass && entryEvidenceOk && topLineOk && score >= T_SCORE && atCagr >= T_CAGR;
-  const mbOk = alphaOk && runway === 'PASS' && mbTopLineOk && forwardSource === 'CONSENSUS' && consensusDepthOk && breadthConfirmed
+  const mbOk = alphaOk && sectorFull && runway === 'PASS' && mbTopLineOk && forwardSource === 'CONSENSUS' && consensusDepthOk && breadthConfirmed
     && gate.state === 'PASS' && bearCagr >= PARAMS.BEAR_MIN_CAGR && score >= T_MB_SCORE && atMult >= PARAMS.MULTIBAGGER_MULT;
   let rawVerdict;
   if (thesisBroken) rawVerdict = 'NOT_MULTIBAGGER';
@@ -783,7 +845,7 @@ function screen({ symbol, metric = {}, profile = {}, stock = null, filing = null
   else if (unproven) rawVerdict = 'UNPROVEN_PROFITABILITY';
   else if (mbOk) rawVerdict = 'MULTIBAGGER';
   else if (alphaOk) rawVerdict = 'ALPHA_COMPOUNDER';
-  else if (topLineOk && g0 >= 0.15 && (roic == null || roic >= 0.10) && score >= T_SCORE) rawVerdict = 'WAIT_FOR_PRICE';   // held back by price/sector only, not by weak quality
+  else if (topLineOk && g0 >= 0.15 && (roic == null || roic >= ind.roicFloor) && score >= T_SCORE) rawVerdict = 'WAIT_FOR_PRICE';   // held back by price/sector only, not by weak quality
   else rawVerdict = 'NOT_MULTIBAGGER';
   const rawStatus = rawVerdict === 'MULTIBAGGER' || rawVerdict === 'ALPHA_COMPOUNDER' ? 'PASS' : 'FAIL';
 
@@ -813,7 +875,7 @@ function screen({ symbol, metric = {}, profile = {}, stock = null, filing = null
   const thesisState = thesisBroken ? 'BROKEN' : (rawVerdict === 'NOT_MULTIBAGGER' || unproven ? 'UNPROVEN' : 'INTACT');
 
   // portfolioAction depends on ownership. "Add" needs a passed quality gate AND a fully confirmed sector.
-  const oldCaution = !!stock && (stock.signal === 'WATCH' || stock.signal === 'IDIOSYNCRATIC_DECAY' || stock.regime === 'IDIOSYNCRATIC_DECAY' || gate.state === 'FAIL');
+  const oldCaution = !!stock && (['WATCH', 'IDIOSYNCRATIC_DECAY'].includes(qualitySignalOf(stock)) || stock.regime === 'IDIOSYNCRATIC_DECAY' || gate.state === 'FAIL');
   let action;
   if (held) {
     if (thesisBroken && status === 'FAIL') action = 'REVIEW_EXIT';
@@ -846,6 +908,9 @@ function screen({ symbol, metric = {}, profile = {}, stock = null, filing = null
   return {
     ...base, verdict, rawVerdict, status, rawStatus, pending, isCompounder, score, scoreParts, stage, timing, confidence, stale: false,
     qualityGate: gate,
+    industry: { key: indKey, label: ind.label, scope: ind.scope },
+    qualitySignal: qualitySignalOf(stock),
+    earningsSig: earningsSignature(surprises),
     thesis: { state: thesisState, brokenReasons, checkedAt: now },
     pricing, action,
     growth: { g0, revG, epsG, epsFwdImplied, fwdRev, fwdEps, fwdPrimary, histG: blend(histRev, histEps, 0.5), forwardSource, estYears, breadthConfirmed, rev3, revYoY, eps3, accel, marginCapped: !!marginCap },
@@ -862,7 +927,13 @@ const statusOf = r => (!r ? 'PENDING' : r.status || (r.isCompounder ? 'PASS' : '
 const VERDICT_LABEL = { MULTIBAGGER: 'Multibagger', ALPHA_COMPOUNDER: 'Alpha compounder', WAIT_FOR_PRICE: 'Good business, price/sector not ready', UNPROVEN_PROFITABILITY: 'Profitability not yet proven', NOT_MULTIBAGGER: 'Not a compounder', INSUFFICIENT_DATA: 'Not enough data', NOT_APPLICABLE: 'ETF: not screened' };
 const emptyBlob = () => ({ generatedAt: null, portfolio: {}, watchlist: {} });
 
+/** Fingerprint of the newest reported quarter's actuals. A change means numbers arrived (even if the quarter date did not change). */
+const earningsSignature = s => { const q = (s?.quarters || []).slice(-1)[0]; return q ? [q.date, q.revenueActual ?? '', q.epsActual ?? ''].join('|') : null; };
+const sectorKeyFor = (...labels) => industry.groupKey(industry.classifyIndustry(...labels)) || sectorEtfFor(...labels);
+
 module.exports = {
+  earningsSignature, sectorKeyFor, classifyIndustry: industry.classifyIndustry, INDUSTRY_PROFILES: industry.PROFILES, PEER_GROUPS: industry.PEER_GROUPS,
+  constituentsFor: key => industry.constituentsFor(key, SECTOR_CONSTITUENTS), priceEtfFor: industry.priceEtfFor, isCyclicalKey: key => industry.isCyclicalKey(key, CYCLICAL_ETFS),
   PARAMS, KEY, VERDICT_LABEL, SECTOR_ETFS, SECTOR_CONSTITUENTS, SECTOR_RULES, CYCLICAL_ETFS, sectorEtfFor, assessSectorPrice, assessSectorFundamentals, combineSector,
   finnhub, timingOverlay, isEtfProfile, parseEstimates, fetchEstimates, fetchInputs, fetchBars, attachTiming, readDebtToEquity, qualityGate, preserveOrExpire, screen, statusOf, emptyBlob,
   growthPath, makeProjector, requiredG0, afterTaxMult, cagr, sleep,
