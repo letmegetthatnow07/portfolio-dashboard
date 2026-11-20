@@ -80,7 +80,7 @@ const Spark = ({ values, w = 132, h = 36 }) => {
 const Badge = ({ signal, sig, small }) => {
   if (!signal) return <span className="hx-dash">—</span>;
   const c = sig(signal);
-  return <span className={`hx-badge${small ? ' sm' : ''}`} style={{ color: c.color, background: `${c.color}16`, borderColor: `${c.color}44` }}>{c.label}</span>;
+  return <span title={signal} className={`hx-badge${small ? ' sm' : ''}`} style={{ color: c.color, background: `${c.color}16`, borderColor: `${c.color}44` }}>{c.label}</span>;
 };
 
 // ── highlights ──────────────────────────────────────────────────────────────
@@ -183,6 +183,7 @@ const StockCard = ({ a, sig, scoreColor, open, onToggle, rangeLabel }) => {
         )}
       </div>
 
+      {open && <ThesisTimeline symbol={a.symbol} />}
       {open && (
         <div className="hx-body">
           <table className="hx-table">
@@ -220,6 +221,41 @@ const StockCard = ({ a, sig, scoreColor, open, onToggle, rangeLabel }) => {
   );
 };
 
+// ── multibagger thesis checks (a SEPARATE record from the daily score: one check every ~15 days) ─────────
+const ThesisTimeline = ({ symbol }) => {
+  const [rows, setRows] = useState(null);
+  useEffect(() => {
+    let live = true;
+    fetch(`/api/portfolio/multibagger?history=${encodeURIComponent(symbol)}`)
+      .then(r => (r.ok ? r.json() : { rows: [] })).then(j => { if (live) setRows(j.rows || []); }).catch(() => { if (live) setRows([]); });
+    return () => { live = false; };
+  }, [symbol]);
+  if (rows === null) return <div className="hx-msg" style={{ padding: 12 }}>Loading thesis checks…</div>;
+  return (
+    <div className="hx-body" style={{ borderTop: '1px solid var(--border-light)' }}>
+      <div style={{ padding: '10px 14px 4px', fontSize: 11, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+        Thesis checks <span style={{ fontWeight: 500, textTransform: 'none', letterSpacing: 0, color: 'var(--text-dim)' }}>· one check about every 15 days · separate from the daily score above</span>
+      </div>
+      {rows.length === 0 ? <div className="hx-feed-empty" style={{ padding: '4px 14px 12px' }}>No thesis checks stored yet.</div> : (
+        <table className="hx-table">
+          <thead><tr><th>Checked</th><th>Raw</th><th>Confirmed</th><th>Verdict</th><th>Action</th><th className="r">Score</th><th className="r">After-tax/yr</th></tr></thead>
+          <tbody>
+            {rows.slice(0, 8).map((r, i) => (
+              <tr key={`${r.checked_at}-${i}`}>
+                <td className="hx-date">{dayLong(String(r.checked_at).slice(0, 10))}</td>
+                <td>{r.raw_status || '—'}</td><td className="hx-total">{r.status || '—'}</td>
+                <td>{r.verdict || '—'}</td><td>{r.action || '—'}</td>
+                <td className="r">{r.score == null ? '—' : r.score}</td>
+                <td className="r">{r.after_tax_cagr == null ? '—' : `${(r.after_tax_cagr * 100).toFixed(0)}%`}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+};
+
 // ── tab ─────────────────────────────────────────────────────────────────────
 const HistoryView = ({ stocks, sig, scoreColor }) => {
   const [days, setDays] = useState(30);
@@ -242,7 +278,7 @@ const HistoryView = ({ stocks, sig, scoreColor }) => {
       if (useCustom && fromDate && toDate) { params.set('from', fromDate); params.set('to', toDate); }
       else params.set('days', days);
       const res = await fetch(`/api/portfolio/history?${params}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.message || j.error || `HTTP ${res.status}`); }
       setHistory(await res.json());
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
