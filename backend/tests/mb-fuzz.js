@@ -25,7 +25,7 @@ for (let i = 0; i < N; i++) {
   const pendingJunk = pick([undefined, { to: pick(['PASS','FAIL']), since: pick(['garbage', undefined, new Date(now - 9 * D).toISOString()]), runs: pick([1, '1', NaN, undefined, 0, 2.7]) }]);
   const prev = rnd() < 0.5 ? { status: pick(['PASS','FAIL']), verdict: 'ALPHA_COMPOUNDER', asOf: pick([new Date(now - 20 * D).toISOString(), new Date(now - 45 * D).toISOString(), 'bad', undefined]), staleSince: pick([undefined, new Date(now - 40 * D).toISOString()]), history: [], action: pick([...ALL_A]), pending: pendingJunk } : null;
   const profile = pick([{}, { name: 'F', finnhubIndustry: 'Software' }, { type: 'ETP' }]);
-  const stock = rnd() < 0.6 ? { symbol: 'F', instrument_type: 'Stock', score_fund: pick([...vals, 8, 6, 4.9]), signal: pick(['HOLD','SELL','TRIM_25','REDUCE','WATCH','IDIOSYNCRATIC_DECAY',undefined]), regime: pick([undefined,'MARKET_NOISE','IDIOSYNCRATIC_DECAY']), current_price: pick(vals), sma200: pick(vals) } : null;
+  const stock = rnd() < 0.6 ? { symbol: 'F', instrument_type: 'Stock', score_fund: pick([...vals, 8, 6, 4.9]), quality_signal: pick(['HOLD','SELL','TRIM_25','REDUCE','WATCH','IDIOSYNCRATIC_DECAY',undefined]), regime: pick([undefined,'MARKET_NOISE','IDIOSYNCRATIC_DECAY']), current_price: pick(vals), sma200: pick(vals) } : null;
   const sectorHealth = pick([{}, { XLK: { price: { priceOk: true }, fund: { label: 'OK' } } }, null]);
   const input = { symbol: 'F', metric, profile, estimates: rows, stock, sectorHealth, held, source, prev };
   const fail = m => { bad++; if (bad <= 8) console.log(`VIOLATION seed=${SEED} case=${i}: ${m}\n  input=${JSON.stringify(input).slice(0, 700)}`); };
@@ -43,7 +43,7 @@ for (let i = 0; i < N; i++) {
   if (held && CAND_A.includes(x.action)) fail('candidate-only action on a holding: ' + x.action);
   if (x.rawStatus === 'FAIL' && BUY_READY.includes(x.action)) fail('buy-ready action despite CURRENT raw FAIL: ' + x.action);
   if (BUY_READY.includes(x.action) && x.stale) fail('buy-ready action on stale data');
-  if (stock && (CAUTION.includes(stock.signal) || stock.regime === 'IDIOSYNCRATIC_DECAY') && source !== 'watchlist' && ['HOLD_AND_ADD','CANDIDATE_READY'].includes(x.action)) fail(`add allowed under daily-engine caution (${stock.signal}/${stock.regime})`);
+  if (stock && (CAUTION.includes(stock.quality_signal) || stock.regime === 'IDIOSYNCRATIC_DECAY') && source !== 'watchlist' && ['HOLD_AND_ADD','CANDIDATE_READY'].includes(x.action)) fail(`add allowed under daily-engine caution (${stock.quality_signal}/${stock.regime})`);
   if (x.action === 'CANDIDATE_READY' && x.pricing !== 'OK') fail('CANDIDATE_READY with pricing ' + x.pricing);
   if (source === 'watchlist' && x.verdict === 'MULTIBAGGER') fail('watchlist stock reached MULTIBAGGER');
   if (source === 'watchlist' && x.qualityGate && x.qualityGate.state !== 'UNVERIFIED') fail('watchlist quality gate not UNVERIFIED: ' + x.qualityGate.state);
