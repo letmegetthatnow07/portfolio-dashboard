@@ -27,6 +27,7 @@ require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 
 const axios        = require('axios');
 const logger       = require('../lib/logger');
+const ci           = require('../lib/ci-report');
 const newsAnalyzer = require('../lib/advancedNewsAnalyzer');
 
 const { createClient: createRedisClient }    = require('redis');
@@ -67,37 +68,65 @@ let redisClient = null;
 async function getRedisClient() {
   if (redisClient) return redisClient;
   try {
-    const client = createRedisClient({ url: process.env.REDIS_URL });
-    client.on('error', err => logger.warn('Redis error (non-fatal):', err.message));
+    const client = createRedisClient({ url: process.env.REDIS_URL, socket: { connectTimeout: 10000, reconnectStrategy: r => (r >= 3 ? new Error('Redis reconnect limit reached') : 500 * (r + 1)) } });
+    client.on('error', err => logger.warn('Redis error:', err.message));
     await client.connect();
     redisClient = client;
     return client;
   } catch (e) {
-    logger.warn('Redis unavailable — news update will log to Supabase only');
+    logger.error(`Redis unavailable (${e.message}): news is still logged to Supabase, but the dashboard cannot be updated`);
     return null;
   }
 }
 
-// ── Fetch news from NewsData.io ───────────────────────────────────────────────
+// ── Fetch news ───────────────────────────────────────────────────────────────
+// PRIMARY: Finnhub company-news (free, 60 calls/min). Tagged to the TICKER by the provider, so it is far more relevant than a keyword
+// search and is not delayed. SUPPLEMENT: NewsData.io only when Finnhub returns fewer than 3 articles. NewsData's free plan is delayed about
+// 12 hours and searches by keyword ("MU stock"), so it is a backstop, not the main source.
+async function fetchFinnhubNews(symbol) {
+  const day = d => d.toISOString().split('T')[0];
+  const res = await axios.get('https://finnhub.io/api/v1/company-news', {
+    params: { symbol, from: day(new Date(Date.now() - 3 * 86400000)), to: day(new Date()), token: process.env.FINNHUB_API_KEY }, timeout: 8000,
+  });
+  return (Array.isArray(res.data) ? res.data : [])
+    .filter(a => a.headline && a.datetime)
+    .sort((a, b) => b.datetime - a.datetime)
+    .slice(0, 8)
+    .map(a => ({ headline: a.headline, description: a.summary || '', url: a.url || '', source: a.source || 'Finnhub', published_at: new Date(a.datetime * 1000).toISOString() }));
+}
+
+async function fetchNewsDataNews(symbol) {
+  const res = await axios.get(
+    `https://newsdata.io/api/1/latest?apikey=${process.env.NEWSDATA_API_KEY}&q=${symbol} stock&language=en`,
+    { timeout: 8000 }
+  );
+  return (res.data?.results || []).slice(0, 5).map(a => ({
+    headline:     a.title       || '',
+    description:  a.description || a.content || '',
+    url:          a.link        || '',
+    source:       a.source_id   || 'NewsData',
+    published_at: a.pubDate     || new Date().toISOString(),
+  }));
+}
+
+/** Returns an array of articles (newest first, de-duplicated, max 8). `.failed` is true when every source errored (as opposed to "no news"). */
 async function fetchNews(symbol) {
-  try {
-    const res = await axios.get(
-      `https://newsdata.io/api/1/latest?apikey=${process.env.NEWSDATA_API_KEY}&q=${symbol} stock&language=en`,
-      { timeout: 8000 }
-    );
-    if (res.data?.results?.length > 0) {
-      return res.data.results.slice(0, 5).map(a => ({  // grab up to 5 for better coverage
-        headline:     a.title       || '',
-        description:  a.description || a.content || '',
-        url:          a.link        || '',
-        source:       a.source_id   || 'NewsData',
-        published_at: a.pubDate     || new Date().toISOString()
-      }));
-    }
-  } catch (e) {
-    logger.warn(`News fetch failed for ${symbol}: ${e.message}`);
+  let articles = [], finnhubFailed = false, newsdataFailed = false;
+  try { articles = await fetchFinnhubNews(symbol); }
+  catch (e) { finnhubFailed = true; logger.warn(`Finnhub news failed for ${symbol}: ${e.message}`); }
+  if (articles.length < 3 && process.env.NEWSDATA_API_KEY) {
+    try { articles = articles.concat(await fetchNewsDataNews(symbol)); }
+    catch (e) { newsdataFailed = true; logger.warn(`NewsData news failed for ${symbol}: ${e.message}`); }
+  } else if (!process.env.NEWSDATA_API_KEY) newsdataFailed = true;
+  const seen = new Set(), out = [];
+  for (const a of articles.filter(x => x.headline).sort((x, y) => new Date(y.published_at) - new Date(x.published_at))) {
+    const key = a.headline.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 80);
+    if (seen.has(key)) continue;
+    seen.add(key); out.push(a);
   }
-  return [];
+  const top = out.slice(0, 8);
+  top.failed = finnhubFailed && newsdataFailed;
+  return top;
 }
 
 // ── Recency weight for a single article based on published_at ─────────────────
@@ -188,9 +217,9 @@ function computeComposite(breakdown, newsScore) {
 
 function getSignal(score) {
   if (score >= 8.5) return 'STRONG_BUY';
-  if (score >= 7.0) return 'BUY';
-  if (score >= 5.5) return 'HOLD';
-  if (score >= 4.0) return 'REDUCE';
+  if (score >= 7.5) return 'BUY';
+  if (score >= 4.5) return 'HOLD';
+  if (score >= 3.5) return 'REDUCE';
   return 'SELL';
 }
 
@@ -207,6 +236,8 @@ async function updateNewsOnly() {
   logger.info('╚════════════════════════════════════════════════════════════╝');
 
   const redisClient = await getRedisClient();
+  const issues = [];
+  if (!redisClient) issues.push('Redis unreachable: scores and headlines on the dashboard were NOT updated');
 
   // Read current portfolio from Redis
   let portfolio = { stocks: [] };
@@ -215,15 +246,17 @@ async function updateNewsOnly() {
       const raw = await redisClient.get('portfolio');
       if (raw) portfolio = JSON.parse(raw);
     } catch (e) {
-      logger.warn('Redis read failed — proceeding with Supabase log only');
+      logger.error('Redis read failed: ' + e.message);
+      issues.push('Redis read failed: ' + e.message);
     }
   }
 
   const stocks = portfolio.stocks || [];
   if (stocks.length === 0) {
-    logger.warn('No stocks found in Redis. Exiting.');
+    logger.error('No stocks found in Redis (unreachable, or the "portfolio" key is missing/empty). Failing on purpose: this is not a successful run.');
+    ci.finish('Intraday news', issues.length ? issues : ['Portfolio is empty in Redis']);
     if (redisClient) await redisClient.quit();
-    process.exit(0);
+    process.exit(1);
   }
 
   let updatedCount = 0;
@@ -234,6 +267,7 @@ async function updateNewsOnly() {
 
       const rawNews = await fetchNews(stock.symbol);
 
+      if (rawNews.failed) issues.push(`${stock.symbol}: every news source failed`);
       if (!rawNews.length) {
         logger.info(`  ⚪ No news found — skipping Supabase log for this slot`);
         await sleep(1500);
@@ -270,12 +304,17 @@ async function updateNewsOnly() {
       // ── Update Redis frontend cache ──────────────────────────────────────────
       // Recompute composite using frozen master scores + new news score
       if (redisClient && stock.score_breakdown) {
-        const newTotal     = computeComposite(stock.score_breakdown, newsScore);
+        // Only the news component moved, so move the total by news weight x change. (The old full recompute used the pre-rebuild weights
+        // and silently dropped the earnings adjustment on every intraday run.) ETF news weight 0.35, stocks 0.07, as in daily-update.js.
+        const _w = (stock.instrument_type === 'ETF' || stock.type === 'ETF') ? 0.35 : 0.07;
+        const _oldNews = stock.score_breakdown.news ?? 5;
+        const newTotal = stock.score_breakdown._8kCriticalOverride ? (stock.latest_score ?? 0)
+          : Math.max(0, Math.min(10, (stock.latest_score ?? 5) + _w * (newsScore - _oldNews)));
         const roundedTotal = Math.round(newTotal * 10) / 10;
 
         stock.score_breakdown.news = newsScore;
         stock.latest_score         = roundedTotal;
-        stock.signal               = getSignal(roundedTotal);
+        stock.composite_signal     = getSignal(roundedTotal);
         stock.recent_news          = rawNews.map(n => ({
           headline:     n.headline,
           url:          n.url,
@@ -283,7 +322,7 @@ async function updateNewsOnly() {
         }));
         stock.news_last_updated = new Date().toISOString();
 
-        logger.info(`  ✓ Redis: composite ${roundedTotal}/10 → ${stock.signal}`);
+        logger.info(`  ✓ Redis: composite ${roundedTotal}/10 → ${stock.composite_signal}`);
         updatedCount++;
       }
 
@@ -304,14 +343,16 @@ async function updateNewsOnly() {
       logger.info(`\n→ Redis flushed (${updatedCount} stocks updated)`);
       await redisClient.quit();
     } catch (e) {
-      logger.warn('Redis flush failed (non-fatal)');
+      logger.error('Redis flush failed: ' + e.message);
+      issues.push('Redis flush failed: ' + e.message);
     }
   }
 
   logger.info('\n╔════════════════════════════════════════════════════════════╗');
   logger.info(`║  NEWS UPDATE COMPLETE — Slot ${runSlot} logged to Supabase          ║`);
   logger.info('╚════════════════════════════════════════════════════════════╝');
-  process.exit(0);
+  ci.finish('Intraday news', issues, { Slot: runSlot, 'Stocks updated in Redis': updatedCount });
+  process.exit(issues.some(i => i.startsWith('Redis')) ? 1 : 0);
 }
 
 updateNewsOnly().catch(err => {
