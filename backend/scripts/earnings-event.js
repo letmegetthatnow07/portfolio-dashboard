@@ -35,6 +35,7 @@ const TTL_SECONDS     = 90 * 24 * 60 * 60;  // 90 days in Redis
 const SURPRISE_WINDOW_DAYS = 430;           // ~4-5 reported quarters
 const SURPRISE_KEEP        = 6;
 const DAY = 86400000;
+let surpriseFailed = 0;
 
 // ─── CLIENTS ──────────────────────────────────────────────────────────────────
 
@@ -154,6 +155,7 @@ async function refreshSurprises(symbols) {
   }
   await client.quit().catch(() => {});
   console.log(`Surprise history: ${updated} updated, ${unchanged} unchanged, ${failed} failed\n`);
+  surpriseFailed = failed;
 }
 
 // ─── STEP B1: WHO REPORTS TODAY ───────────────────────────────────────────────
@@ -445,7 +447,7 @@ async function logToSupabase(symbol, date, payload) {
 // ─── MAIN ─────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const _isOpen = await checkMarketOpen();
+  const _isOpen = !(await require('../lib/market-calendar').isMarketClosedToday());
   if (!_isOpen) {
     console.log('🏖️  Market closed today — skipping earnings-event run.');
     process.exit(0);
@@ -470,7 +472,7 @@ async function main() {
   const reporting = await getEarningsToday(symbols);
   if (!reporting.length) {
     console.log('\n✓ No portfolio stocks report earnings today.');
-    process.exit(0);
+    process.exit(surpriseFailed ? 2 : 0);
   }
 
   console.log(`\n${reporting.length} stock(s) report today:\n`);
@@ -524,7 +526,7 @@ async function main() {
   }
 
   console.log('\n✅ Earnings Event Analyser complete.');
-  process.exit(0);
+  process.exit(surpriseFailed ? 2 : 0);
 }
 
 main().catch(err => {
