@@ -65,8 +65,8 @@ class QuantEngine {
   }
 
   classifyRegime(excessReturnPct) {
-    if (excessReturnPct > -3)  return 'MARKET_NOISE';
-    if (excessReturnPct > -8)  return 'WATCH';
+    if (excessReturnPct > -5)  return 'MARKET_NOISE';
+    if (excessReturnPct > -12) return 'WATCH';
     return 'IDIOSYNCRATIC_DECAY';
   }
 
@@ -273,7 +273,7 @@ class QuantEngine {
   evaluateSpring(history20d, qualityScore, excessReturn7d) {
     if (!history20d || history20d.length < 20) return false;
     if (qualityScore <= 7.5)  return false;  // high quality required (was 8.0)
-    if (excessReturn7d <= 0)  return false;  // must be outperforming market
+    if (excessReturn7d == null || excessReturn7d < -8) return false;  // a dip of up to 8% is what a spring IS; deeper is a falling knife
 
     const avgVol20d = history20d.reduce((sum, d) => sum + (d.v || 0), 0) / 20;
     const anchor    = history20d[16]; // 3 trading days before today
